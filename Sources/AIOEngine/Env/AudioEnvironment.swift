@@ -243,12 +243,17 @@ extension AVAudioSession.CategoryOptions {
       "allowAirPlay"
     } else if self == AVAudioSession.CategoryOptions.overrideMutedMicrophoneInterruption {
       "overrideMutedMicrophoneInterruption"
-    } else if #available(iOS 26.0, *),
-      self == AVAudioSession.CategoryOptions.bluetoothHighQualityRecording
-    {
-      "bluetoothHighQualityRecording"
     } else {
+      #if !targetEnvironment(macCatalyst)
+      if #available(iOS 26.0, *), self == AVAudioSession.CategoryOptions.bluetoothHighQualityRecording
+      {
+        "bluetoothHighQualityRecording"
+      } else {
+        "unknown"
+      }
+      #else
       "unknown"
+      #endif
     }
   }
 }
