@@ -1,7 +1,7 @@
 # AIO Package - Audio I/O Engine
 
-**Location**: `Libs/AIO/`
-**Last Updated**: 2025-12-09
+**Location**: `Packages/AIO/`
+**Last Updated**: 2025-12-14
 
 ## Purpose
 
@@ -86,9 +86,9 @@ The package has comprehensive test coverage:
 
 ### From Package Directory (iOS Simulator)
 ```bash
-cd Libs/AIO
+cd Packages/AIO
 # Build and test for iOS simulator
-xcodebuild test -scheme AIOEngine -destination 'platform=iOS Simulator,name=iPhone 16 Pro' -derivedDataPath ../../.DerivedData
+xcodebuild test -scheme AIOEngine -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -derivedDataPath ../../.DerivedData
 ```
 
 ### Using Claude Code
@@ -160,15 +160,16 @@ See `Sources/AIO.docc/MultiBandVisualization.md` for complete API documentation.
 ## Integration
 
 AIO is consumed by:
-- **Libs/AppLibrary/AppTarget**: Main app logic
-- **Libs/AppLibrary/ExtensionLib**: Widget extensions
+- **Packages/AppLibrary/AppTarget**: Main app logic
+- **Packages/AppLibrary/ExtensionLib**: Widget extensions
+- **Packages/RecCLI/RecLib**: CLI tool library (macOS)
 
-The package is referenced via local path from AppLibrary:
+The package is referenced via local path from AppLibrary and RecCLI:
 ```swift
 .package(path: "../AIO")
 ```
 
-Changes to AIO require rebuilding dependent packages (AppLibrary).
+Changes to AIO require rebuilding dependent packages (AppLibrary, RecCLI).
 
 ## Performance Considerations
 
