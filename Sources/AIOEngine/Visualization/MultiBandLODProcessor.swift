@@ -130,7 +130,7 @@
   ///   // ptr contains all bands concatenated
   /// }
   /// ```
-  public final class LODSnapshotRef: @unchecked Sendable {
+  public struct LODSnapshotRef: @unchecked Sendable {
     fileprivate let slot: LODBufferSlot
 
     fileprivate init(_ slot: LODBufferSlot) {
