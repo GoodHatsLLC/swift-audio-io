@@ -209,6 +209,39 @@
     }
   }
 
+  // MARK: - LOD Snapshot Protocol
+
+  /// Protocol defining the interface for LOD snapshot data sources.
+  ///
+  /// This protocol is implemented by both `LODSnapshotRef` (for live streaming data)
+  /// and `StaticLODSnapshot` (for pre-computed/file-based data), allowing
+  /// `MetalWaveformView` to render either type uniformly.
+  public protocol LODSnapshot: Sendable {
+    /// Number of frequency bands.
+    var bandCount: Int { get }
+
+    /// Current write position in circular buffers.
+    var writeIndex: Int { get }
+
+    /// LOD reduction ratio used.
+    var lodRatio: Int { get }
+
+    /// Raw buffer length (for shader calculations).
+    var rawBufferLength: Int { get }
+
+    /// LOD buffer length per band.
+    var lodBufferLength: Int { get }
+
+    /// Direct access to a band's min buffer.
+    func withMinBuffer<R>(band: Int, _ body: (UnsafeBufferPointer<Float>) -> R) -> R
+
+    /// Direct access to a band's max buffer.
+    func withMaxBuffer<R>(band: Int, _ body: (UnsafeBufferPointer<Float>) -> R) -> R
+
+    /// Direct access to a band's RMS buffer.
+    func withRMSBuffer<R>(band: Int, _ body: (UnsafeBufferPointer<Float>) -> R) -> R
+  }
+
   // MARK: - LOD Data Types
 
   /// LOD (Level-of-Detail) data for a single frequency band.
@@ -247,7 +280,8 @@
   /// Complete multi-band LOD snapshot ready for GPU rendering.
   ///
   /// Contains all band data plus metadata needed by Metal shaders.
-  public struct MultiBandLODSnapshot: Sendable, Equatable {
+  /// Conforms to `LODSnapshot` for use with `MetalWaveformView`.
+  public struct MultiBandLODSnapshot: Sendable, Equatable, SnapshotProvider, LODSnapshot {
     /// LOD data for each frequency band (indexed by band number).
     public let bands: [BandLODData]
 
@@ -288,6 +322,10 @@
       lodRatio: 128,
       rawBufferLength: 0
     )
+      
+      public func toSnapshot() -> MultiBandLODSnapshot? {
+          self
+      }
 
     // MARK: - GPU Buffer Helpers
 
@@ -307,6 +345,23 @@
     /// Format: [Band0 LOD samples...][Band1 LOD samples...]...
     public func flatRMSBuffer() -> [Float] {
       bands.flatMap { $0.rmsBuffer }
+    }
+
+    // MARK: - LODSnapshot Protocol Conformance
+
+    /// Direct access to a band's min buffer.
+    public func withMinBuffer<R>(band: Int, _ body: (UnsafeBufferPointer<Float>) -> R) -> R {
+      bands[band].minBuffer.withUnsafeBufferPointer(body)
+    }
+
+    /// Direct access to a band's max buffer.
+    public func withMaxBuffer<R>(band: Int, _ body: (UnsafeBufferPointer<Float>) -> R) -> R {
+      bands[band].maxBuffer.withUnsafeBufferPointer(body)
+    }
+
+    /// Direct access to a band's RMS buffer.
+    public func withRMSBuffer<R>(band: Int, _ body: (UnsafeBufferPointer<Float>) -> R) -> R {
+      bands[band].rmsBuffer.withUnsafeBufferPointer(body)
     }
   }
 
