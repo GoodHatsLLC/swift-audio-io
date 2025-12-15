@@ -903,6 +903,33 @@
       playbackTask = nil
     }
 
+    /// Pauses the current playback without stopping it.
+    ///
+    /// The playback can be resumed with ``resumePlayback()``.
+    /// Unlike ``stopPlayback()``, this keeps the playback state intact.
+    @MainActor
+    public func pausePlayback() {
+      guard isPlayback else { return }
+      player.pause()
+      // Update the playback state to reflect paused status
+      if let instance = state.playbackInstance {
+        setPlayback(getPlayback(for: instance))
+      }
+    }
+
+    /// Resumes a paused playback.
+    ///
+    /// Has no effect if playback is not paused or if there is no active playback.
+    @MainActor
+    public func resumePlayback() {
+      guard isPlayback, !player.isPlaying else { return }
+      player.play()
+      // Update the playback state to reflect playing status
+      if let instance = state.playbackInstance {
+        setPlayback(getPlayback(for: instance))
+      }
+    }
+
     nonisolated private func cleanupPlaybackInstance(_ instance: PlaybackInstance) {
       let finishedFile: AVAudioFile? = state.withLock { state in
         if let foundInstance = state.playbackInstance, foundInstance.id == instance.id {
