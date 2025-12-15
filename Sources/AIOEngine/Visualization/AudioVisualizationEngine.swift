@@ -277,7 +277,13 @@
       var builtFrequencyAnalyzer: FrequencyAnalyzer?
       var frequencySampleCount = 0
 
-      if let frequencyConfig = configuration.frequencyAnalyzerConfiguration {
+      #if DEBUG
+        let effectiveFrequencyConfig = configuration.frequencyAnalyzerConfiguration
+      #else
+        let effectiveFrequencyConfig: FrequencyAnalyzer.Configuration? = nil
+      #endif
+
+      if let frequencyConfig = effectiveFrequencyConfig {
         frequencySampleCount = frequencyConfig.fftSize
         do {
           builtFrequencyAnalyzer = try FrequencyAnalyzer(configuration: frequencyConfig)
