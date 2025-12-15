@@ -250,22 +250,22 @@
 
     private let configuration: Configuration
 
-#if DEBUG
-    private let processingQueue = DispatchQueue(
-      label: "audio-visualization",
-      qos: .userInteractive
-    )
+    #if DEBUG
+      private let processingQueue = DispatchQueue(
+        label: "audio-visualization",
+        qos: .userInteractive
+      )
 
-    private let amplitudeAnalyzer: AmplitudeAnalyzer
-    private let frequencyAnalyzer: FrequencyAnalyzer?
-    private let frequencyBucketer: FrequencyBucketer
-    private let beatDetector: BeatDetector
-    private let frequencySampleCount: Int
-    private let ringBuffer: RingBuffer<Float>
-    private let maxVisualizationSamples: Int
-    private var readScratchBuffer: [Float]
-    private var lastUpdateTime: Date = .now
-#endif
+      private let amplitudeAnalyzer: AmplitudeAnalyzer
+      private let frequencyAnalyzer: FrequencyAnalyzer?
+      private let frequencyBucketer: FrequencyBucketer
+      private let beatDetector: BeatDetector
+      private let frequencySampleCount: Int
+      private let ringBuffer: RingBuffer<Float>
+      private let maxVisualizationSamples: Int
+      private var readScratchBuffer: [Float]
+      private var lastUpdateTime: Date = .now
+    #endif
 
     // MARK: - Initialization
 
@@ -275,43 +275,43 @@
     public init(configuration: Configuration = Configuration()) {
       self.configuration = configuration
 
-#if DEBUG
-      self.amplitudeAnalyzer = AmplitudeAnalyzer(
-        configuration: configuration.amplitudeAnalyzerConfiguration)
-      self.frequencyBucketer = FrequencyBucketer(
-        mode: configuration.bucketMode,
-        sampleRate: Float(configuration.sampleRate)
-      )
-      self.beatDetector = BeatDetector(configuration: configuration.beatDetectionConfiguration)
+      #if DEBUG
+        self.amplitudeAnalyzer = AmplitudeAnalyzer(
+          configuration: configuration.amplitudeAnalyzerConfiguration)
+        self.frequencyBucketer = FrequencyBucketer(
+          mode: configuration.bucketMode,
+          sampleRate: Float(configuration.sampleRate)
+        )
+        self.beatDetector = BeatDetector(configuration: configuration.beatDetectionConfiguration)
 
-      var builtFrequencyAnalyzer: FrequencyAnalyzer?
-      var frequencySampleCount = 0
+        var builtFrequencyAnalyzer: FrequencyAnalyzer?
+        var frequencySampleCount = 0
 
-      if let frequencyConfig = configuration.frequencyAnalyzerConfiguration {
-        frequencySampleCount = frequencyConfig.fftSize
-        do {
-          builtFrequencyAnalyzer = try FrequencyAnalyzer(configuration: frequencyConfig)
-        } catch {
-          log.error(
-            "Failed to create FrequencyAnalyzer: \(error.localizedDescription, privacy: .public)")
-          frequencySampleCount = 0
+        if let frequencyConfig = configuration.frequencyAnalyzerConfiguration {
+          frequencySampleCount = frequencyConfig.fftSize
+          do {
+            builtFrequencyAnalyzer = try FrequencyAnalyzer(configuration: frequencyConfig)
+          } catch {
+            log.error(
+              "Failed to create FrequencyAnalyzer: \(error.localizedDescription, privacy: .public)")
+            frequencySampleCount = 0
+          }
         }
-      }
 
-      self.frequencyAnalyzer = builtFrequencyAnalyzer
-      self.frequencySampleCount = frequencySampleCount
+        self.frequencyAnalyzer = builtFrequencyAnalyzer
+        self.frequencySampleCount = frequencySampleCount
 
-      if let analyzer = builtFrequencyAnalyzer {
-        self.frequencyLabels = analyzer.getFrequencyLabels()
-      }
+        if let analyzer = builtFrequencyAnalyzer {
+          self.frequencyLabels = analyzer.getFrequencyLabels()
+        }
 
-      let maxSamples = max(configuration.amplitudeWindowSize, frequencySampleCount)
-      let resolvedMaxSamples = max(maxSamples, 1)
-      let ringCapacity = max(resolvedMaxSamples * 4, 1024)
-      self.maxVisualizationSamples = resolvedMaxSamples
-      self.ringBuffer = RingBuffer<Float>(capacity: ringCapacity)
-      self.readScratchBuffer = Array(repeating: 0.0, count: resolvedMaxSamples)
-#endif
+        let maxSamples = max(configuration.amplitudeWindowSize, frequencySampleCount)
+        let resolvedMaxSamples = max(maxSamples, 1)
+        let ringCapacity = max(resolvedMaxSamples * 4, 1024)
+        self.maxVisualizationSamples = resolvedMaxSamples
+        self.ringBuffer = RingBuffer<Float>(capacity: ringCapacity)
+        self.readScratchBuffer = Array(repeating: 0.0, count: resolvedMaxSamples)
+      #endif
     }
 
     deinit {
@@ -470,111 +470,111 @@
 
     // MARK: - Private Methods
 
-#if DEBUG
-    private var updateTimer: DispatchSourceTimer?
+    #if DEBUG
+      private var updateTimer: DispatchSourceTimer?
 
-    private func setupUpdateTimer() {
-      let interval = 1.0 / configuration.updateRateHz
-      let timer = DispatchSource.makeTimerSource(queue: processingQueue)
-      timer.schedule(deadline: .now(), repeating: interval)
-      timer.setEventHandler { [weak self] in
-        self?.updateVisualizations()
-      }
-      timer.resume()
-      self.updateTimer = timer
-    }
-
-    private func updateAudioBuffer(_ data: UnsafeBufferPointer<Float>) {
-      guard !data.isEmpty else { return }
-      ringBuffer.write(data)
-    }
-
-    private func updateVisualizations() {
-      let now = Date.now
-      let deltaTime = now.timeIntervalSince(lastUpdateTime)
-      lastUpdateTime = now
-
-      let desiredSamples = maxVisualizationSamples
-      var readCount = 0
-
-      readScratchBuffer.withUnsafeMutableBufferPointer { bufferPointer in
-        guard let base = bufferPointer.baseAddress else { return }
-        let limitedBuffer = UnsafeMutableBufferPointer(start: base, count: desiredSamples)
-        readCount = ringBuffer.read(into: limitedBuffer)
+      private func setupUpdateTimer() {
+        let interval = 1.0 / configuration.updateRateHz
+        let timer = DispatchSource.makeTimerSource(queue: processingQueue)
+        timer.schedule(deadline: .now(), repeating: interval)
+        timer.setEventHandler { [weak self] in
+          self?.updateVisualizations()
+        }
+        timer.resume()
+        self.updateTimer = timer
       }
 
-      guard readCount > 0 else { return }
+      private func updateAudioBuffer(_ data: UnsafeBufferPointer<Float>) {
+        guard !data.isEmpty else { return }
+        ringBuffer.write(data)
+      }
 
-      let audioChunk = Array(readScratchBuffer.prefix(readCount))
-      let amplitudeResult = amplitudeAnalyzer.processAmplitudeData(audioChunk)
-      let spectrumResult = frequencyAnalyzer?.processFrequencyData(audioChunk)
+      private func updateVisualizations() {
+        let now = Date.now
+        let deltaTime = now.timeIntervalSince(lastUpdateTime)
+        lastUpdateTime = now
 
-      // Build time-domain data
-      let newTimeDomain = TimeDomainData(
-        samples: amplitudeResult.amplitudes,
-        peaks: amplitudeResult.peaks,
-        rmsLevel: amplitudeResult.rms,
-        level: amplitudeResult.overallLevel
-      )
+        let desiredSamples = maxVisualizationSamples
+        var readCount = 0
 
-      // Build frequency-domain data
-      var newFrequencyDomain = FrequencyDomainData.empty
-      var newSpectrumPeakHold: [Float] = []
+        readScratchBuffer.withUnsafeMutableBufferPointer { bufferPointer in
+          guard let base = bufferPointer.baseAddress else { return }
+          let limitedBuffer = UnsafeMutableBufferPointer(start: base, count: desiredSamples)
+          readCount = ringBuffer.read(into: limitedBuffer)
+        }
 
-      if let spectrumResult {
-        let buckets = frequencyBucketer.bucket(
-          spectrum: spectrumResult.spectrum,
-          frequencies: spectrumResult.frequencies
+        guard readCount > 0 else { return }
+
+        let audioChunk = Array(readScratchBuffer.prefix(readCount))
+        let amplitudeResult = amplitudeAnalyzer.processAmplitudeData(audioChunk)
+        let spectrumResult = frequencyAnalyzer?.processFrequencyData(audioChunk)
+
+        // Build time-domain data
+        let newTimeDomain = TimeDomainData(
+          samples: amplitudeResult.amplitudes,
+          peaks: amplitudeResult.peaks,
+          rmsLevel: amplitudeResult.rms,
+          level: amplitudeResult.overallLevel
         )
 
-        newFrequencyDomain = FrequencyDomainData(
-          buckets: buckets,
-          rawSpectrum: spectrumResult.spectrum,
-          frequencies: spectrumResult.frequencies,
-          peakFrequency: spectrumResult.peakFrequency,
-          spectralCentroid: spectrumResult.spectralCentroid
+        // Build frequency-domain data
+        var newFrequencyDomain = FrequencyDomainData.empty
+        var newSpectrumPeakHold: [Float] = []
+
+        if let spectrumResult {
+          let buckets = frequencyBucketer.bucket(
+            spectrum: spectrumResult.spectrum,
+            frequencies: spectrumResult.frequencies
+          )
+
+          newFrequencyDomain = FrequencyDomainData(
+            buckets: buckets,
+            rawSpectrum: spectrumResult.spectrum,
+            frequencies: spectrumResult.frequencies,
+            peakFrequency: spectrumResult.peakFrequency,
+            spectralCentroid: spectrumResult.spectralCentroid
+          )
+
+          // Update spectrum peak hold for legacy API
+          newSpectrumPeakHold = updateSpectrumPeaks(
+            current: spectrumPeakHold,
+            newSpectrum: spectrumResult.spectrum
+          )
+        }
+
+        // Beat detection
+        let beatInfo = beatDetector.analyze(
+          spectrum: spectrumResult?.spectrum ?? [],
+          rmsLevel: amplitudeResult.rms,
+          deltaTime: deltaTime
         )
 
-        // Update spectrum peak hold for legacy API
-        newSpectrumPeakHold = updateSpectrumPeaks(
-          current: spectrumPeakHold,
-          newSpectrum: spectrumResult.spectrum
-        )
+        DispatchQueue.main.async {
+          self.timeDomain = newTimeDomain
+          self.frequencyDomain = newFrequencyDomain
+          self.spectrumPeakHold = newSpectrumPeakHold
+          self.beat = beatInfo
+        }
       }
 
-      // Beat detection
-      let beatInfo = beatDetector.analyze(
-        spectrum: spectrumResult?.spectrum ?? [],
-        rmsLevel: amplitudeResult.rms,
-        deltaTime: deltaTime
-      )
+      private func updateSpectrumPeaks(current: [Float], newSpectrum: [Float]) -> [Float] {
+        let decayRate: Float = 0.015
 
-      DispatchQueue.main.async {
-        self.timeDomain = newTimeDomain
-        self.frequencyDomain = newFrequencyDomain
-        self.spectrumPeakHold = newSpectrumPeakHold
-        self.beat = beatInfo
+        var peaks: [Float]
+        if current.count != newSpectrum.count {
+          peaks = Array(repeating: 0.0, count: newSpectrum.count)
+        } else {
+          peaks = current
+        }
+
+        for index in newSpectrum.indices {
+          let decayed = max(0.0, peaks[index] - decayRate)
+          peaks[index] = max(decayed, newSpectrum[index])
+        }
+
+        return peaks
       }
-    }
-
-    private func updateSpectrumPeaks(current: [Float], newSpectrum: [Float]) -> [Float] {
-      let decayRate: Float = 0.015
-
-      var peaks: [Float]
-      if current.count != newSpectrum.count {
-        peaks = Array(repeating: 0.0, count: newSpectrum.count)
-      } else {
-        peaks = current
-      }
-
-      for index in newSpectrum.indices {
-        let decayed = max(0.0, peaks[index] - decayRate)
-        peaks[index] = max(decayed, newSpectrum[index])
-      }
-
-      return peaks
-    }
-#endif
+    #endif
   }
 
   extension AudioVisualizationEngine: BufferReceiver {
@@ -582,9 +582,9 @@
 
     nonisolated public func processBuffer(_ data: UnsafeBufferPointer<Float>) {
       guard isActiveAtomic.load(ordering: .relaxed), data.count > 0 else { return }
-#if DEBUG
-      self.updateAudioBuffer(data)
-#endif
+      #if DEBUG
+        self.updateAudioBuffer(data)
+      #endif
 
       // Also feed multi-band LOD processor if enabled
       lodProcessor?.process(data)
