@@ -238,6 +238,10 @@
     /// Index of the slot currently being written to (only audio thread accesses).
     private var writeSlotIndex: Int = 0
 
+    /// Index of the slot that's "retiring" (previously current, may still be read).
+    /// This slot is never written to; it becomes the next write slot after a publish.
+    private var retiringSlotIndex: Int = 2
+
     /// Index of the slot that's current for reading (atomic for lock-free access).
     private let currentSlotIndex: ManagedAtomic<Int>
 
@@ -246,6 +250,13 @@
 
     /// Number of LOD commits between slot swaps (configurable).
     private let slotSwapInterval: Int
+
+    /// Write index at the start of the current publish interval.
+    /// Used to copy only the delta indices into the next write slot.
+    private var deltaStartWriteIndex: Int = 0
+
+    /// Number of LOD indices written since the last publish.
+    private var deltaWrittenCount: Int = 0
 
     /// Direct reference to write slot's bands for fast access.
     private var writeSlot: LODBufferSlot { bufferSlots[writeSlotIndex] }
@@ -283,10 +294,13 @@
         LODBufferSlot(configuration: configuration),
       ]
 
-      // Slot 0 starts as write, slot 1 starts as current for reading
+      // Slot 0 starts as write, slot 1 starts as current for reading, slot 2 is retiring.
       self.writeSlotIndex = 0
       self.currentSlotIndex = ManagedAtomic(1)
+      self.retiringSlotIndex = 2
       self.slotSwapInterval = configuration.snapshotSwapInterval
+      self.deltaStartWriteIndex = bufferSlots[writeSlotIndex].writeIndex
+      self.deltaWrittenCount = 0
 
       os_log(
         .info, log: log,
@@ -411,6 +425,7 @@
       }
 
       slot.writeIndex = (wIdx + 1) % configuration.lodBufferLength
+      deltaWrittenCount += 1
 
       // Periodically swap slots for lock-free reading (~60fps)
       commitsSinceSlotSwap += 1
@@ -423,22 +438,76 @@
     /// Swaps the write slot to become current, picks a new write slot.
     /// Called periodically from commitLOD while holding the lock.
     private func swapSlots() {
-      // Current state: writeSlotIndex is being written to
-      // Make it the new "current" for readers
+      // Current slot is safe for readers; write slot contains freshly committed data.
       let oldCurrent = currentSlotIndex.load(ordering: .acquiring)
-      let newCurrent = writeSlotIndex
+      let oldWrite = writeSlotIndex
+      let oldRetiring = retiringSlotIndex
 
-      // Atomically publish the write slot as current
+      let newCurrent = oldWrite
+      let newRetiring = oldCurrent
+      let newWrite = oldRetiring
+
+      let publishedSlot = bufferSlots[newCurrent]
+      let nextWriteSlot = bufferSlots[newWrite]
+
+      // Copy only the indices written since the last publish into the next write slot,
+      // so when it later becomes current it contains a coherent history buffer.
+      copyDeltaIndices(
+        from: publishedSlot,
+        to: nextWriteSlot,
+        startWriteIndex: deltaStartWriteIndex,
+        count: deltaWrittenCount
+      )
+
+      // Continue writing at the same circular index.
+      nextWriteSlot.writeIndex = publishedSlot.writeIndex
+
+      // Atomically publish the new current slot.
       currentSlotIndex.store(newCurrent, ordering: .releasing)
 
-      // Pick a new write slot (not current, not old current which may still be read)
-      // Use the slot that was "retiring" (old current)
-      let newWrite = oldCurrent
-
-      // Copy the write index to the new write slot so it continues from same position
-      bufferSlots[newWrite].writeIndex = bufferSlots[newCurrent].writeIndex
-
+      // Rotate roles.
+      retiringSlotIndex = newRetiring
       writeSlotIndex = newWrite
+
+      // Next publish interval starts at the current write index.
+      deltaStartWriteIndex = nextWriteSlot.writeIndex
+      deltaWrittenCount = 0
+    }
+
+    private func copyDeltaIndices(
+      from source: LODBufferSlot,
+      to destination: LODBufferSlot,
+      startWriteIndex: Int,
+      count: Int
+    ) {
+      let lodLength = configuration.lodBufferLength
+      guard lodLength > 0 else { return }
+
+      let copyCount = min(max(count, 0), lodLength)
+      guard copyCount > 0 else { return }
+
+      if count >= lodLength {
+        for idx in 0..<lodLength {
+          for b in 0..<configuration.bandCount {
+            destination.bands[b].minBuffer[idx] = source.bands[b].minBuffer[idx]
+            destination.bands[b].maxBuffer[idx] = source.bands[b].maxBuffer[idx]
+            destination.bands[b].rmsBuffer[idx] = source.bands[b].rmsBuffer[idx]
+          }
+        }
+      } else {
+        var idx = startWriteIndex % lodLength
+        if idx < 0 { idx += lodLength }
+
+        for _ in 0..<copyCount {
+          for b in 0..<configuration.bandCount {
+            destination.bands[b].minBuffer[idx] = source.bands[b].minBuffer[idx]
+            destination.bands[b].maxBuffer[idx] = source.bands[b].maxBuffer[idx]
+            destination.bands[b].rmsBuffer[idx] = source.bands[b].rmsBuffer[idx]
+          }
+          idx += 1
+          if idx == lodLength { idx = 0 }
+        }
+      }
     }
 
     // MARK: - Snapshot
@@ -502,19 +571,34 @@
       // Reset slot indices
       writeSlotIndex = 0
       currentSlotIndex.store(1, ordering: .releasing)
+      retiringSlotIndex = 2
       commitsSinceSlotSwap = 0
       totalSamplesProcessed = 0
+      deltaStartWriteIndex = bufferSlots[writeSlotIndex].writeIndex
+      deltaWrittenCount = 0
 
       os_log(.info, log: log, "Reset all buffers (triple-buffered)")
     }
 
     // MARK: - Diagnostics
 
-    /// Current write index in the circular buffer.
-    public var currentWriteIndex: Int {
+    /// The published write index (safe for renderers).
+    public var publishedWriteIndex: Int {
       let index = currentSlotIndex.load(ordering: .acquiring)
       return bufferSlots[index].writeIndex
     }
+
+    /// The writer's current write index (diagnostics only).
+    public var writerWriteIndex: Int {
+      lock.lock()
+      defer { lock.unlock() }
+      return writeSlot.writeIndex
+    }
+
+    /// Current write index in the circular buffer.
+    ///
+    /// This is the published write index (safe for renderers).
+    public var currentWriteIndex: Int { publishedWriteIndex }
 
     /// Total number of raw samples processed.
     public var samplesProcessed: Int {
@@ -614,7 +698,8 @@
         framesRemaining -= buffer.frameLength
       }
 
-      return processor.snapshot()
+      // Ensure the final partial interval is included even if no publish occurred.
+      return processor.snapshotLocking()
     }
 
     /// Errors that can occur during LOD generation.
