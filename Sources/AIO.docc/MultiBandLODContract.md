@@ -33,7 +33,7 @@ When converting any index to an array read:
 ## Zoom + Offset Semantics
 
 - `zoom` is a multiplicative zoom factor in the time axis:
-  - `zoom = 1` means the visible range spans the full `lodLength`.
+  - Current (contract v1): `zoom = 1` shows **half** of the history; visible LOD samples are `lodLength / (zoom * 2)`.
   - Increasing `zoom` shows a smaller, more detailed window.
 - `viewOffset` is “how many raw samples ago from ‘now’ the right edge should be”, expressed in raw samples:
   - `viewOffset = 0` means the right edge aligns to the most recent commit.
@@ -43,4 +43,3 @@ When converting any index to an array read:
 
 - Offline renders must represent the full audio file (subject to any explicit output-width caps).
 - Live renders must avoid per-frame allocations/copies on the UI path.
-
