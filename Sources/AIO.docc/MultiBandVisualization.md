@@ -8,6 +8,8 @@ The multi-band visualization system provides frequency-separated audio data opti
 
 This system powers both live recording visualizations and static waveform snapshots.
 
+For CPU ↔ GPU invariants (buffer layout, indexing/wrapping, zoom/offset semantics), see <doc:MultiBandLODContract>.
+
 ## Quick Start
 
 ### Live Visualization During Recording
@@ -24,7 +26,7 @@ vizEngine.enableMultiBandLOD()
 // Start feeding audio data (called from your audio callback)
 vizEngine.processBuffer(audioSamples)
 
-// Access LOD snapshot for rendering
+// Access LOD snapshot for rendering (copying)
 if let snapshot = vizEngine.multiBandLOD {
     // Pass to Metal renderer
     renderWaveform(snapshot)
@@ -87,7 +89,7 @@ struct MultiBandLODSnapshot {
     let rawBufferLength: Int     // Total buffer capacity
 
     var bandCount: Int           // Number of bands
-    var lodLength: Int           // LOD buffer length
+    var lodBufferLength: Int     // LOD buffer length per band
 }
 ```
 
@@ -102,8 +104,8 @@ for band in snapshot.bands {
     let rmsValues = band.rms   // [Float] - RMS energy per LOD point
 }
 
-// Flat buffers for GPU (interleaved by band)
-let flatMin = snapshot.flatMinBuffer()  // [band0[0], band1[0], ..., band0[1], band1[1], ...]
+// Flat buffers for GPU (band-contiguous)
+let flatMin = snapshot.flatMinBuffer()  // [band0...][band1...]...
 let flatMax = snapshot.flatMaxBuffer()
 let flatRMS = snapshot.flatRMSBuffer()
 ```

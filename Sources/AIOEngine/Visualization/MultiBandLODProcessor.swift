@@ -224,6 +224,11 @@
     /// Total samples processed (for debugging)
     private var totalSamplesProcessed: Int = 0
 
+#if DEBUG
+    /// Duration of the most recent `process(_:)` call (nanoseconds).
+    private var debugLastProcessDurationNs: UInt64 = 0
+#endif
+
     // MARK: - Triple-Buffered Snapshot (Lock-free read access)
 
     /// Three pre-allocated buffer slots for triple buffering.
@@ -301,6 +306,9 @@
     public func process(_ samples: UnsafeBufferPointer<Float>) {
       guard !samples.isEmpty else { return }
 
+#if DEBUG
+      let startNs = DispatchTime.now().uptimeNanoseconds
+#endif
       lock.lock()
       defer { lock.unlock() }
 
@@ -342,6 +350,10 @@
       }
 
       totalSamplesProcessed += samples.count
+
+#if DEBUG
+      debugLastProcessDurationNs = DispatchTime.now().uptimeNanoseconds - startNs
+#endif
     }
 
     /// Process samples from a contiguous array.
@@ -510,6 +522,15 @@
       defer { lock.unlock() }
       return totalSamplesProcessed
     }
+
+#if DEBUG
+    /// Duration of the most recent `process(_:)` call, in nanoseconds.
+    public var lastProcessDurationNanoseconds: UInt64 {
+      lock.lock()
+      defer { lock.unlock() }
+      return debugLastProcessDurationNs
+    }
+#endif
 
     /// Approximate duration of audio processed in seconds.
     public var durationProcessed: TimeInterval {
