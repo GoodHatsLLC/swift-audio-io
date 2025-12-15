@@ -250,10 +250,10 @@
     /// Total samples processed.
     private let totalSamplesProcessed: ManagedAtomic<Int>
 
-#if DEBUG
-    /// Duration of the most recent `process(_:)` call (nanoseconds).
-    private let debugLastProcessDurationNs: ManagedAtomic<UInt64>
-#endif
+    #if DEBUG
+      /// Duration of the most recent `process(_:)` call (nanoseconds).
+      private let debugLastProcessDurationNs: ManagedAtomic<UInt64>
+    #endif
 
     // MARK: - Triple-Buffered Snapshot (Lock-free read access)
 
@@ -309,9 +309,9 @@
 
       self.windowStats = Array(repeating: RunningStats(), count: configuration.bandCount)
       self.totalSamplesProcessed = ManagedAtomic(0)
-#if DEBUG
-      self.debugLastProcessDurationNs = ManagedAtomic(0)
-#endif
+      #if DEBUG
+        self.debugLastProcessDurationNs = ManagedAtomic(0)
+      #endif
 
       // Initialize triple-buffered LOD slots (pre-allocated, never reallocated)
       self.bufferSlots = [
@@ -347,9 +347,9 @@
     public func process(_ samples: UnsafeBufferPointer<Float>) {
       guard !samples.isEmpty else { return }
 
-#if DEBUG
-      let startNs = DispatchTime.now().uptimeNanoseconds
-#endif
+      #if DEBUG
+        let startNs = DispatchTime.now().uptimeNanoseconds
+      #endif
       let bandCount = configuration.bandCount
       let lodRatio = configuration.lodRatio
 
@@ -389,12 +389,12 @@
 
       totalSamplesProcessed.wrappingIncrement(by: samples.count, ordering: .relaxed)
 
-#if DEBUG
-      debugLastProcessDurationNs.store(
-        DispatchTime.now().uptimeNanoseconds - startNs,
-        ordering: .relaxed
-      )
-#endif
+      #if DEBUG
+        debugLastProcessDurationNs.store(
+          DispatchTime.now().uptimeNanoseconds - startNs,
+          ordering: .relaxed
+        )
+      #endif
     }
 
     /// Process samples from a contiguous array.
@@ -619,12 +619,12 @@
       totalSamplesProcessed.load(ordering: .relaxed)
     }
 
-#if DEBUG
-    /// Duration of the most recent `process(_:)` call, in nanoseconds.
-    public var lastProcessDurationNanoseconds: UInt64 {
-      debugLastProcessDurationNs.load(ordering: .relaxed)
-    }
-#endif
+    #if DEBUG
+      /// Duration of the most recent `process(_:)` call, in nanoseconds.
+      public var lastProcessDurationNanoseconds: UInt64 {
+        debugLastProcessDurationNs.load(ordering: .relaxed)
+      }
+    #endif
 
     /// Approximate duration of audio processed in seconds.
     public var durationProcessed: TimeInterval {
