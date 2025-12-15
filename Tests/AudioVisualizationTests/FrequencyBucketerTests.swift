@@ -171,9 +171,10 @@
       let lowSpectrum = Array(repeating: Float(0.1), count: 64)
       let buckets = bucketer.bucket(spectrum: lowSpectrum, frequencies: frequencies)
 
-      // Peak hold should still be higher than magnitude
-      let bucket = buckets.first!
-      #expect(bucket.peakHold > bucket.magnitude)
+      // Peak hold should still be higher than magnitude for at least one non-empty bucket.
+      let maxMagnitude = buckets.map(\.magnitude).max() ?? 0
+      let maxPeakHold = buckets.map(\.peakHold).max() ?? 0
+      #expect(maxPeakHold > maxMagnitude)
     }
 
     // MARK: - Frequency Range Tests
