@@ -134,6 +134,9 @@
     /// A Boolean value that indicates whether the visualization engine is currently active.
     public var isActive = false
     private let isActiveAtomic = ManagedAtomic<Bool>(false)
+    private let wantsActiveAtomic = ManagedAtomic<Bool>(false)
+    private let isForegroundAtomic = ManagedAtomic<Bool>(true)
+    private let visualizationConsumerCountAtomic = ManagedAtomic<Int>(0)
 
     // MARK: - Configuration
 
@@ -319,7 +322,24 @@
 
     /// Starts the visualization processing.
     public func startVisualization() {
-      resumeVisualization()
+      wantsActiveAtomic.store(true, ordering: .relaxed)
+      updateProcessingState()
+    }
+
+    /// Marks a visualization consumer as visible.
+    ///
+    /// Used to prevent running the visualization processing pipeline when it would be wasted
+    /// because no UI is visible that consumes its data.
+    public func visualizationConsumerDidAppear() {
+      visualizationConsumerCountAtomic.wrappingIncrement(by: 1, ordering: .relaxed)
+      updateProcessingState()
+    }
+
+    /// Marks a visualization consumer as no longer visible.
+    public func visualizationConsumerDidDisappear() {
+      let current = visualizationConsumerCountAtomic.load(ordering: .relaxed)
+      visualizationConsumerCountAtomic.store(max(current - 1, 0), ordering: .relaxed)
+      updateProcessingState()
     }
 
     /// Pauses visualization processing without clearing buffers or resetting history.
@@ -327,41 +347,20 @@
     /// This is intended for app lifecycle transitions (e.g. backgrounding) where we
     /// want to stop doing work on the audio thread without losing LOD history.
     public func pauseVisualization() {
-      let wasActive = isActiveAtomic.exchange(false, ordering: .relaxed)
-      guard wasActive else { return }
-
-      #if DEBUG
-        updateTimer?.cancel()
-        updateTimer = nil
-      #endif
-
-      isActive = false
-      log.info("Audio visualization paused")
+      isForegroundAtomic.store(false, ordering: .relaxed)
+      updateProcessingState()
     }
 
     /// Resumes visualization processing after a pause.
     public func resumeVisualization() {
-      let wasActive = isActiveAtomic.exchange(true, ordering: .relaxed)
-      guard !wasActive else { return }
-
-      isActive = true
-
-      #if DEBUG
-        lastUpdateTime = .now
-        setupUpdateTimer()
-      #endif
-
-      log.info("Audio visualization resumed")
+      isForegroundAtomic.store(true, ordering: .relaxed)
+      updateProcessingState()
     }
 
     /// Stops the visualization processing.
     public func stopVisualization() {
-      #if DEBUG
-        updateTimer?.cancel()
-        updateTimer = nil
-      #endif
-      isActiveAtomic.store(false, ordering: .relaxed)
-      isActive = false
+      wantsActiveAtomic.store(false, ordering: .relaxed)
+      updateProcessingState()
 
       // Clear data
       timeDomain = .empty
@@ -376,6 +375,28 @@
       lodProcessor?.reset()
 
       log.info("Audio visualization stopped")
+    }
+
+    private func updateProcessingState() {
+      let wantsActive = wantsActiveAtomic.load(ordering: .relaxed)
+      let isForeground = isForegroundAtomic.load(ordering: .relaxed)
+      let consumerCount = visualizationConsumerCountAtomic.load(ordering: .relaxed)
+
+      let shouldBeActive = wantsActive && isForeground && consumerCount > 0
+      let wasActive = isActiveAtomic.exchange(shouldBeActive, ordering: .relaxed)
+      guard wasActive != shouldBeActive else { return }
+
+      #if DEBUG
+        if shouldBeActive {
+          lastUpdateTime = .now
+          setupUpdateTimer()
+        } else {
+          updateTimer?.cancel()
+          updateTimer = nil
+        }
+      #endif
+
+      isActive = shouldBeActive
     }
 
     /// Updates the frequency bucket mode.
