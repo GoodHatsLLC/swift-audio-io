@@ -1,4 +1,5 @@
 #if canImport(AVFAudio)
+  import Atomics
   import AVFAudio
   import Foundation
   import SystemLog
@@ -132,6 +133,7 @@
 
     /// A Boolean value that indicates whether the visualization engine is currently active.
     public var isActive = false
+    private let isActiveAtomic = ManagedAtomic<Bool>(false)
 
     // MARK: - Configuration
 
@@ -317,25 +319,48 @@
 
     /// Starts the visualization processing.
     public func startVisualization() {
-      guard !isActive else { return }
-
-      isActive = true
-
-#if DEBUG
-      lastUpdateTime = .now
-      setupUpdateTimer()
-#endif
-      log.info("Audio visualization started")
+      resumeVisualization()
     }
 
-    /// Stops the visualization processing.
-    public func stopVisualization() {
-      guard isActive else { return }
+    /// Pauses visualization processing without clearing buffers or resetting history.
+    ///
+    /// This is intended for app lifecycle transitions (e.g. backgrounding) where we
+    /// want to stop doing work on the audio thread without losing LOD history.
+    public func pauseVisualization() {
+      let wasActive = isActiveAtomic.exchange(false, ordering: .relaxed)
+      guard wasActive else { return }
 
       #if DEBUG
         updateTimer?.cancel()
         updateTimer = nil
       #endif
+
+      isActive = false
+      log.info("Audio visualization paused")
+    }
+
+    /// Resumes visualization processing after a pause.
+    public func resumeVisualization() {
+      let wasActive = isActiveAtomic.exchange(true, ordering: .relaxed)
+      guard !wasActive else { return }
+
+      isActive = true
+
+      #if DEBUG
+        lastUpdateTime = .now
+        setupUpdateTimer()
+      #endif
+
+      log.info("Audio visualization resumed")
+    }
+
+    /// Stops the visualization processing.
+    public func stopVisualization() {
+      #if DEBUG
+        updateTimer?.cancel()
+        updateTimer = nil
+      #endif
+      isActiveAtomic.store(false, ordering: .relaxed)
       isActive = false
 
       // Clear data
@@ -411,7 +436,7 @@
     ///
     /// - Parameter buffer: The audio buffer to process.
     public func processAudioBuffer(_ buffer: AVAudioPCMBuffer) {
-      guard isActive,
+      guard isActiveAtomic.load(ordering: .relaxed),
         let floatData = buffer.floatChannelData?[0]
       else { return }
 
@@ -535,7 +560,7 @@
     public typealias T = Float
 
     nonisolated public func processBuffer(_ data: UnsafeBufferPointer<Float>) {
-      guard isActive, data.count > 0 else { return }
+      guard isActiveAtomic.load(ordering: .relaxed), data.count > 0 else { return }
 #if DEBUG
       self.updateAudioBuffer(data)
 #endif
