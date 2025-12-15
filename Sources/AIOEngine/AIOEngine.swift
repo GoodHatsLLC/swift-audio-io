@@ -901,6 +901,8 @@
       }
       finishedFile?.close()
       playbackTask = nil
+      placeState(\.playbackInstance, nil)
+     playback = nil
     }
 
     /// Pauses the current playback without stopping it.
