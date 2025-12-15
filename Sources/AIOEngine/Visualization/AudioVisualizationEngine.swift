@@ -364,7 +364,16 @@
     ///
     /// - Parameter configuration: LOD processing configuration.
     public func enableMultiBandLOD(configuration: MultiBandLODConfiguration = .default) {
-      lodProcessor = MultiBandLODProcessor(configuration: configuration)
+      let resolvedSampleRate = max(Int(self.configuration.sampleRate.rounded()), 1)
+      let resolvedConfig = MultiBandLODConfiguration(
+        bandCount: configuration.bandCount,
+        lodRatio: configuration.lodRatio,
+        bufferSeconds: configuration.bufferSeconds,
+        sampleRate: resolvedSampleRate,
+        crossoverMode: configuration.crossoverMode,
+        snapshotSwapInterval: configuration.snapshotSwapInterval
+      )
+      lodProcessor = MultiBandLODProcessor(configuration: resolvedConfig)
       log.info("Multi-band LOD enabled: \(configuration.bandCount, privacy: .public) bands")
     }
 
@@ -520,6 +529,21 @@
   // MARK: - Configuration Extensions
 
   extension AudioVisualizationEngine.Configuration {
+    /// Returns a copy of this configuration with a different sample rate.
+    public func withSampleRate(_ sampleRate: Double) -> Self {
+      AudioVisualizationEngine.Configuration(
+        amplitudeWindowSize: amplitudeWindowSize,
+        spectrumSize: spectrumSize,
+        updateRateHz: updateRateHz,
+        smoothingFactor: smoothingFactor,
+        sampleRate: sampleRate,
+        amplitudeAnalyzerConfiguration: amplitudeAnalyzerConfiguration,
+        frequencyAnalyzerConfiguration: frequencyAnalyzerConfiguration,
+        bucketMode: bucketMode,
+        beatDetectionConfiguration: beatDetectionConfiguration
+      )
+    }
+
     /// A configuration optimized for real-time recording visualization.
     public static let realTimeRecording = AudioVisualizationEngine.Configuration(
       amplitudeWindowSize: 256,
