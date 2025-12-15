@@ -26,6 +26,13 @@
     /// How to split frequencies across bands.
     public let crossoverMode: CrossoverMode
 
+    /// Number of LOD commits between snapshot slot swaps.
+    /// Controls how frequently the render thread sees updated data.
+    /// Default is 6, which at 44100Hz with lodRatio=128 gives ~57fps updates.
+    /// Lower values = more frequent updates but more atomic operations.
+    /// Higher values = less frequent updates but lower overhead.
+    public let snapshotSwapInterval: Int
+
     /// Computed property: number of raw samples in the buffer.
     public var rawBufferLength: Int {
       sampleRate * bufferSeconds
@@ -44,18 +51,21 @@
     ///   - bufferSeconds: Maximum buffer duration. Default: 300.
     ///   - sampleRate: Audio sample rate. Default: 44100.
     ///   - crossoverMode: Frequency splitting mode. Default: Mel scale.
+    ///   - snapshotSwapInterval: LOD commits between slot swaps. Default: 6 (~57fps).
     public init(
       bandCount: Int = 5,
       lodRatio: Int = 128,
       bufferSeconds: Int = 300,
       sampleRate: Int = 44_100,
-      crossoverMode: CrossoverMode = .mel(minFreq: 40, maxFreq: 15000)
+      crossoverMode: CrossoverMode = .mel(minFreq: 40, maxFreq: 15000),
+      snapshotSwapInterval: Int = 6
     ) {
       self.bandCount = max(1, min(8, bandCount))
       self.lodRatio = max(1, lodRatio)
       self.bufferSeconds = max(1, bufferSeconds)
       self.sampleRate = max(1, sampleRate)
       self.crossoverMode = crossoverMode
+      self.snapshotSwapInterval = max(1, snapshotSwapInterval)
     }
 
     /// Default configuration optimized for real-time recording visualization.

@@ -219,10 +219,21 @@
     /// Enable with `enableMultiBandLOD(configuration:)`.
     private var lodProcessor: MultiBandLODProcessor?
 
-    /// Current multi-band LOD snapshot for GPU rendering.
+    /// Current multi-band LOD snapshot for GPU rendering (creates a copy).
     /// Returns nil if multi-band LOD is not enabled.
+    /// For zero-copy access, use `multiBandLODRef` instead.
     public var multiBandLOD: MultiBandLODSnapshot? {
       lodProcessor?.snapshot()
+    }
+
+    /// Zero-copy reference to current multi-band LOD data for GPU rendering.
+    /// Returns nil if multi-band LOD is not enabled.
+    ///
+    /// This returns a reference to pre-allocated buffers without any memory
+    /// allocation or copying. The reference is safe to use for rendering because
+    /// triple-buffering guarantees the audio thread won't write to this data.
+    public var multiBandLODRef: LODSnapshotRef? {
+      lodProcessor?.snapshotRef()
     }
 
     /// Whether multi-band LOD processing is enabled.

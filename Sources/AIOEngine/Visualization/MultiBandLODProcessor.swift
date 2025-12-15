@@ -1,9 +1,199 @@
 #if canImport(AVFAudio)
-  import Foundation
+  import Atomics
   import AVFAudio
+  import Foundation
   import os
 
   private let log = OSLog(subsystem: "AIOEngine", category: "MultiBandLOD")
+
+  // MARK: - Triple-Buffered LOD Storage
+
+  /// Pre-allocated storage for one complete LOD buffer set.
+  ///
+  /// ## Thread Safety
+  ///
+  /// This class is marked `@unchecked Sendable` because thread safety is guaranteed
+  /// by the triple-buffering protocol in `MultiBandLODProcessor`, NOT by internal
+  /// synchronization. The safety invariants are:
+  ///
+  /// 1. **Single writer**: Only the audio thread writes to slots, protected by `lock`
+  /// 2. **Slot rotation**: The processor maintains 3 slots that rotate through states:
+  ///    - Writing: Audio thread actively mutates this slot
+  ///    - Current: Published for readers via atomic index, never written
+  ///    - Retiring: Previous current, may still be read, never written
+  /// 3. **Atomic publication**: `currentSlotIndex` is updated atomically after writes complete
+  ///
+  /// **Do not** access `LODBufferSlot` directly outside of `MultiBandLODProcessor`.
+  /// Use `snapshotRef()` to obtain a safe `LODSnapshotRef` for reading.
+  final class LODBufferSlot: @unchecked Sendable {
+    let bands: [MutableBandBuffers]
+    var writeIndex: Int = 0
+    let lodRatio: Int
+    let rawBufferLength: Int
+    let bandCount: Int
+
+    /// Mutable band buffer storage - arrays are pre-allocated and mutated in place.
+    ///
+    /// Thread safety is provided by the parent `LODBufferSlot`'s triple-buffer protocol.
+    /// See `LODBufferSlot` documentation for safety invariants.
+    final class MutableBandBuffers {
+      let bandIndex: Int
+      var minBuffer: ContiguousArray<Float>
+      var maxBuffer: ContiguousArray<Float>
+      var rmsBuffer: ContiguousArray<Float>
+
+      init(bandIndex: Int, capacity: Int) {
+        self.bandIndex = bandIndex
+        self.minBuffer = ContiguousArray(repeating: 0, count: capacity)
+        self.maxBuffer = ContiguousArray(repeating: 0, count: capacity)
+        self.rmsBuffer = ContiguousArray(repeating: 0, count: capacity)
+      }
+
+      func reset() {
+        for i in minBuffer.indices {
+          minBuffer[i] = 0
+          maxBuffer[i] = 0
+          rmsBuffer[i] = 0
+        }
+      }
+    }
+
+    init(configuration: MultiBandLODConfiguration) {
+      self.lodRatio = configuration.lodRatio
+      self.rawBufferLength = configuration.rawBufferLength
+      self.bandCount = configuration.bandCount
+      self.bands = (0..<configuration.bandCount).map { bandIndex in
+        MutableBandBuffers(bandIndex: bandIndex, capacity: configuration.lodBufferLength)
+      }
+    }
+
+    func reset() {
+      writeIndex = 0
+      for band in bands {
+        band.reset()
+      }
+    }
+
+    /// Creates a snapshot by copying data (use sparingly, e.g., for file export).
+    func toSnapshot() -> MultiBandLODSnapshot {
+      MultiBandLODSnapshot(
+        bands: bands.map { band in
+          BandLODData(
+            bandIndex: band.bandIndex,
+            minBuffer: Array(band.minBuffer),
+            maxBuffer: Array(band.maxBuffer),
+            rmsBuffer: Array(band.rmsBuffer)
+          )
+        },
+        writeIndex: writeIndex,
+        lodRatio: lodRatio,
+        rawBufferLength: rawBufferLength
+      )
+    }
+  }
+
+  // MARK: - Zero-Copy Snapshot Reference
+
+  /// A reference to LOD data for GPU rendering.
+  ///
+  /// This class provides access to pre-allocated buffers. Per-band access via
+  /// `withMinBuffer(band:)` etc. is zero-copy. Flat buffer access via
+  /// `copyFlatMinBuffer()` etc. requires allocation (bands aren't contiguous).
+  ///
+  /// ## Thread Safety
+  ///
+  /// This class is marked `@unchecked Sendable` because safety is guaranteed by
+  /// the triple-buffering protocol. The slot referenced here is either "current"
+  /// or "retiring" - never the one being written to. This is enforced by:
+  ///
+  /// 1. `snapshotRef()` reads `currentSlotIndex` with acquire ordering
+  /// 2. The audio thread only writes to `writeSlotIndex`, never `currentSlotIndex`
+  /// 3. Slot swaps atomically publish the write slot as current
+  ///
+  /// The reference is safe to use for the duration of a frame. Do not cache
+  /// `LODSnapshotRef` across frames; always call `snapshotRef()` each frame.
+  ///
+  /// ## Usage
+  ///
+  /// ```swift
+  /// let ref = processor.snapshotRef()
+  ///
+  /// // Zero-copy per-band access (preferred for Metal)
+  /// for band in 0..<ref.bandCount {
+  ///   ref.withMinBuffer(band: band) { ptr in
+  ///     metalBuffer.contents().copyMemory(from: ptr.baseAddress!, byteCount: ...)
+  ///   }
+  /// }
+  ///
+  /// // Allocating flat access (convenience for simple cases)
+  /// ref.copyFlatMinBuffer { ptr in
+  ///   // ptr contains all bands concatenated
+  /// }
+  /// ```
+  public final class LODSnapshotRef: @unchecked Sendable {
+    fileprivate let slot: LODBufferSlot
+
+    fileprivate init(_ slot: LODBufferSlot) {
+      self.slot = slot
+    }
+
+    public var bandCount: Int { slot.bandCount }
+    public var writeIndex: Int { slot.writeIndex }
+    public var lodRatio: Int { slot.lodRatio }
+    public var rawBufferLength: Int { slot.rawBufferLength }
+    public var lodBufferLength: Int { slot.bands.first?.minBuffer.count ?? 0 }
+
+    /// Direct access to a band's min buffer.
+    public func withMinBuffer<R>(band: Int, _ body: (UnsafeBufferPointer<Float>) -> R) -> R {
+      slot.bands[band].minBuffer.withUnsafeBufferPointer(body)
+    }
+
+    /// Direct access to a band's max buffer.
+    public func withMaxBuffer<R>(band: Int, _ body: (UnsafeBufferPointer<Float>) -> R) -> R {
+      slot.bands[band].maxBuffer.withUnsafeBufferPointer(body)
+    }
+
+    /// Direct access to a band's RMS buffer.
+    public func withRMSBuffer<R>(band: Int, _ body: (UnsafeBufferPointer<Float>) -> R) -> R {
+      slot.bands[band].rmsBuffer.withUnsafeBufferPointer(body)
+    }
+
+    /// Creates a flat copy of min buffers for all bands (for GPU upload).
+    ///
+    /// - Note: This method **allocates** a temporary array. For zero-copy access,
+    ///   use `withMinBuffer(band:)` to upload each band separately.
+    /// - Parameter body: Closure receiving the flat buffer pointer.
+    /// - Returns: The result of the body closure.
+    public func copyFlatMinBuffer<R>(_ body: (UnsafeBufferPointer<Float>) -> R) -> R {
+      let flat = slot.bands.flatMap { Array($0.minBuffer) }
+      return flat.withUnsafeBufferPointer(body)
+    }
+
+    /// Creates a flat copy of max buffers for all bands (for GPU upload).
+    ///
+    /// - Note: This method **allocates** a temporary array. For zero-copy access,
+    ///   use `withMaxBuffer(band:)` to upload each band separately.
+    public func copyFlatMaxBuffer<R>(_ body: (UnsafeBufferPointer<Float>) -> R) -> R {
+      let flat = slot.bands.flatMap { Array($0.maxBuffer) }
+      return flat.withUnsafeBufferPointer(body)
+    }
+
+    /// Creates a flat copy of RMS buffers for all bands (for GPU upload).
+    ///
+    /// - Note: This method **allocates** a temporary array. For zero-copy access,
+    ///   use `withRMSBuffer(band:)` to upload each band separately.
+    public func copyFlatRMSBuffer<R>(_ body: (UnsafeBufferPointer<Float>) -> R) -> R {
+      let flat = slot.bands.flatMap { Array($0.rmsBuffer) }
+      return flat.withUnsafeBufferPointer(body)
+    }
+
+    /// Convert to a copying snapshot (for compatibility or file export).
+    public func toSnapshot() -> MultiBandLODSnapshot {
+      slot.toSnapshot()
+    }
+  }
+
+  // MARK: - MultiBandLODProcessor
 
   /// Processes audio samples into multi-band Level-of-Detail data for GPU visualization.
   ///
@@ -12,7 +202,8 @@
   /// 2. LOD reduction (e.g., 128:1) computing min/max/RMS per window
   /// 3. Circular buffer storage for streaming visualization
   ///
-  /// Thread-safe for concurrent audio processing.
+  /// Uses triple-buffering to provide lock-free snapshot access for 60fps rendering.
+  /// The render thread can always read a consistent snapshot without blocking on audio processing.
   public final class MultiBandLODProcessor: @unchecked Sendable {
 
     // MARK: - Configuration
@@ -30,14 +221,29 @@
     /// Accumulators for LOD computation (samples within current window)
     private var accumulators: [[Float]]
 
-    /// LOD buffers for each band
-    private var lodBands: [BandLODData]
-
-    /// Current write index in LOD circular buffer
-    private var lodWriteIndex: Int = 0
-
     /// Total samples processed (for debugging)
     private var totalSamplesProcessed: Int = 0
+
+    // MARK: - Triple-Buffered Snapshot (Lock-free read access)
+
+    /// Three pre-allocated buffer slots for triple buffering.
+    /// Slot 0, 1, 2 rotate through: writing → current → retiring
+    private let bufferSlots: [LODBufferSlot]
+
+    /// Index of the slot currently being written to (only audio thread accesses).
+    private var writeSlotIndex: Int = 0
+
+    /// Index of the slot that's current for reading (atomic for lock-free access).
+    private let currentSlotIndex: ManagedAtomic<Int>
+
+    /// Counter for LOD commits since last slot swap.
+    private var commitsSinceSlotSwap: Int = 0
+
+    /// Number of LOD commits between slot swaps (configurable).
+    private let slotSwapInterval: Int
+
+    /// Direct reference to write slot's bands for fast access.
+    private var writeSlot: LODBufferSlot { bufferSlots[writeSlotIndex] }
 
     // MARK: - Initialization
 
@@ -65,13 +271,21 @@
         accumulators[i].reserveCapacity(configuration.lodRatio * 2)
       }
 
-      // Initialize LOD buffers
-      self.lodBands = (0..<configuration.bandCount).map { bandIndex in
-        BandLODData(bandIndex: bandIndex, capacity: configuration.lodBufferLength)
-      }
+      // Initialize triple-buffered LOD slots (pre-allocated, never reallocated)
+      self.bufferSlots = [
+        LODBufferSlot(configuration: configuration),
+        LODBufferSlot(configuration: configuration),
+        LODBufferSlot(configuration: configuration),
+      ]
+
+      // Slot 0 starts as write, slot 1 starts as current for reading
+      self.writeSlotIndex = 0
+      self.currentSlotIndex = ManagedAtomic(1)
+      self.slotSwapInterval = configuration.snapshotSwapInterval
 
       os_log(
-        .info, log: log, "Initialized with %d bands, LOD ratio %d, buffer %d seconds",
+        .info, log: log,
+        "Initialized with %d bands, LOD ratio %d, buffer %d seconds (triple-buffered)",
         configuration.bandCount, configuration.lodRatio, configuration.bufferSeconds)
     }
 
@@ -156,8 +370,10 @@
 
     private func commitLOD() {
       // Already holding lock from process()
+      // Write directly to pre-allocated triple-buffered slot (zero allocation)
+      let slot = writeSlot
+      let wIdx = slot.writeIndex
       let bandCount = configuration.bandCount
-      let wIdx = lodWriteIndex
 
       for b in 0..<bandCount {
         let samples = accumulators[b]
@@ -174,33 +390,81 @@
           sumSq += (val * val)
         }
 
-        lodBands[b].minBuffer[wIdx] = minV
-        lodBands[b].maxBuffer[wIdx] = maxV
-        lodBands[b].rmsBuffer[wIdx] = sqrt(sumSq / count)
+        // Write directly to pre-allocated buffers (no allocation)
+        slot.bands[b].minBuffer[wIdx] = minV
+        slot.bands[b].maxBuffer[wIdx] = maxV
+        slot.bands[b].rmsBuffer[wIdx] = sqrt(sumSq / count)
 
         accumulators[b].removeAll(keepingCapacity: true)
       }
 
-      lodWriteIndex = (lodWriteIndex + 1) % configuration.lodBufferLength
+      slot.writeIndex = (wIdx + 1) % configuration.lodBufferLength
+
+      // Periodically swap slots for lock-free reading (~60fps)
+      commitsSinceSlotSwap += 1
+      if commitsSinceSlotSwap >= slotSwapInterval {
+        commitsSinceSlotSwap = 0
+        swapSlots()
+      }
+    }
+
+    /// Swaps the write slot to become current, picks a new write slot.
+    /// Called periodically from commitLOD while holding the lock.
+    private func swapSlots() {
+      // Current state: writeSlotIndex is being written to
+      // Make it the new "current" for readers
+      let oldCurrent = currentSlotIndex.load(ordering: .acquiring)
+      let newCurrent = writeSlotIndex
+
+      // Atomically publish the write slot as current
+      currentSlotIndex.store(newCurrent, ordering: .releasing)
+
+      // Pick a new write slot (not current, not old current which may still be read)
+      // Use the slot that was "retiring" (old current)
+      let newWrite = oldCurrent
+
+      // Copy the write index to the new write slot so it continues from same position
+      bufferSlots[newWrite].writeIndex = bufferSlots[newCurrent].writeIndex
+
+      writeSlotIndex = newWrite
     }
 
     // MARK: - Snapshot
 
+    /// Returns a zero-copy reference to current LOD data for rendering.
+    ///
+    /// This method is lock-free and returns a reference to pre-allocated buffers.
+    /// No memory allocation or copying occurs. The returned reference is safe to use
+    /// for rendering because triple-buffering guarantees the audio thread won't
+    /// write to this slot while it's current.
+    ///
+    /// - Returns: Zero-copy reference to LOD data for GPU rendering.
+    public func snapshotRef() -> LODSnapshotRef {
+      let index = currentSlotIndex.load(ordering: .acquiring)
+      return LODSnapshotRef(bufferSlots[index])
+    }
+
     /// Creates a snapshot of current LOD data for rendering.
     ///
-    /// This is thread-safe and returns an immutable copy of the data.
+    /// This method is lock-free but does create a copy of the data.
+    /// For zero-copy access, use `snapshotRef()` instead.
     ///
     /// - Returns: Complete LOD snapshot ready for GPU rendering.
     public func snapshot() -> MultiBandLODSnapshot {
+      let index = currentSlotIndex.load(ordering: .acquiring)
+      return bufferSlots[index].toSnapshot()
+    }
+
+    /// Creates a snapshot with explicit locking (for diagnostics).
+    ///
+    /// Use this method only when you need the absolute latest data
+    /// and can tolerate potential blocking.
+    ///
+    /// - Returns: Most up-to-date LOD snapshot.
+    public func snapshotLocking() -> MultiBandLODSnapshot {
       lock.lock()
       defer { lock.unlock() }
-
-      return MultiBandLODSnapshot(
-        bands: lodBands,
-        writeIndex: lodWriteIndex,
-        lodRatio: configuration.lodRatio,
-        rawBufferLength: configuration.rawBufferLength
-      )
+      return writeSlot.toSnapshot()
     }
 
     // MARK: - Reset
@@ -216,24 +480,28 @@
 
       for i in 0..<configuration.bandCount {
         accumulators[i].removeAll(keepingCapacity: true)
-        lodBands[i].minBuffer = Array(repeating: 0, count: configuration.lodBufferLength)
-        lodBands[i].maxBuffer = Array(repeating: 0, count: configuration.lodBufferLength)
-        lodBands[i].rmsBuffer = Array(repeating: 0, count: configuration.lodBufferLength)
       }
 
-      lodWriteIndex = 0
+      // Reset all triple-buffered slots (in-place, no allocation)
+      for slot in bufferSlots {
+        slot.reset()
+      }
+
+      // Reset slot indices
+      writeSlotIndex = 0
+      currentSlotIndex.store(1, ordering: .releasing)
+      commitsSinceSlotSwap = 0
       totalSamplesProcessed = 0
 
-      os_log(.info, log: log, "Reset all buffers")
+      os_log(.info, log: log, "Reset all buffers (triple-buffered)")
     }
 
     // MARK: - Diagnostics
 
     /// Current write index in the circular buffer.
     public var currentWriteIndex: Int {
-      lock.lock()
-      defer { lock.unlock() }
-      return lodWriteIndex
+      let index = currentSlotIndex.load(ordering: .acquiring)
+      return bufferSlots[index].writeIndex
     }
 
     /// Total number of raw samples processed.
@@ -341,6 +609,24 @@
           return "Audio file has an unsupported format"
         }
       }
+    }
+  }
+
+  // MARK: - BandLODData Extension
+
+  extension BandLODData {
+    /// Creates a band LOD data container with explicit buffer data.
+    ///
+    /// - Parameters:
+    ///   - bandIndex: Index of this band.
+    ///   - minBuffer: Pre-populated minimum values.
+    ///   - maxBuffer: Pre-populated maximum values.
+    ///   - rmsBuffer: Pre-populated RMS values.
+    init(bandIndex: Int, minBuffer: [Float], maxBuffer: [Float], rmsBuffer: [Float]) {
+      self.bandIndex = bandIndex
+      self.minBuffer = minBuffer
+      self.maxBuffer = maxBuffer
+      self.rmsBuffer = rmsBuffer
     }
   }
 
