@@ -211,22 +211,48 @@
     private let configuration: MultiBandLODConfiguration
     private let crossoverAlphas: [Float]
 
-    // MARK: - State (Protected by lock)
-
-    private let lock = NSLock()
+    // MARK: - State (Single-writer: audio thread)
 
     /// Filter states for cascading lowpass (one per band)
     private var filterStates: [Float]
 
-    /// Accumulators for LOD computation (samples within current window)
-    private var accumulators: [[Float]]
+    private struct RunningStats {
+      var minV: Float = 0
+      var maxV: Float = 0
+      var sumSq: Float = 0
+      var count: Int = 0
 
-    /// Total samples processed (for debugging)
-    private var totalSamplesProcessed: Int = 0
+      mutating func reset() {
+        minV = 0
+        maxV = 0
+        sumSq = 0
+        count = 0
+      }
+
+      mutating func add(_ v: Float) {
+        if count == 0 {
+          minV = v
+          maxV = v
+          sumSq = v * v
+          count = 1
+          return
+        }
+        if v < minV { minV = v }
+        if v > maxV { maxV = v }
+        sumSq += (v * v)
+        count += 1
+      }
+    }
+
+    /// Per-band running stats for LOD computation (current window).
+    private var windowStats: [RunningStats]
+
+    /// Total samples processed.
+    private let totalSamplesProcessed: ManagedAtomic<Int>
 
 #if DEBUG
     /// Duration of the most recent `process(_:)` call (nanoseconds).
-    private var debugLastProcessDurationNs: UInt64 = 0
+    private let debugLastProcessDurationNs: ManagedAtomic<UInt64>
 #endif
 
     // MARK: - Triple-Buffered Snapshot (Lock-free read access)
@@ -261,6 +287,9 @@
     /// Direct reference to write slot's bands for fast access.
     private var writeSlot: LODBufferSlot { bufferSlots[writeSlotIndex] }
 
+    /// The writer's current write index (diagnostics only).
+    private let writerWriteIndexAtomic: ManagedAtomic<Int>
+
     // MARK: - Initialization
 
     /// Creates a new multi-band LOD processor.
@@ -278,14 +307,11 @@
       // Initialize filter states
       self.filterStates = Array(repeating: 0, count: configuration.bandCount)
 
-      // Initialize accumulators
-      self.accumulators = Array(
-        repeating: [],
-        count: configuration.bandCount
-      )
-      for i in 0..<configuration.bandCount {
-        accumulators[i].reserveCapacity(configuration.lodRatio * 2)
-      }
+      self.windowStats = Array(repeating: RunningStats(), count: configuration.bandCount)
+      self.totalSamplesProcessed = ManagedAtomic(0)
+#if DEBUG
+      self.debugLastProcessDurationNs = ManagedAtomic(0)
+#endif
 
       // Initialize triple-buffered LOD slots (pre-allocated, never reallocated)
       self.bufferSlots = [
@@ -301,6 +327,7 @@
       self.slotSwapInterval = configuration.snapshotSwapInterval
       self.deltaStartWriteIndex = bufferSlots[writeSlotIndex].writeIndex
       self.deltaWrittenCount = 0
+      self.writerWriteIndexAtomic = ManagedAtomic(bufferSlots[writeSlotIndex].writeIndex)
 
       os_log(
         .info, log: log,
@@ -323,9 +350,6 @@
 #if DEBUG
       let startNs = DispatchTime.now().uptimeNanoseconds
 #endif
-      lock.lock()
-      defer { lock.unlock() }
-
       let bandCount = configuration.bandCount
       let lodRatio = configuration.lodRatio
 
@@ -354,19 +378,22 @@
             lowerBoundSignal = lp
           }
 
-          accumulators[b].append(part)
+          windowStats[b].add(part)
         }
 
         // Check if we have enough samples for an LOD commit
-        if accumulators[0].count >= lodRatio {
+        if windowStats[0].count >= lodRatio {
           commitLOD()
         }
       }
 
-      totalSamplesProcessed += samples.count
+      totalSamplesProcessed.wrappingIncrement(by: samples.count, ordering: .relaxed)
 
 #if DEBUG
-      debugLastProcessDurationNs = DispatchTime.now().uptimeNanoseconds - startNs
+      debugLastProcessDurationNs.store(
+        DispatchTime.now().uptimeNanoseconds - startNs,
+        ordering: .relaxed
+      )
 #endif
     }
 
@@ -395,37 +422,29 @@
     // MARK: - LOD Commit
 
     private func commitLOD() {
-      // Already holding lock from process()
       // Write directly to pre-allocated triple-buffered slot (zero allocation)
       let slot = writeSlot
       let wIdx = slot.writeIndex
       let bandCount = configuration.bandCount
 
       for b in 0..<bandCount {
-        let samples = accumulators[b]
-        guard !samples.isEmpty else { continue }
-
-        var minV: Float = 1.0
-        var maxV: Float = -1.0
-        var sumSq: Float = 0
-        let count = Float(samples.count)
-
-        for val in samples {
-          if val < minV { minV = val }
-          if val > maxV { maxV = val }
-          sumSq += (val * val)
-        }
+        let stats = windowStats[b]
+        guard stats.count > 0 else { continue }
+        let count = Float(stats.count)
 
         // Write directly to pre-allocated buffers (no allocation)
-        slot.bands[b].minBuffer[wIdx] = minV
-        slot.bands[b].maxBuffer[wIdx] = maxV
-        slot.bands[b].rmsBuffer[wIdx] = sqrt(sumSq / count)
-
-        accumulators[b].removeAll(keepingCapacity: true)
+        slot.bands[b].minBuffer[wIdx] = stats.minV
+        slot.bands[b].maxBuffer[wIdx] = stats.maxV
+        slot.bands[b].rmsBuffer[wIdx] = sqrt(stats.sumSq / count)
       }
 
       slot.writeIndex = (wIdx + 1) % configuration.lodBufferLength
       deltaWrittenCount += 1
+      writerWriteIndexAtomic.store(slot.writeIndex, ordering: .relaxed)
+
+      for i in windowStats.indices {
+        windowStats[i].reset()
+      }
 
       // Periodically swap slots for lock-free reading (~60fps)
       commitsSinceSlotSwap += 1
@@ -472,6 +491,7 @@
       // Next publish interval starts at the current write index.
       deltaStartWriteIndex = nextWriteSlot.writeIndex
       deltaWrittenCount = 0
+      writerWriteIndexAtomic.store(nextWriteSlot.writeIndex, ordering: .relaxed)
     }
 
     private func copyDeltaIndices(
@@ -543,8 +563,6 @@
     ///
     /// - Returns: Most up-to-date LOD snapshot.
     public func snapshotLocking() -> MultiBandLODSnapshot {
-      lock.lock()
-      defer { lock.unlock() }
       return writeSlot.toSnapshot()
     }
 
@@ -554,13 +572,10 @@
     ///
     /// Call this when starting a new recording.
     public func reset() {
-      lock.lock()
-      defer { lock.unlock() }
-
       filterStates = Array(repeating: 0, count: configuration.bandCount)
 
-      for i in 0..<configuration.bandCount {
-        accumulators[i].removeAll(keepingCapacity: true)
+      for i in windowStats.indices {
+        windowStats[i].reset()
       }
 
       // Reset all triple-buffered slots (in-place, no allocation)
@@ -573,9 +588,10 @@
       currentSlotIndex.store(1, ordering: .releasing)
       retiringSlotIndex = 2
       commitsSinceSlotSwap = 0
-      totalSamplesProcessed = 0
       deltaStartWriteIndex = bufferSlots[writeSlotIndex].writeIndex
       deltaWrittenCount = 0
+      totalSamplesProcessed.store(0, ordering: .relaxed)
+      writerWriteIndexAtomic.store(bufferSlots[writeSlotIndex].writeIndex, ordering: .relaxed)
 
       os_log(.info, log: log, "Reset all buffers (triple-buffered)")
     }
@@ -590,9 +606,7 @@
 
     /// The writer's current write index (diagnostics only).
     public var writerWriteIndex: Int {
-      lock.lock()
-      defer { lock.unlock() }
-      return writeSlot.writeIndex
+      writerWriteIndexAtomic.load(ordering: .relaxed)
     }
 
     /// Current write index in the circular buffer.
@@ -602,17 +616,13 @@
 
     /// Total number of raw samples processed.
     public var samplesProcessed: Int {
-      lock.lock()
-      defer { lock.unlock() }
-      return totalSamplesProcessed
+      totalSamplesProcessed.load(ordering: .relaxed)
     }
 
 #if DEBUG
     /// Duration of the most recent `process(_:)` call, in nanoseconds.
     public var lastProcessDurationNanoseconds: UInt64 {
-      lock.lock()
-      defer { lock.unlock() }
-      return debugLastProcessDurationNs
+      debugLastProcessDurationNs.load(ordering: .relaxed)
     }
 #endif
 
