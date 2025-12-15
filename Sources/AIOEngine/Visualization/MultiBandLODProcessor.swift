@@ -130,7 +130,7 @@
   ///   // ptr contains all bands concatenated
   /// }
   /// ```
-  public struct LODSnapshotRef: @unchecked Sendable {
+  public struct LODSnapshotRef: @unchecked Sendable, SnapshotProvider, LODSnapshot {
     fileprivate let slot: LODBufferSlot
 
     fileprivate init(_ slot: LODBufferSlot) {
@@ -188,10 +188,14 @@
     }
 
     /// Convert to a copying snapshot (for compatibility or file export).
-    public func toSnapshot() -> MultiBandLODSnapshot {
+    public func toSnapshot() -> MultiBandLODSnapshot? {
       slot.toSnapshot()
     }
   }
+
+public protocol SnapshotProvider {
+    func toSnapshot() -> MultiBandLODSnapshot?
+}
 
   // MARK: - MultiBandLODProcessor
 
