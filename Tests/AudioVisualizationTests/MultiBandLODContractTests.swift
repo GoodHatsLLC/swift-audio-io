@@ -18,6 +18,21 @@
       #expect(config.lodBufferLength == 2)
     }
 
+    @Test("Positive modulo wraps negative indices")
+    func testPositiveModulo() {
+      func positiveModulo(_ x: Int, _ m: Int) -> Int {
+        let r = x % m
+        return r < 0 ? (r + m) : r
+      }
+
+      #expect(positiveModulo(-1, 10) == 9)
+      #expect(positiveModulo(-10, 10) == 0)
+      #expect(positiveModulo(-11, 10) == 9)
+      #expect(positiveModulo(0, 10) == 0)
+      #expect(positiveModulo(10, 10) == 0)
+      #expect(positiveModulo(11, 10) == 1)
+    }
+
     @Test("Flat buffers are band-contiguous")
     func testFlatBufferLayoutBandContiguous() {
       var band0 = BandLODData(bandIndex: 0, capacity: 3)

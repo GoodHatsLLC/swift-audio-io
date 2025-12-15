@@ -35,7 +35,12 @@
 
     /// Computed property: number of raw samples in the buffer.
     public var rawBufferLength: Int {
-      sampleRate * bufferSeconds
+      let (rawBufferLength, overflow) = sampleRate.multipliedReportingOverflow(by: bufferSeconds)
+      precondition(
+        !overflow,
+        "MultiBandLODConfiguration.rawBufferLength overflow: sampleRate=\(sampleRate) bufferSeconds=\(bufferSeconds)"
+      )
+      return rawBufferLength
     }
 
     /// Computed property: number of LOD samples per band.
