@@ -647,7 +647,7 @@
       let adjustedConfig = MultiBandLODConfiguration(
         bandCount: configuration.bandCount,
         lodRatio: configuration.lodRatio,
-        bufferSeconds: max(Int(ceil(fileDuration)) + 1, configuration.bufferSeconds),
+        bufferSeconds: max(max(Int(ceil(fileDuration)), 1), configuration.bufferSeconds),
         sampleRate: Int(processingFormat.sampleRate),
         crossoverMode: configuration.crossoverMode
       )
