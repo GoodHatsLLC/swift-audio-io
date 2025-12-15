@@ -164,18 +164,19 @@
         }
 
       case .custom(let frequencies):
-        let cleaned = frequencies
+        let cleaned =
+          frequencies
           .map(clampFrequency)
           .sorted()
 
         cutoffFrequencies = Array(cleaned.prefix(desiredCutoffCount))
 
         if cutoffFrequencies.count < desiredCutoffCount {
-#if DEBUG
-          assertionFailure(
-            "CrossoverMode.custom expected \(desiredCutoffCount) frequencies, got \(frequencies.count). Padding to fit bandCount."
-          )
-#endif
+          #if DEBUG
+            assertionFailure(
+              "CrossoverMode.custom expected \(desiredCutoffCount) frequencies, got \(frequencies.count). Padding to fit bandCount."
+            )
+          #endif
           let start = cutoffFrequencies.last ?? clampFrequency(40)
           let end = clampFrequency(nyquist * 0.98)
           let remaining = desiredCutoffCount - cutoffFrequencies.count

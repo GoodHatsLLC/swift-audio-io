@@ -824,32 +824,32 @@
       }
     }
 
-      @concurrent
-      private nonisolated func scrub(
-        framePosition: AVAudioFramePosition,
-        file: AVAudioFile,
-        newInstance: PlaybackInstance
-      ) async {
-          player.stop()
-          file.framePosition = framePosition
-          player
-            .scheduleSegment(
-              file,
-              startingFrame: framePosition,
-              frameCount: AVAudioFrameCount(file.length) - AVAudioFrameCount(framePosition),
-              at: nil,
-              completionCallbackType: .dataPlayedBack,
-              completionHandler: { [weak self, newInstance] _ in
-                self?.cleanupPlaybackInstance(newInstance)
-              }
-            )
-          player.play()
-      }
+    @concurrent
+    private nonisolated func scrub(
+      framePosition: AVAudioFramePosition,
+      file: AVAudioFile,
+      newInstance: PlaybackInstance
+    ) async {
+      player.stop()
+      file.framePosition = framePosition
+      player
+        .scheduleSegment(
+          file,
+          startingFrame: framePosition,
+          frameCount: AVAudioFrameCount(file.length) - AVAudioFrameCount(framePosition),
+          at: nil,
+          completionCallbackType: .dataPlayedBack,
+          completionHandler: { [weak self, newInstance] _ in
+            self?.cleanupPlaybackInstance(newInstance)
+          }
+        )
+      player.play()
+    }
 
-      @concurrent
-      private nonisolated func stopPlayback() async {
-          player.stop()
-      }
+    @concurrent
+    private nonisolated func stopPlayback() async {
+      player.stop()
+    }
 
     @MainActor
     public func scrubPlay(to time: TimeInterval) throws -> Playback? {
@@ -862,9 +862,9 @@
         let framePosition = AVAudioFramePosition(time * file.processingFormat.sampleRate)
         let newInstance = PlaybackInstance(id: .init(), file: file)
         state.playbackInstance = newInstance
-          Task {
-              await scrub(framePosition: framePosition, file: file, newInstance: newInstance)
-          }
+        Task {
+          await scrub(framePosition: framePosition, file: file, newInstance: newInstance)
+        }
 
         let newPlayback = Playback(
           id: newInstance.id,
@@ -887,9 +887,9 @@
     @MainActor
     public func stopPlayback() throws {
       if player.isPlaying {
-          Task {
-              await self.stopPlayback()
-          }
+        Task {
+          await self.stopPlayback()
+        }
       }
       let finishedFile: AVAudioFile? = state.withLock { state in
         if let foundInstance = state.playbackInstance {
@@ -902,7 +902,7 @@
       finishedFile?.close()
       playbackTask = nil
       placeState(\.playbackInstance, nil)
-     playback = nil
+      playback = nil
     }
 
     /// Pauses the current playback without stopping it.
