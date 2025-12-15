@@ -82,6 +82,8 @@
       case invalidScrubTime(details: Double)
       /// The scrub track is invalid.
       case invalidScrubTrack
+      /// The specified time range is invalid for segment playback.
+      case invalidTimeRange
 
       public var errorDescription: String? {
         switch self {
@@ -100,6 +102,8 @@
           "Progress can only be scrubbed between 0..<1. (value: \(details))"
         case .invalidScrubTrack:
           "A track must be playing to be scrubbed to a time"
+        case .invalidTimeRange:
+          "The specified time range is invalid"
         }
       }
 
@@ -806,6 +810,92 @@
       player.play()
       resetPlaybackTimer(to: playbackInstance)
       return playback
+    }
+
+    /// Plays a specific segment (time range) of an audio file.
+    ///
+    /// Use this for non-destructive audio editing playback, where segments of the
+    /// original file are played in sequence.
+    ///
+    /// - Parameters:
+    ///   - url: The URL of the audio file.
+    ///   - startTime: Start time in seconds within the file.
+    ///   - endTime: End time in seconds within the file.
+    ///   - onComplete: Called when the segment finishes playing (on main actor).
+    /// - Returns: A `Playback` instance representing the segment playback state.
+    /// - Throws: An `AIOError.cannotPlayWhileRecording` error if currently recording.
+    @MainActor
+    public func playSegment(
+      url: URL,
+      startTime: TimeInterval,
+      endTime: TimeInterval,
+      onComplete: (@MainActor @Sendable () -> Void)? = nil
+    ) throws -> Playback {
+      guard !isRecording else {
+        throw AIOError.cannotPlayWhileRecording
+      }
+
+      // Stop any existing playback
+      if getPlayback() != nil {
+        player.stop()
+        engine.stop()
+        engine.disconnectNodeOutput(player)
+        state.playbackInstance = nil
+        setPlayback(nil)
+      } else {
+        engine.stop()
+        player.stop()
+      }
+
+      let file = try AVAudioFile(forReading: url)
+      let sampleRate = file.processingFormat.sampleRate
+      let startFrame = AVAudioFramePosition(startTime * sampleRate)
+      let duration = endTime - startTime
+      let frameCount = AVAudioFrameCount(duration * sampleRate)
+
+      // Validate frame range
+      guard startFrame >= 0, frameCount > 0,
+            AVAudioFramePosition(startFrame) + AVAudioFramePosition(frameCount) <= file.length
+      else {
+        throw AIOError.invalidTimeRange
+      }
+
+      let playbackInstance = PlaybackInstance(id: .init(), file: file)
+
+      engine.connect(player, to: engine.outputNode, format: file.processingFormat)
+      state.playbackInstance = playbackInstance
+
+      let player = player
+      player.scheduleSegment(
+        file,
+        startingFrame: startFrame,
+        frameCount: frameCount,
+        at: nil,
+        completionCallbackType: .dataPlayedBack
+      ) { [weak self, playbackInstance] _ in
+        self?.cleanupPlaybackInstance(playbackInstance)
+        if let onComplete {
+          Task { @MainActor in
+            onComplete()
+          }
+        }
+      }
+
+      try engine.start()
+
+      // Create playback state reflecting the segment (not full file)
+      let segmentPlayback = Playback(
+        id: playbackInstance.id,
+        file: url,
+        isPlaying: true,
+        time: startTime,
+        duration: endTime  // Use endTime as duration for progress calculation
+      )
+      setPlayback(segmentPlayback)
+      player.play()
+      resetPlaybackTimer(to: playbackInstance)
+
+      return segmentPlayback
     }
 
     func resetPlaybackTimer(to instance: PlaybackInstance) {
