@@ -244,6 +244,8 @@
     // MARK: - Private Properties
 
     private let configuration: Configuration
+
+#if DEBUG
     private let processingQueue = DispatchQueue(
       label: "audio-visualization",
       qos: .userInteractive
@@ -258,6 +260,7 @@
     private let maxVisualizationSamples: Int
     private var readScratchBuffer: [Float]
     private var lastUpdateTime: Date = .now
+#endif
 
     // MARK: - Initialization
 
@@ -266,6 +269,8 @@
     /// - Parameter configuration: The configuration to use for the visualization engine.
     public init(configuration: Configuration = Configuration()) {
       self.configuration = configuration
+
+#if DEBUG
       self.amplitudeAnalyzer = AmplitudeAnalyzer(
         configuration: configuration.amplitudeAnalyzerConfiguration)
       self.frequencyBucketer = FrequencyBucketer(
@@ -277,13 +282,7 @@
       var builtFrequencyAnalyzer: FrequencyAnalyzer?
       var frequencySampleCount = 0
 
-      #if DEBUG
-        let effectiveFrequencyConfig = configuration.frequencyAnalyzerConfiguration
-      #else
-        let effectiveFrequencyConfig: FrequencyAnalyzer.Configuration? = nil
-      #endif
-
-      if let frequencyConfig = effectiveFrequencyConfig {
+      if let frequencyConfig = configuration.frequencyAnalyzerConfiguration {
         frequencySampleCount = frequencyConfig.fftSize
         do {
           builtFrequencyAnalyzer = try FrequencyAnalyzer(configuration: frequencyConfig)
@@ -307,6 +306,7 @@
       self.maxVisualizationSamples = resolvedMaxSamples
       self.ringBuffer = RingBuffer<Float>(capacity: ringCapacity)
       self.readScratchBuffer = Array(repeating: 0.0, count: resolvedMaxSamples)
+#endif
     }
 
     deinit {
@@ -320,8 +320,11 @@
       guard !isActive else { return }
 
       isActive = true
+
+#if DEBUG
       lastUpdateTime = .now
       setupUpdateTimer()
+#endif
       log.info("Audio visualization started")
     }
 
@@ -329,8 +332,10 @@
     public func stopVisualization() {
       guard isActive else { return }
 
-      updateTimer?.cancel()
-      updateTimer = nil
+      #if DEBUG
+        updateTimer?.cancel()
+        updateTimer = nil
+      #endif
       isActive = false
 
       // Clear data
@@ -338,9 +343,11 @@
       frequencyDomain = .empty
       beat = .empty
       spectrumPeakHold.removeAll()
-      frequencyBucketer.resetPeakHold()
-      beatDetector.reset()
-      ringBuffer.clearIndices()
+      #if DEBUG
+        frequencyBucketer.resetPeakHold()
+        beatDetector.reset()
+        ringBuffer.clearIndices()
+      #endif
       lodProcessor?.reset()
 
       log.info("Audio visualization stopped")
@@ -350,14 +357,18 @@
     ///
     /// - Parameter mode: The new bucketing mode to use.
     public func updateBucketMode(_ mode: FrequencyBucketMode) {
-      frequencyBucketer.updateMode(mode)
+      #if DEBUG
+        frequencyBucketer.updateMode(mode)
+      #endif
     }
 
     /// Updates the beat detection configuration.
     ///
     /// - Parameter configuration: The new beat detection configuration.
     public func updateBeatDetectionConfiguration(_ configuration: BeatDetectionConfiguration) {
-      beatDetector.updateConfiguration(configuration)
+      #if DEBUG
+        beatDetector.updateConfiguration(configuration)
+      #endif
     }
 
     // MARK: - Multi-Band LOD
@@ -413,6 +424,7 @@
 
     // MARK: - Private Methods
 
+#if DEBUG
     private var updateTimer: DispatchSourceTimer?
 
     private func setupUpdateTimer() {
@@ -516,6 +528,7 @@
 
       return peaks
     }
+#endif
   }
 
   extension AudioVisualizationEngine: BufferReceiver {
@@ -523,7 +536,9 @@
 
     nonisolated public func processBuffer(_ data: UnsafeBufferPointer<Float>) {
       guard isActive, data.count > 0 else { return }
+#if DEBUG
       self.updateAudioBuffer(data)
+#endif
 
       // Also feed multi-band LOD processor if enabled
       lodProcessor?.process(data)
