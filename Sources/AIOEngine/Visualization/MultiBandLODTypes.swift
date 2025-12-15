@@ -114,7 +114,23 @@
     ///   - sampleRate: Audio sample rate.
     /// - Returns: Array of alpha values for each crossover point.
     public func computeAlphas(bandCount: Int, sampleRate: Int) -> [Float] {
-      var alphas: [Float] = []
+      let nyquist = Float(sampleRate) * 0.5
+
+      func clampFrequency(_ f: Float) -> Float {
+        let maxF = max(1.0, nyquist * 0.98)
+        return min(max(f, 1.0), maxF)
+      }
+
+      func alphaForCutoff(_ cutoffHz: Float) -> Float {
+        let f = clampFrequency(cutoffHz)
+        let sr = max(Float(sampleRate), 1.0)
+        let alpha = 1.0 - exp((-2.0 * Float.pi * f) / sr)
+        return min(max(alpha, 0.0), 1.0)
+      }
+
+      let desiredCutoffCount = max(bandCount - 1, 0)
+      var cutoffFrequencies: [Float] = []
+      cutoffFrequencies.reserveCapacity(desiredCutoffCount)
 
       switch self {
       case .mel(let minFreq, let maxFreq):
@@ -126,34 +142,66 @@
           700 * (pow(10, mel / 2595) - 1)
         }
 
-        let minMel = hzToMel(minFreq)
-        let maxMel = hzToMel(maxFreq)
+        let minHz = clampFrequency(min(minFreq, maxFreq))
+        let maxHz = clampFrequency(max(minFreq, maxFreq))
+        let minMel = hzToMel(minHz)
+        let maxMel = hzToMel(maxHz)
 
-        for i in 1..<bandCount {
+        for i in 1..<(desiredCutoffCount + 1) {
           let t = Float(i) / Float(bandCount)
           let mel = minMel + (t * (maxMel - minMel))
           let freq = melToHz(mel)
-          let alpha = min(1.0, (2.0 * Float.pi * freq) / Float(sampleRate))
-          alphas.append(alpha)
+          cutoffFrequencies.append(freq)
         }
 
       case .linear(let minFreq, let maxFreq):
-        let range = maxFreq - minFreq
-        for i in 1..<bandCount {
+        let minHz = clampFrequency(min(minFreq, maxFreq))
+        let maxHz = clampFrequency(max(minFreq, maxFreq))
+        let range = maxHz - minHz
+        for i in 1..<(desiredCutoffCount + 1) {
           let t = Float(i) / Float(bandCount)
-          let freq = minFreq + (t * range)
-          let alpha = min(1.0, (2.0 * Float.pi * freq) / Float(sampleRate))
-          alphas.append(alpha)
+          cutoffFrequencies.append(minHz + (t * range))
         }
 
       case .custom(let frequencies):
-        for freq in frequencies {
-          let alpha = min(1.0, (2.0 * Float.pi * freq) / Float(sampleRate))
-          alphas.append(alpha)
+        let cleaned = frequencies
+          .map(clampFrequency)
+          .sorted()
+
+        cutoffFrequencies = Array(cleaned.prefix(desiredCutoffCount))
+
+        if cutoffFrequencies.count < desiredCutoffCount {
+#if DEBUG
+          assertionFailure(
+            "CrossoverMode.custom expected \(desiredCutoffCount) frequencies, got \(frequencies.count). Padding to fit bandCount."
+          )
+#endif
+          let start = cutoffFrequencies.last ?? clampFrequency(40)
+          let end = clampFrequency(nyquist * 0.98)
+          let remaining = desiredCutoffCount - cutoffFrequencies.count
+          if remaining > 0 {
+            let step = (end - start) / Float(remaining + 1)
+            for i in 1...remaining {
+              cutoffFrequencies.append(start + (Float(i) * step))
+            }
+          }
         }
       }
 
-      // Final band gets alpha = 1.0 (passthrough)
+      cutoffFrequencies = cutoffFrequencies.map(clampFrequency)
+
+      // Ensure strictly ascending cutoffs (avoid accidental duplicates after clamping).
+      if cutoffFrequencies.count >= 2 {
+        for i in 1..<cutoffFrequencies.count {
+          if cutoffFrequencies[i] <= cutoffFrequencies[i - 1] {
+            cutoffFrequencies[i] = min(cutoffFrequencies[i - 1] + 1.0, nyquist * 0.98)
+          }
+        }
+      }
+
+      var alphas = cutoffFrequencies.map(alphaForCutoff)
+
+      // Keep a trailing value for diagnostics/debugging parity with older code paths.
       alphas.append(1.0)
 
       return alphas

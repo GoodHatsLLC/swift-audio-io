@@ -363,6 +363,96 @@
 
     // MARK: - Helper Functions
 
+    @Test("Band split: 200 Hz dominates low band")
+    func testBandSplitLowTone() {
+      let config = MultiBandLODConfiguration(
+        bandCount: 5,
+        lodRatio: 64,
+        bufferSeconds: 10,
+        sampleRate: 44_100,
+        crossoverMode: .mel(minFreq: 40, maxFreq: 15_000),
+        snapshotSwapInterval: 1
+      )
+      let processor = MultiBandLODProcessor(configuration: config)
+
+      let samples = generateSineWave(frequency: 200, sampleRate: 44_100, samples: 44_100 / 2)
+      processor.process(samples)
+
+      let snapshot = processor.snapshotLocking()
+      let averages = recentAverageRMS(snapshot, recentSamples: 16)
+
+      let maxBand = averages.enumerated().max(by: { $0.element < $1.element })?.offset
+      #expect(maxBand == 0)
+    }
+
+    @Test("Band split: 2 kHz shifts energy upward")
+    func testBandSplitMidTone() {
+      let config = MultiBandLODConfiguration(
+        bandCount: 5,
+        lodRatio: 64,
+        bufferSeconds: 10,
+        sampleRate: 44_100,
+        crossoverMode: .mel(minFreq: 40, maxFreq: 15_000),
+        snapshotSwapInterval: 1
+      )
+      let processor = MultiBandLODProcessor(configuration: config)
+
+      let samples = generateSineWave(frequency: 2000, sampleRate: 44_100, samples: 44_100 / 2)
+      processor.process(samples)
+
+      let snapshot = processor.snapshotLocking()
+      let averages = recentAverageRMS(snapshot, recentSamples: 16)
+
+      let maxBand = averages.enumerated().max(by: { $0.element < $1.element })?.offset
+      #expect(maxBand == 1 || maxBand == 2)
+      #expect(averages[maxBand ?? 0] > averages[0])
+    }
+
+    @Test("Band split: 10 kHz shows meaningful top-band energy")
+    func testBandSplitHighTone() {
+      let config = MultiBandLODConfiguration(
+        bandCount: 5,
+        lodRatio: 64,
+        bufferSeconds: 10,
+        sampleRate: 44_100,
+        crossoverMode: .mel(minFreq: 40, maxFreq: 15_000),
+        snapshotSwapInterval: 1
+      )
+      let processor = MultiBandLODProcessor(configuration: config)
+
+      let samples = generateSineWave(frequency: 10_000, sampleRate: 44_100, samples: 44_100 / 2)
+      processor.process(samples)
+
+      let snapshot = processor.snapshotLocking()
+      let averages = recentAverageRMS(snapshot, recentSamples: 16)
+
+      let maxBand = averages.enumerated().max(by: { $0.element < $1.element })?.offset
+      #expect(maxBand == 4)
+      #expect(averages[4] > 0.001)
+    }
+
+    private func recentAverageRMS(_ snapshot: MultiBandLODSnapshot, recentSamples: Int) -> [Float] {
+      let lodLength = snapshot.lodBufferLength
+      guard lodLength > 0 else { return Array(repeating: 0, count: snapshot.bandCount) }
+
+      let count = min(recentSamples, lodLength)
+      let writeIndex = snapshot.writeIndex
+
+      func wrapped(_ idx: Int) -> Int {
+        let r = idx % lodLength
+        return r < 0 ? (r + lodLength) : r
+      }
+
+      return snapshot.bands.map { band in
+        var sum: Float = 0
+        for i in 0..<count {
+          let idx = wrapped(writeIndex - 1 - i)
+          sum += band.rmsBuffer[idx]
+        }
+        return sum / Float(count)
+      }
+    }
+
     private func generateSineWave(frequency: Double, sampleRate: Int, samples: Int) -> [Float] {
       var result: [Float] = []
       result.reserveCapacity(samples)

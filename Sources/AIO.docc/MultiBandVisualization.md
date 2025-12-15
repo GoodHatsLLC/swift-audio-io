@@ -211,15 +211,21 @@ This reads the entire audio file and produces a complete LOD snapshot suitable f
 
 ### Mel Scale (Default)
 
-Bands are distributed according to human auditory perception:
+Bands are distributed according to human auditory perception. Band boundaries are derived from the configured `minFreq`/`maxFreq` and `bandCount` using mel-space interpolation, then converted back to Hz.
+
+For the default configuration (`bandCount=5`, `.mel(minFreq: 40, maxFreq: 15000)`), the crossover frequencies are approximately:
+- 663 Hz
+- 1811 Hz
+- 3926 Hz
+- 7822 Hz
 
 | Band | Frequency Range | Content |
 |------|-----------------|---------|
-| 0 | ~0-300 Hz | Sub-bass, kick drums |
-| 1 | ~300-700 Hz | Bass, lower vocals |
-| 2 | ~700-1.5 kHz | Midrange, speech |
-| 3 | ~1.5-4 kHz | Presence, clarity |
-| 4 | ~4-22 kHz | Brilliance, air |
+| 0 | ~40-663 Hz | Sub-bass, kick drums |
+| 1 | ~663-1811 Hz | Bass, lower vocals |
+| 2 | ~1.8-3.9 kHz | Midrange, speech |
+| 3 | ~3.9-7.8 kHz | Presence, clarity |
+| 4 | ~7.8-15 kHz | Brilliance, air |
 
 ### Linear Scale
 
