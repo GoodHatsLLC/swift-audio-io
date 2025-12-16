@@ -406,7 +406,7 @@
         try configureAudioSession(for: configuration)
 
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(
-          "\(UUID().uuidString).\(configuration.fileExtension)",
+          Self.generateRecordingFilename(extension: configuration.fileExtension),
           conformingTo: configuration.outputConfiguration.fileFormat.utType)
 
         let file = try AVAudioFile(forWriting: url, settings: fileSettings)
@@ -1384,6 +1384,13 @@
           $0.endBufferTask()
         }
       }.result
+    }
+
+    // MARK: - Filename Generation
+
+    /// Generates a semantic filename for recordings.
+    private static func generateRecordingFilename(extension ext: String) -> String {
+      RecordingFilename(fileExtension: ext).filename
     }
   }
 
