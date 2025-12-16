@@ -175,12 +175,31 @@ extension RecordingFilename: Codable {
 
 extension RecordingFilename {
   /// ISO 8601 basic format formatter: `YYYYMMDDTHHmmss` (UTC, no separators).
-  private static let formatter: ISO8601DateFormatter = {
-    let formatter = ISO8601DateFormatter()
-    formatter.formatOptions = [.withYear, .withMonth, .withDay, .withTime]
-    formatter.timeZone = TimeZone(identifier: "UTC")
-    return formatter
-  }()
+  private final class FormatterBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private let formatter: ISO8601DateFormatter
+
+    init() {
+      let formatter = ISO8601DateFormatter()
+      formatter.formatOptions = [.withYear, .withMonth, .withDay, .withTime]
+      formatter.timeZone = TimeZone(identifier: "UTC")
+      self.formatter = formatter
+    }
+
+    func string(from date: Date) -> String {
+      lock.lock()
+      defer { lock.unlock() }
+      return formatter.string(from: date)
+    }
+
+    func date(from string: String) -> Date? {
+      lock.lock()
+      defer { lock.unlock() }
+      return formatter.date(from: string)
+    }
+  }
+
+  private static let formatter = FormatterBox()
 }
 
 // MARK: - Phonetic Word Generation
