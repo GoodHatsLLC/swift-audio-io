@@ -19,6 +19,14 @@
     /// Default is 300 (5 minutes).
     public let bufferSeconds: Int
 
+    /// Optional override for the raw buffer length in samples.
+    ///
+    /// When set, this value is used instead of `sampleRate * bufferSeconds` for
+    /// buffer sizing and shader mapping. This is primarily intended for offline
+    /// (file-based) generation where the exact file frame count is known and
+    /// rounding to whole seconds would introduce extra empty space.
+    public let rawBufferLengthOverride: Int?
+
     /// Audio sample rate in Hz.
     /// Default is 44100.
     public let sampleRate: Int
@@ -35,6 +43,9 @@
 
     /// Computed property: number of raw samples in the buffer.
     public var rawBufferLength: Int {
+      if let rawBufferLengthOverride {
+        return max(rawBufferLengthOverride, 1)
+      }
       let (rawBufferLength, overflow) = sampleRate.multipliedReportingOverflow(by: bufferSeconds)
       precondition(
         !overflow,
@@ -63,7 +74,8 @@
       bufferSeconds: Int = 300,
       sampleRate: Int = 44_100,
       crossoverMode: CrossoverMode = .mel(minFreq: 40, maxFreq: 15000),
-      snapshotSwapInterval: Int = 6
+      snapshotSwapInterval: Int = 6,
+      rawBufferLengthOverride: Int? = nil
     ) {
       self.bandCount = max(1, min(8, bandCount))
       self.lodRatio = max(1, lodRatio)
@@ -71,6 +83,7 @@
       self.sampleRate = max(1, sampleRate)
       self.crossoverMode = crossoverMode
       self.snapshotSwapInterval = max(1, snapshotSwapInterval)
+      self.rawBufferLengthOverride = rawBufferLengthOverride
     }
 
     /// Default configuration optimized for real-time recording visualization.
