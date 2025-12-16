@@ -1,5 +1,6 @@
 #if canImport(AVFoundation)
   import AIOEngine
+  import AVFoundation
   import Foundation
   import Testing
 
@@ -33,6 +34,44 @@
     }
 
     // MARK: - Processor Basic Tests
+
+    @Test("Offline generateFromFile uses exact frame count (plus one LOD pad) and monotonic writeIndex")
+    func testGenerateFromFileSizingAndWriteIndex() async throws {
+      let sampleRate: Double = 44_100
+      let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1)
+      #expect(format != nil)
+      guard let format else { return }
+
+      let frameCount: AVAudioFrameCount = 1000
+      let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount)
+      #expect(buffer != nil)
+      guard let buffer else { return }
+      buffer.frameLength = frameCount
+
+      if let channelData = buffer.floatChannelData {
+        for i in 0..<Int(frameCount) {
+          channelData[0][i] = sin(2.0 * .pi * 440.0 * Double(i) / sampleRate)
+        }
+      }
+
+      let url = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString)
+        .appendingPathExtension("caf")
+      defer { try? FileManager.default.removeItem(at: url) }
+
+      let file = try AVAudioFile(forWriting: url, settings: format.settings)
+      try file.write(from: buffer)
+
+      let config = MultiBandLODConfiguration(bandCount: 5, lodRatio: 128, bufferSeconds: 1, sampleRate: Int(sampleRate))
+      let snapshot = try await MultiBandLODProcessor.generateFromFile(url: url, configuration: config)
+
+      #expect(snapshot.rawBufferLength == Int(frameCount) + config.lodRatio)
+
+      let expectedWriteIndex = Int(ceil(Double(Int(frameCount)) / Double(config.lodRatio)))
+      #expect(snapshot.writeIndex == expectedWriteIndex)
+      #expect(snapshot.writeIndex > 0)
+      #expect(snapshot.writeIndex < snapshot.lodBufferLength)
+    }
 
     @Test("Processor creates valid snapshot")
     func testProcessorCreatesValidSnapshot() {

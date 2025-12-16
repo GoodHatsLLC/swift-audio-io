@@ -656,14 +656,27 @@ public protocol SnapshotProvider {
       let processingFormat = file.processingFormat
       let totalFrames = AVFAudio.AVAudioFrameCount(file.length)
 
-      // Adjust configuration for file duration
-      let fileDuration = Double(file.length) / processingFormat.sampleRate
+      // Adjust configuration for the file, using the *exact* frame count for buffer sizing.
+      // This avoids padding up to whole seconds (or a default live buffer size), which can
+      // otherwise make offline waveforms look "chunky" and allow panning into empty space.
+      let fileFrameCount = max(Int(file.length), 0)
+      let (paddedFrameCount, paddedOverflow) = fileFrameCount.addingReportingOverflow(
+        max(configuration.lodRatio, 1)
+      )
+      // Ensure offline buffers have at least one extra LOD slot so `writeIndex` doesn't wrap.
+      // This keeps offline `writeIndex` monotonic (useful for sizing and mapping) while still
+      // allowing us to commit the final partial window.
+      let rawBufferLengthOverride = paddedOverflow ? fileFrameCount : paddedFrameCount
+      let sampleRate = max(processingFormat.sampleRate, 1)
+      let fileDuration = Double(file.length) / sampleRate
       let adjustedConfig = MultiBandLODConfiguration(
         bandCount: configuration.bandCount,
         lodRatio: configuration.lodRatio,
-        bufferSeconds: max(max(Int(ceil(fileDuration)), 1), configuration.bufferSeconds),
-        sampleRate: Int(processingFormat.sampleRate),
-        crossoverMode: configuration.crossoverMode
+        bufferSeconds: max(Int(ceil(fileDuration)), 1),
+        sampleRate: Int(sampleRate),
+        crossoverMode: configuration.crossoverMode,
+        snapshotSwapInterval: configuration.snapshotSwapInterval,
+        rawBufferLengthOverride: rawBufferLengthOverride
       )
 
       let processor = MultiBandLODProcessor(configuration: adjustedConfig)
@@ -712,7 +725,11 @@ public protocol SnapshotProvider {
         framesRemaining -= buffer.frameLength
       }
 
-      // Ensure the final partial interval is included even if no publish occurred.
+      // Ensure the final partial interval is included even if it didn't reach a full LOD window.
+      if processor.windowStats.first?.count ?? 0 > 0 {
+        processor.commitLOD()
+      }
+
       return processor.snapshotLocking()
     }
 
