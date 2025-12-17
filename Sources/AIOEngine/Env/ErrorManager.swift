@@ -1,4 +1,3 @@
-#if canImport(Observation)
   import Observation
   import SystemLog
 
@@ -7,7 +6,7 @@
   @Observable
   @MainActor
   public final class ErrorManager {
-    public init() {}
+    public nonisolated init() {}
     public private(set) var errors: [any Error] = []
     public func popError() -> (any Error)? {
       if !errors.isEmpty {
@@ -36,4 +35,12 @@
       )
     }
   }
+
+#if canImport(SwiftUI)
+import SwiftUI
+
+extension EnvironmentValues {
+  @Entry var errorManager: ErrorManager = .init()
+}
+
 #endif
