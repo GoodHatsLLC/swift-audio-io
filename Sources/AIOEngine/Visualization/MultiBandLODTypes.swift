@@ -335,10 +335,10 @@
       lodRatio: 128,
       rawBufferLength: 0
     )
-      
-      public func toSnapshot() -> MultiBandLODSnapshot? {
-          self
-      }
+
+    public func toSnapshot() -> MultiBandLODSnapshot? {
+      self
+    }
 
     // MARK: - GPU Buffer Helpers
 

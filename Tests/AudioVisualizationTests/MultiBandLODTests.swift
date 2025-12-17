@@ -35,7 +35,8 @@
 
     // MARK: - Processor Basic Tests
 
-    @Test("Offline generateFromFile uses exact frame count (plus one LOD pad) and monotonic writeIndex")
+    @Test(
+      "Offline generateFromFile uses exact frame count (plus one LOD pad) and monotonic writeIndex")
     func testGenerateFromFileSizingAndWriteIndex() async throws {
       let sampleRate: Double = 44_100
       let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1)
@@ -62,8 +63,10 @@
       let file = try AVAudioFile(forWriting: url, settings: format.settings)
       try file.write(from: buffer)
 
-      let config = MultiBandLODConfiguration(bandCount: 5, lodRatio: 128, bufferSeconds: 1, sampleRate: Int(sampleRate))
-      let snapshot = try await MultiBandLODProcessor.generateFromFile(url: url, configuration: config)
+      let config = MultiBandLODConfiguration(
+        bandCount: 5, lodRatio: 128, bufferSeconds: 1, sampleRate: Int(sampleRate))
+      let snapshot = try await MultiBandLODProcessor.generateFromFile(
+        url: url, configuration: config)
 
       #expect(snapshot.rawBufferLength == Int(frameCount) + config.lodRatio)
 
