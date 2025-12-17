@@ -855,7 +855,7 @@
 
       // Validate frame range
       guard startFrame >= 0, frameCount > 0,
-            AVAudioFramePosition(startFrame) + AVAudioFramePosition(frameCount) <= file.length
+        AVAudioFramePosition(startFrame) + AVAudioFramePosition(frameCount) <= file.length
       else {
         throw AIOError.invalidTimeRange
       }

@@ -215,7 +215,7 @@ extension RecordingFilename {
     // Consonants that work well at start and end of syllables
     let consonants: [Character] = [
       "b", "d", "f", "g", "h", "k", "l", "m",
-      "n", "p", "r", "s", "t", "v", "w", "z"
+      "n", "p", "r", "s", "t", "v", "w", "z",
     ]
 
     // Simple vowels for clear pronunciation

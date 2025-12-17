@@ -193,9 +193,9 @@
     }
   }
 
-public protocol SnapshotProvider {
+  public protocol SnapshotProvider {
     func toSnapshot() -> MultiBandLODSnapshot?
-}
+  }
 
   // MARK: - MultiBandLODProcessor
 
