@@ -570,6 +570,19 @@
       return writeSlot.toSnapshot()
     }
 
+    /// Flushes any partially-accumulated LOD window into the buffers.
+    ///
+    /// `process(_:)` only commits when it has seen a full `lodRatio` samples.
+    /// For offline/file-based workflows (e.g. rendering a waveform for an exact
+    /// time range), you typically want the final partial window to be included.
+    ///
+    /// This commits the current window if it contains at least one sample.
+    public func finalize() {
+      if windowStats.first?.count ?? 0 > 0 {
+        commitLOD()
+      }
+    }
+
     // MARK: - Reset
 
     /// Resets all buffers and filter states.
