@@ -330,30 +330,31 @@
     ///
     /// - Parameter configuration: The configuration to use for recording.
     /// - Throws: An `AIOError` if the recording configuration is invalid or if the engine fails to start.
-    @MainActor
-    public func startRecording(configuration: RecordingConfiguration) throws {
-      // Stop any active playback before recording
-      if player.isPlaying {
-        player.stop()
-        placeState(\.playbackInstance, nil)
-        playback = nil
-      }
-      try warm(configuration: configuration)
-
-      let (buffers, writefile) = state { ($0.audioBuffers, $0.file) }
-      guard let buffers = buffers,
-        let processingFormat = configuration.processingFormat,
-        let writeFile = writefile,
-        let url = writefile?.url
-      else {
-        throw AIOError.invalidRecordingConfiguration(
-          details: "state after warm(configuration:) was invalid")
-      }
-      try engine.start()
-      let fileFormat = configuration.outputConfiguration.fileFormat.rawValue
-      onRecordingStarted?(url, fileFormat)
-      startFileWriteLoop(flushing: buffers, of: processingFormat, to: writeFile)
-      self.isRecording = true
+    public nonisolated func startRecording(configuration: RecordingConfiguration) async throws {
+      try await Task { @MainActor in
+        // Stop any active playback before recording
+        if player.isPlaying {
+          player.stop()
+          placeState(\.playbackInstance, nil)
+          playback = nil
+        }
+        try warm(configuration: configuration)
+        
+        let (buffers, writefile) = state { ($0.audioBuffers, $0.file) }
+        guard let buffers = buffers,
+              let processingFormat = configuration.processingFormat,
+              let writeFile = writefile,
+              let url = writefile?.url
+        else {
+          throw AIOError.invalidRecordingConfiguration(
+            details: "state after warm(configuration:) was invalid")
+        }
+        try engine.start()
+        let fileFormat = configuration.outputConfiguration.fileFormat.rawValue
+        onRecordingStarted?(url, fileFormat)
+        startFileWriteLoop(flushing: buffers, of: processingFormat, to: writeFile)
+        self.isRecording = true
+      }.value
     }
 
     private func startFileWriteLoop(
