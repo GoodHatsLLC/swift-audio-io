@@ -62,9 +62,8 @@
     /// - Parameter sampleRate: The sample rate to request.
     /// - Returns: The actual sample rate after the request.
     /// - Throws: An error if the sample rate cannot be set.
-    public func request(sampleRate: SampleRate) throws -> SampleRate {
+    public func request(sampleRate: SampleRate) throws {
       try session.setPreferredSampleRate(sampleRate.platform)
-      return self.sampleRate
     }
 
     /// Requests a specific audio source.

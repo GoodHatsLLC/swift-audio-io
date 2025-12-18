@@ -121,18 +121,22 @@
       }
       set {
         errorManager.report {
-          let actual = try env.request(sampleRate: newValue)
-          _selectedSampleRate = actual
-          if actual == newValue {
-            log.info("􁐚 Sample rate set to requested value: \(newValue, privacy: .public)")
-          } else {
-            log
-              .info(
+          try env.request(sampleRate: newValue)
+          _selectedSampleRate = newValue
+          Task {
+            let actual = env.sampleRate
+            if actual == newValue {
+              log.info("􁐚 Sample rate set to requested value: \(newValue, privacy: .public)")
+            } else {
+              log
+                .info(
                 """
                 􁐚 Sample rate \(newValue, privacy: .public) rejected. \
                 Set to \(actual, privacy: .public)
                 """
-              )
+                )
+              _selectedSampleRate = actual
+            }
           }
         } catch: { error in
           let actual = env.sampleRate
