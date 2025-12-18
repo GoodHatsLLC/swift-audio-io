@@ -196,6 +196,31 @@
 
     /// A Boolean value that indicates whether the engine is currently recording.
     @MainActor public private(set) var isRecording: Bool = false
+
+    /// The user's desired recording state.
+    ///
+    /// When set via ``setDesiredRecordingState(_:configuration:)``, the engine will
+    /// attempt to reconcile this with the actual ``isRecording`` state for the
+    /// configured timeout period. If reconciliation fails, this property is
+    /// automatically set back to match ``isRecording``.
+    @MainActor public private(set) var wantsRecording: Bool = false
+
+    /// Configuration for state reconciliation attempts.
+    public var reconciliationConfiguration: ReconciliationConfiguration = .default
+
+    /// Called when the engine fails to reconcile the desired recording state
+    /// with the actual state after the configured timeout.
+    ///
+    /// - Parameter desiredState: The state that could not be achieved.
+    public var onReconciliationFailed: (@Sendable @MainActor (Bool) -> Void)?
+
+    private var reconciliationTask: Task<Void, Never>? {
+      willSet {
+        if reconciliationTask != newValue {
+          reconciliationTask?.cancel()
+        }
+      }
+    }
     /// The current playback state, or `nil` if no audio is playing.
     @MainActor public private(set) var playback: Playback?
     /// A Boolean value that indicates whether the engine is currently playing back audio.
@@ -321,6 +346,155 @@
     /// Creates a new instance of the audio engine.
     public init() {
       engine.attach(player)
+    }
+
+    /// Creates a new instance of the audio engine with custom reconciliation configuration.
+    ///
+    /// - Parameter reconciliationConfiguration: Configuration for state reconciliation.
+    public init(reconciliationConfiguration: ReconciliationConfiguration) {
+      self.reconciliationConfiguration = reconciliationConfiguration
+      engine.attach(player)
+    }
+
+    // MARK: - Recording State Management
+
+    /// Sets the desired recording state and attempts to reconcile it with the actual state.
+    ///
+    /// This method manages the recording lifecycle with automatic retry logic.
+    /// When requesting to start recording, the engine will repeatedly attempt
+    /// to warm up and start until either:
+    /// - Recording starts successfully
+    /// - The reconciliation timeout expires
+    /// - A non-transient error occurs
+    ///
+    /// When requesting to stop recording, the engine stops immediately.
+    ///
+    /// - Parameters:
+    ///   - desiredState: Whether recording should be active.
+    ///   - configuration: The recording configuration to use when starting.
+    ///                    Required when `desiredState` is `true`.
+    @MainActor
+    public func setDesiredRecordingState(
+      _ desiredState: Bool,
+      configuration: RecordingConfiguration? = nil
+    ) {
+      wantsRecording = desiredState
+      reconciliationTask = nil
+
+      if desiredState {
+        guard let configuration else {
+          log.error("Cannot start recording without configuration")
+          wantsRecording = false
+          return
+        }
+        reconciliationTask = Task { @MainActor [weak self] in
+          await self?.reconcileRecordingState(desiredState: true, configuration: configuration)
+        }
+      } else {
+        // Stop immediately
+        if isRecording {
+          Task { @MainActor [weak self] in
+            _ = try? await self?.stopRecording()
+          }
+        }
+      }
+    }
+
+    /// Starts recording with automatic reconciliation and returns when complete.
+    ///
+    /// This is a convenience method that combines setting the desired state and
+    /// waiting for reconciliation to complete. Use this when you need to know
+    /// whether recording started successfully.
+    ///
+    /// - Parameter configuration: The recording configuration to use.
+    /// - Returns: `true` if recording started successfully, `false` if reconciliation
+    ///            failed after the timeout period or a non-transient error occurred.
+    @MainActor
+    public func startRecordingWithReconciliation(
+      configuration: RecordingConfiguration
+    ) async -> Bool {
+      wantsRecording = true
+      reconciliationTask = nil
+      await reconcileRecordingState(desiredState: true, configuration: configuration)
+      return isRecording
+    }
+
+    /// Stops recording.
+    ///
+    /// This is a convenience method that sets the desired state to false
+    /// and waits for the recording to stop.
+    ///
+    /// - Returns: The URL of the recorded file, or `nil` if not recording.
+    @MainActor
+    public func stopRecordingWithReconciliation() async -> URL? {
+      wantsRecording = false
+      reconciliationTask = nil
+      guard isRecording else { return nil }
+      return try? await stopRecording()
+    }
+
+    /// Attempts to reconcile the desired recording state with the actual state.
+    @MainActor
+    private func reconcileRecordingState(
+      desiredState: Bool,
+      configuration: RecordingConfiguration
+    ) async {
+      guard desiredState else { return }
+
+      let startTime = ContinuousClock.now
+      let timeout = reconciliationConfiguration.timeout
+      let retryInterval = reconciliationConfiguration.retryInterval
+
+      log.info(
+        "Starting recording reconciliation (timeout: \(timeout, privacy: .public), interval: \(retryInterval, privacy: .public))"
+      )
+
+      var lastError: (any Error)?
+
+      while !Task.isCancelled && wantsRecording {
+        let elapsed = ContinuousClock.now - startTime
+
+        // Check if we've exceeded the timeout
+        if elapsed >= timeout {
+          log.warning(
+            "Recording reconciliation timed out after \(elapsed, privacy: .public)"
+          )
+          break
+        }
+
+        do {
+          // Attempt to start recording
+          try await startRecording(configuration: configuration)
+
+          // Success!
+          log.info("Recording started successfully after \(elapsed, privacy: .public)")
+          return
+        } catch let error as AIOError where error.isTransient {
+          // Transient error - wait and retry
+          lastError = error
+          log.info(
+            "Transient error during reconciliation: \(error, privacy: .public), retrying..."
+          )
+          try? await Task.sleep(for: retryInterval)
+          continue
+        } catch {
+          // Non-transient error - give up immediately
+          log.error(
+            "Non-transient error during reconciliation: \(error, privacy: .public)"
+          )
+          lastError = error
+          break
+        }
+      }
+
+      // Reconciliation failed - reset desired state to match actual
+      if wantsRecording && !isRecording {
+        log.warning(
+          "Reconciliation failed, resetting wantsRecording to false. Last error: \(lastError?.localizedDescription ?? "none", privacy: .public)"
+        )
+        wantsRecording = false
+        onReconciliationFailed?(true)
+      }
     }
 
     /// Starts recording audio with the specified configuration.
@@ -516,6 +690,8 @@
       }
       cleanUp()
       isRecording = false
+      wantsRecording = false
+      reconciliationTask = nil
     }
 
     private func cleanUp() {
@@ -1296,15 +1472,18 @@
     /// Handle interruptions that cannot be recovered
     @MainActor
     private func handleUnrecoverableInterruption(reason: String) async {
-      guard isRecording else { return }
+      guard isRecording || wantsRecording else { return }
 
       log.info("Handling unrecoverable interruption: \(reason, privacy: .public)")
+
+      // Cancel any ongoing reconciliation
+      reconciliationTask = nil
 
       // Notify before stopping
       let interruption = RecordingInterruption.stoppedByInterruption(reason: reason)
       await onRecordingInterruption?(interruption)
 
-      // Stop recording gracefully
+      // Stop recording gracefully (also sets wantsRecording = false)
       await gracefulStop()
 
       // Notify that recording failed (for crash detection/cleanup)
