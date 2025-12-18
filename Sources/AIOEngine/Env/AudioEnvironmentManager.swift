@@ -84,6 +84,9 @@
 
     /// A Boolean value that indicates whether the manager is currently running.
     public private(set) var isRunning: Bool = false
+
+    /// A Boolean value that indicates whether the audio session is currently active.
+    public private(set) var isAudioSessionActive: Bool = false
     private var _orientation: AVAudioSession.StereoOrientation
     private var _selectedNumberOfChannels: ChannelCount
     private var _input: AudioInput?
@@ -399,6 +402,23 @@
       }
     }
 
+    /// Manually sets the audio session active state.
+    ///
+    /// This allows enabling or disabling the audio session independently of recording.
+    /// When active, the app claims the audio session and can receive audio input.
+    ///
+    /// - Parameter active: Whether the audio session should be active.
+    /// - Throws: An error if the audio session state cannot be changed.
+    public func setAudioSessionActive(_ active: Bool) throws {
+      guard isRunning else {
+        log.warning("Cannot set audio session active state when manager is not running")
+        return
+      }
+      try env.session.setActive(active, options: .notifyOthersOnDeactivation)
+      isAudioSessionActive = active
+      log.info("🔊 Audio session manually set to \(active ? "active" : "inactive", privacy: .public)")
+    }
+
   }
 
   extension AudioEnvironmentManager {
@@ -468,6 +488,7 @@
               try self.env.session.setPrefersNoInterruptionsFromSystemAlerts(true)
               try self.env.session.setPrefersInterruptionOnRouteDisconnect(false)
               try self.env.session.setActive(true, options: .notifyOthersOnDeactivation)
+              await MainActor.run { self.isAudioSessionActive = true }
               try self.env
                 .request(
                   input: self.env.input
@@ -524,6 +545,7 @@
       }
       try? await withCancellationOperation {
         try self.env.session.setActive(false, options: .notifyOthersOnDeactivation)
+        await MainActor.run { self.isAudioSessionActive = false }
       }
       log.info("🔇AudioEnvironmentManager.run() finished, deactivating AudioSession")
     }
