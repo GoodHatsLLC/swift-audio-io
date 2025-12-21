@@ -133,10 +133,10 @@
             } else {
               log
                 .info(
-                """
-                􁐚 Sample rate \(newValue, privacy: .public) rejected. \
-                Set to \(actual, privacy: .public)
-                """
+                  """
+                  􁐚 Sample rate \(newValue, privacy: .public) rejected. \
+                  Set to \(actual, privacy: .public)
+                  """
                 )
               _selectedSampleRate = actual
             }
@@ -416,7 +416,8 @@
       }
       try env.session.setActive(active, options: .notifyOthersOnDeactivation)
       isAudioSessionActive = active
-      log.info("🔊 Audio session manually set to \(active ? "active" : "inactive", privacy: .public)")
+      log.info(
+        "🔊 Audio session manually set to \(active ? "active" : "inactive", privacy: .public)")
     }
 
   }

@@ -27,7 +27,7 @@
       public static func < (lhs: AudioSource, rhs: AudioSource) -> Bool {
         lhs.name < rhs.name
       }
-      
+
       public var hasStereo: Bool {
         (avAudio.supportedPolarPatterns ?? []).contains {
           $0 == .stereo
