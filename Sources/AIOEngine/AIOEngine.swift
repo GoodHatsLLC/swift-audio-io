@@ -513,12 +513,12 @@
           playback = nil
         }
         try warm(configuration: configuration)
-        
+
         let (buffers, writefile) = state { ($0.audioBuffers, $0.file) }
         guard let buffers = buffers,
-              let processingFormat = configuration.processingFormat,
-              let writeFile = writefile,
-              let url = writefile?.url
+          let processingFormat = configuration.processingFormat,
+          let writeFile = writefile,
+          let url = writefile?.url
         else {
           throw AIOError.invalidRecordingConfiguration(
             details: "state after warm(configuration:) was invalid")
