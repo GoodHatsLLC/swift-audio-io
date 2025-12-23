@@ -586,6 +586,26 @@
         let file = try AVAudioFile(forWriting: url, settings: fileSettings)
 
         let inputFormat = engine.inputNode.inputFormat(forBus: 0)
+
+        // Validate input format before attempting to install tap
+        // installTap throws an uncatchable NSException if the format is invalid
+        guard inputFormat.channelCount > 0 else {
+          log.warning(
+            "Input node has no channels: channelCount=\(inputFormat.channelCount, privacy: .public)"
+          )
+          throw AIOError.audioSessionNotReady(
+            details: "Input node has no channels (channelCount: 0)"
+          )
+        }
+        guard inputFormat.sampleRate > 0 else {
+          log.warning(
+            "Input node has invalid sample rate: sampleRate=\(inputFormat.sampleRate, privacy: .public)"
+          )
+          throw AIOError.audioSessionNotReady(
+            details: "Input node has invalid sample rate (sampleRate: 0)"
+          )
+        }
+
         guard let processingFormat = configuration.processingFormat else {
           throw AIOError.invalidRecordingConfiguration(details: "(processing format)")
         }
@@ -1435,19 +1455,51 @@
       // Stop engine briefly
       engine.stop()
 
-      // Get tap configuration
+      // Re-fetch the input format after stopping - it may have changed
+      // This is critical because the engine state can change after stop()
+      let currentInputFormat = engine.inputNode.inputFormat(forBus: 0)
+
+      // Validate the format before attempting to install tap
+      // installTap throws an uncatchable NSException if the format is invalid
+      guard currentInputFormat.channelCount > 0 else {
+        throw AIOError.invalidRecordingConfiguration(
+          details: "Input node has no channels after route change (channelCount: 0)")
+      }
+
+      guard currentInputFormat.sampleRate > 0 else {
+        throw AIOError.invalidRecordingConfiguration(
+          details: "Input node has invalid sample rate after route change (sampleRate: 0)")
+      }
+
+      // Get tap configuration using the current format (not the pre-stop format)
       guard let currentConfig = state.recordingConfiguration,
-        let tapConfiguration = currentConfig.tapConfiguration(bus: 0, input: newInputFormat)
+        let tapConfiguration = currentConfig.tapConfiguration(bus: 0, input: currentInputFormat)
       else {
         throw AIOError.invalidRecordingConfiguration(details: "Cannot create tap configuration")
       }
+
+      // Final validation of the format we'll pass to installTap
+      let tapFormat = tapConfiguration.inputAVAudioFormat
+      guard tapFormat.channelCount > 0, tapFormat.sampleRate > 0 else {
+        throw AIOError.invalidRecordingConfiguration(
+          details:
+            "Tap format is invalid (channels: \(tapFormat.channelCount), sampleRate: \(tapFormat.sampleRate))"
+        )
+      }
+
+      log.info(
+        """
+        Installing tap with validated format:
+        - Current input format: \(currentInputFormat.channelCount, privacy: .public) ch @ \(currentInputFormat.sampleRate, privacy: .public) Hz
+        - Tap format: \(tapFormat.channelCount, privacy: .public) ch @ \(tapFormat.sampleRate, privacy: .public) Hz
+        """)
 
       // Install new tap with updated format
       let audioBuffers = state.audioBuffers ?? []
       engine.inputNode.installTap(
         onBus: tapConfiguration.bus,
         bufferSize: tapConfiguration.bufferSize,
-        format: tapConfiguration.inputAVAudioFormat
+        format: tapFormat
       ) {
         @Sendable [bufferReceivers]
         buffer,
@@ -1465,7 +1517,7 @@
       // Restart engine
       try engine.start()
 
-      log.info("Reconfigured tap for new route: \(newInputFormat, privacy: .public)")
+      log.info("Reconfigured tap for new route: \(currentInputFormat, privacy: .public)")
     }
 
     /// Handle interruptions that cannot be recovered
