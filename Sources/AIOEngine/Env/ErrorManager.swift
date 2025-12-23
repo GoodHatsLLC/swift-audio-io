@@ -4,10 +4,12 @@ import SystemLog
 private let log = SystemLog.make()
 
 @Observable
-@MainActor
-public final class ErrorManager {
+public final class ErrorManager: Sendable {
   public nonisolated init() {}
-  public private(set) var errors: [any Error] = []
+  @MainActor
+  public var errors: [any Error] = []
+  
+  @MainActor
   public func popError() -> (any Error)? {
     if !errors.isEmpty {
       errors.removeFirst()
@@ -15,6 +17,7 @@ public final class ErrorManager {
       nil
     }
   }
+  @MainActor
   public func enqueue(_ error: any Error) {
     errors.append(error)
   }
@@ -31,7 +34,11 @@ public final class ErrorManager {
             """
           )
       },
-      { err, _ in self.enqueue(err) }
+      { err, _ in
+        Task { @MainActor in
+          self.enqueue(err)
+        }
+        }
     )
   }
 }
