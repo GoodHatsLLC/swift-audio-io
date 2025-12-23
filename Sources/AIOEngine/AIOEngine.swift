@@ -55,7 +55,6 @@
   ///
   private let log = SystemLog.make()
 
-  @MainActor
   @Observable
   public final class AIOEngine: Sendable {
     /// Errors that can occur during audio engine operations.
@@ -162,18 +161,18 @@
     }
 
     /// A callback that is invoked when a recording interruption occurs.
-    public var onRecordingInterruption:
+    @MainActor public var onRecordingInterruption:
       (@Sendable @MainActor (RecordingInterruption) async -> Void)?
 
     /// A callback that is invoked when a recording starts.
     ///
     /// - Parameter url: The URL of the recording file.
     /// - Parameter format: The format of the recording file.
-    public var onRecordingStarted: (@Sendable @MainActor (URL, String) -> Void)?
+    @MainActor public var onRecordingStarted: (@Sendable @MainActor (URL, String) -> Void)?
     /// A callback that is invoked when a recording completes successfully.
-    public var onRecordingCompleted: (@Sendable @MainActor () -> Void)?
+    @MainActor public var onRecordingCompleted: (@Sendable @MainActor () -> Void)?
     /// A callback that is invoked when a recording fails.
-    public var onRecordingFailed: (@Sendable @MainActor () -> Void)?
+    @MainActor public var onRecordingFailed: (@Sendable @MainActor () -> Void)?
 
     private nonisolated let engine = AVAudioEngine()
     private nonisolated let player = AVAudioPlayerNode()
@@ -206,15 +205,15 @@
     @MainActor public private(set) var wantsRecording: Bool = false
 
     /// Configuration for state reconciliation attempts.
-    public var reconciliationConfiguration: ReconciliationConfiguration = .default
+    @MainActor public var reconciliationConfiguration: ReconciliationConfiguration = .default
 
     /// Called when the engine fails to reconcile the desired recording state
     /// with the actual state after the configured timeout.
     ///
     /// - Parameter desiredState: The state that could not be achieved.
-    public var onReconciliationFailed: (@Sendable @MainActor (Bool) -> Void)?
+    @MainActor public var onReconciliationFailed: (@Sendable @MainActor (Bool) -> Void)?
 
-    private var reconciliationTask: Task<Void, Never>? {
+    @MainActor private var reconciliationTask: Task<Void, Never>? {
       willSet {
         if reconciliationTask != newValue {
           reconciliationTask?.cancel()
@@ -308,7 +307,7 @@
       )
     }
 
-    private var writerTask: Task<Void, Error>? {
+    @MainActor private var writerTask: Task<Void, Error>? {
       willSet {
         if writerTask != newValue {
           writerTask?.cancel()
@@ -316,7 +315,7 @@
       }
     }
 
-    private var playbackTask: Task<Void, Error>? {
+    @MainActor private var playbackTask: Task<Void, Error>? {
       willSet {
         if playbackTask != newValue {
           playbackTask?.cancel()
@@ -332,7 +331,7 @@
     }
 
     private let cache: Mut<Cache> = .init(.init())
-    public private(set) var bufferReceivers: Synchronized<[any BufferReceiver<Float>]> = .init([])
+    public let bufferReceivers: Synchronized<[any BufferReceiver<Float>]> = .init([])
 
     //  public var eventHandler: (@Sendable (AIO.Event.Interruption) -> Void)?
 
@@ -351,7 +350,7 @@
     /// Creates a new instance of the audio engine with custom reconciliation configuration.
     ///
     /// - Parameter reconciliationConfiguration: Configuration for state reconciliation.
-    public init(reconciliationConfiguration: ReconciliationConfiguration) {
+    @MainActor public init(reconciliationConfiguration: ReconciliationConfiguration) {
       self.reconciliationConfiguration = reconciliationConfiguration
       engine.attach(player)
     }
@@ -531,7 +530,7 @@
       }.value
     }
 
-    private func startFileWriteLoop(
+    @MainActor private func startFileWriteLoop(
       flushing buffers: [RingBuffer<Float>],
       of processingFormat: AVAudioFormat,
       to file: AVAudioFile
@@ -658,7 +657,7 @@
       }
     }
 
-    private func hardStop() {
+    @MainActor private func hardStop() {
       let tapBus = state.consume(\.installedTapBus)
       if let tapBus {
         engine.inputNode.removeTap(onBus: tapBus)
@@ -694,7 +693,7 @@
       reconciliationTask = nil
     }
 
-    private func cleanUp() {
+    @MainActor private func cleanUp() {
       let file = state { state in
         defer {
           state.file = nil
@@ -1075,7 +1074,7 @@
       return segmentPlayback
     }
 
-    func resetPlaybackTimer(to instance: PlaybackInstance) {
+    @MainActor func resetPlaybackTimer(to instance: PlaybackInstance) {
       playbackTask = Task { @MainActor in
         for await _ in AsyncTimerSequence(interval: .seconds(0.5), clock: .suspending) {
           if Task.isCancelled { return }
