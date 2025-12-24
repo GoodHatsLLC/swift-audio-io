@@ -677,13 +677,6 @@
     }
   }
 
-  @MainActor
-  private func disconnectPlayerOutputIfConnected() {
-    let points = engine.outputConnectionPoints(for: player, outputBus: 0)
-    guard !points.isEmpty else { return }
-    engine.disconnectNodeOutput(player)
-  }
-
   @MainActor private func hardStop() {
     let tapBus = state.consume(\.installedTapBus)
     if let tapBus {
@@ -695,7 +688,9 @@
     if player.isPlaying {
       player.stop()
     }
-    disconnectPlayerOutputIfConnected()
+    // On iOS 26.x, explicit `disconnectNodeOutput(_:)` has been observed to occasionally
+    // raise an uncatchable NSException after background transitions; prefer `reset()`.
+    engine.reset()
     writerTask = nil
     cleanUp()
   }
@@ -983,12 +978,13 @@
       if getPlayback() != nil {
         player.stop()
         engine.stop()
-        disconnectPlayerOutputIfConnected()
+        engine.reset()
         state.playbackInstance = nil
         setPlayback(nil)
       } else {
         engine.stop()
         player.stop()
+        engine.reset()
       }
 
       let file = try AVAudioFile(forReading: url)
@@ -1045,12 +1041,13 @@
       if getPlayback() != nil {
         player.stop()
         engine.stop()
-        disconnectPlayerOutputIfConnected()
+        engine.reset()
         state.playbackInstance = nil
         setPlayback(nil)
       } else {
         engine.stop()
         player.stop()
+        engine.reset()
       }
 
       let file = try AVAudioFile(forReading: url)
