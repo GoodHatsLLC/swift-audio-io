@@ -42,6 +42,199 @@ extension String {
     self = str
   }
 }
+
+// MARK: - Persistent Disk Logging
+
+/// Actor that handles writing log entries to a persistent file on disk.
+/// Enable via UserDefaults key "debug.persistentLogging".
+public actor PersistentLogWriter {
+  /// Shared instance for the persistent log writer
+  public static let shared = PersistentLogWriter()
+
+  /// UserDefaults key for enabling persistent logging (matches SettingsKeys.persistentLoggingEnabled)
+  public static let userDefaultsKey = "debug.persistentLogging"
+
+  private var fileHandle: FileHandle?
+  private let dateFormatter: ISO8601DateFormatter
+  private var isEnabled: Bool = false
+
+  private init() {
+    self.dateFormatter = ISO8601DateFormatter()
+    self.dateFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    // Read initial state from UserDefaults
+    self.isEnabled = UserDefaults.standard.bool(forKey: Self.userDefaultsKey)
+    if isEnabled {
+      Task { await self.openLogFile() }
+    }
+  }
+
+  /// Returns the URL to the persistent log file
+  public nonisolated var logFileURL: URL {
+    let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
+      .first!
+    let logsDir = appSupport.appendingPathComponent("Logs", isDirectory: true)
+    return logsDir.appendingPathComponent("persistent.log")
+  }
+
+  /// Check if persistent logging is currently enabled
+  public var persistentLoggingEnabled: Bool {
+    isEnabled
+  }
+
+  /// Update the enabled state (call when UserDefaults changes)
+  public func setEnabled(_ enabled: Bool) {
+    guard enabled != isEnabled else { return }
+    isEnabled = enabled
+    if enabled {
+      openLogFile()
+    } else {
+      closeLogFile()
+    }
+  }
+
+  /// Refresh enabled state from UserDefaults
+  public func refreshEnabledState() {
+    let enabled = UserDefaults.standard.bool(forKey: Self.userDefaultsKey)
+    setEnabled(enabled)
+  }
+
+  /// Write a log entry to the persistent file
+  public func log(
+    level: OSLogType,
+    subsystem: String,
+    category: String,
+    message: String,
+    file: String = #file,
+    function: String = #function,
+    line: Int = #line
+  ) {
+    guard isEnabled, let handle = fileHandle else { return }
+
+    let timestamp = dateFormatter.string(from: Date())
+    let levelString = level.description
+    let fileName =
+      file.split(separator: "/").last.map(String.init) ?? file
+
+    let logLine =
+      "[\(timestamp)] [\(levelString)] [\(subsystem)/\(category)] \(fileName):\(line) \(function) - \(message)\n"
+
+    if let data = logLine.data(using: .utf8) {
+      do {
+        try handle.write(contentsOf: data)
+      } catch {
+        // Silently fail - don't log errors about logging
+      }
+    }
+  }
+
+  /// Flush pending writes to disk
+  public func flush() {
+    try? fileHandle?.synchronize()
+  }
+
+  /// Clear the log file
+  public func clearLog() throws {
+    closeLogFile()
+    try FileManager.default.removeItem(at: logFileURL)
+    if isEnabled {
+      openLogFile()
+    }
+  }
+
+  /// Read the current log file contents
+  public nonisolated func readLog() throws -> String {
+    try String(contentsOf: logFileURL, encoding: .utf8)
+  }
+
+  /// Get the size of the log file in bytes
+  public nonisolated func logFileSize() -> UInt64 {
+    guard let attrs = try? FileManager.default.attributesOfItem(atPath: logFileURL.path)
+    else { return 0 }
+    return attrs[.size] as? UInt64 ?? 0
+  }
+
+  private func openLogFile() {
+    let url = logFileURL
+    let fm = FileManager.default
+
+    // Create directory if needed
+    let logsDir = url.deletingLastPathComponent()
+    if !fm.fileExists(atPath: logsDir.path) {
+      try? fm.createDirectory(at: logsDir, withIntermediateDirectories: true)
+    }
+
+    // Create file if needed
+    if !fm.fileExists(atPath: url.path) {
+      fm.createFile(atPath: url.path, contents: nil)
+    }
+
+    // Open for appending
+    do {
+      let handle = try FileHandle(forWritingTo: url)
+      try handle.seekToEnd()
+      self.fileHandle = handle
+
+      // Write session start marker
+      let timestamp = dateFormatter.string(from: Date())
+      let marker = "\n=== Session started at \(timestamp) ===\n"
+      if let data = marker.data(using: .utf8) {
+        try handle.write(contentsOf: data)
+      }
+    } catch {
+      self.fileHandle = nil
+    }
+  }
+
+  private func closeLogFile() {
+    try? fileHandle?.synchronize()
+    try? fileHandle?.close()
+    fileHandle = nil
+  }
+}
+
+extension OSLogType: @retroactive CustomStringConvertible {
+  public var description: String {
+    switch self {
+    case .debug: return "DEBUG"
+    case .info: return "INFO"
+    case .default: return "DEFAULT"
+    case .error: return "ERROR"
+    case .fault: return "FAULT"
+    default: return "UNKNOWN"
+    }
+  }
+}
+
+// MARK: - SystemLogger Disk Logging Extension
+
+extension SystemLogger {
+  /// Log a message to both OSLog and the persistent disk log (if enabled)
+  public func logPersistent(
+    level: OSLogType,
+    _ message: @autoclosure () -> String,
+    file: String = #file,
+    function: String = #function,
+    line: Int = #line
+  ) {
+    let msg = message()
+
+    // Log to OSLog
+    self.log(level: level, "\(msg)")
+
+    // Log to disk if enabled
+    Task {
+      await PersistentLogWriter.shared.log(
+        level: level,
+        subsystem: "app",
+        category: "default",
+        message: msg,
+        file: file,
+        function: function,
+        line: line
+      )
+    }
+  }
+}
 public struct SourceLocation {
   public init(file: String, function: String, line: Int, column: Int) {
     self.file = file
