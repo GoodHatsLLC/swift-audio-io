@@ -43,6 +43,12 @@ extension String {
   }
 }
 public struct SourceLocation {
+  public init(file: String, function: String, line: Int, column: Int) {
+    self.file = file
+    self.function = function
+    self.line = line
+    self.column = column
+  }
   public let file: String
   public let function: String
   public let line: Int
