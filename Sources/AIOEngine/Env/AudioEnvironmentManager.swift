@@ -44,14 +44,11 @@
     public private(set) var isReady: Bool = false {
       didSet {
         if isReady {
-          defer {
-            readyGateContinuations.removeAll()
-          }
-          readyGateContinuations.forEach { $0.resume() }
+          try? readinessSignal.yield()
         }
       }
     }
-    private var readyGateContinuations: [CheckedContinuation<Void, Never>] = []
+    private let readinessSignal = AwaitableBox<Void>()
     /// If the `AudioEnvironmentManager` is running, suspends until `isReady` is `true`.
     ///
     /// - Important: This call will throw a `CancellationError` if the `AudioEnvironmentManager` has not
@@ -61,13 +58,7 @@
         assert(!isReady)
         throw CancellationError()
       }
-      await withCheckedContinuation { cont in
-        if !isReady {
-          readyGateContinuations.append(cont)
-        } else {
-          cont.resume()
-        }
-      }
+      await readinessSignal()
       assert(isReady)
     }
 
