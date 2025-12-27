@@ -667,33 +667,33 @@
           $0.recordingConfiguration = configuration
           $0.initialInputFormat = inputFormat
         }
-    } catch {
-      log.error(
-        "Failed to warm engine: \(error, privacy: .public) (\((((error as? AVError)?.code as? Int) ?? (error as NSError).code as Int), privacy: .public))"
-      )
-      hardStop()
-      onRecordingFailed?()
-      throw error
+      } catch {
+        log.error(
+          "Failed to warm engine: \(error, privacy: .public) (\((((error as? AVError)?.code as? Int) ?? (error as NSError).code as Int), privacy: .public))"
+        )
+        hardStop()
+        onRecordingFailed?()
+        throw error
+      }
     }
-  }
 
-  @MainActor private func hardStop() {
-    let tapBus = state.consume(\.installedTapBus)
-    if let tapBus {
-      engine.inputNode.removeTap(onBus: tapBus)
+    @MainActor private func hardStop() {
+      let tapBus = state.consume(\.installedTapBus)
+      if let tapBus {
+        engine.inputNode.removeTap(onBus: tapBus)
+      }
+      if engine.isRunning {
+        engine.stop()
+      }
+      if player.isPlaying {
+        player.stop()
+      }
+      // On iOS 26.x, explicit `disconnectNodeOutput(_:)` has been observed to occasionally
+      // raise an uncatchable NSException after background transitions; prefer `reset()`.
+      engine.reset()
+      writerTask = nil
+      cleanUp()
     }
-    if engine.isRunning {
-      engine.stop()
-    }
-    if player.isPlaying {
-      player.stop()
-    }
-    // On iOS 26.x, explicit `disconnectNodeOutput(_:)` has been observed to occasionally
-    // raise an uncatchable NSException after background transitions; prefer `reset()`.
-    engine.reset()
-    writerTask = nil
-    cleanUp()
-  }
 
     @MainActor
     private func gracefulStop() async {
@@ -1140,9 +1140,9 @@
     }
 
     @concurrent
-  private nonisolated func stopPlayback() async {
-    player.stop()
-  }
+    private nonisolated func stopPlayback() async {
+      player.stop()
+    }
 
     @MainActor
     public func scrubPlay(to time: TimeInterval) throws -> Playback? {
