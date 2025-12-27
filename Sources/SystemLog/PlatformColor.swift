@@ -1,17 +1,17 @@
 #if canImport(UIKit)
-public import UIKit
+import UIKit
 #else
-public import AppKit
+import AppKit
 #endif
 
 #if canImport(UIKit)
-public typealias PlatformColor = UIColor
+typealias PlatformColor = UIColor
 #else
-public typealias PlatformColor = NSColor
+typealias PlatformColor = NSColor
 #endif
 
 extension PlatformColor {
-  public var relativeLuminance: CGFloat {
+  var relativeLuminance: CGFloat {
     let components = self.toRGBAComponents()
 
     // Convert from sRGB to linear RGB
@@ -25,7 +25,7 @@ extension PlatformColor {
     return min(max(y, 0), 1)
   }
 
-  public func contrastRatio(to otherColor: PlatformColor) -> CGFloat {
+  func contrastRatio(to otherColor: PlatformColor) -> CGFloat {
     let luminance1 = self.relativeLuminance
     let luminance2 = otherColor.relativeLuminance
     return (max(luminance1, luminance2) + 0.05) / (min(luminance1, luminance2) + 0.05)
@@ -34,21 +34,21 @@ extension PlatformColor {
 }
 
 extension PlatformColor {
-  public struct RGBAComponents {
+  struct RGBAComponents {
     var r: CGFloat = 0
     var g: CGFloat = 0
     var b: CGFloat = 0
     var a: CGFloat = 0
   }
 
-  public struct HSBComponents {
+  struct HSBComponents {
     var h: CGFloat = 0
     var s: CGFloat = 0
     var b: CGFloat = 0
     var a: CGFloat = 0
   }
 
-  public func toRGBAComponents() -> RGBAComponents {
+  func toRGBAComponents() -> RGBAComponents {
     var components = RGBAComponents()
 
     #if canImport(UIKit)
@@ -75,7 +75,7 @@ extension PlatformColor {
     return components
   }
 
-  public func toHSBComponents() -> HSBComponents {
+  func toHSBComponents() -> HSBComponents {
     var components = HSBComponents()
 
     #if canImport(UIKit)
@@ -102,7 +102,7 @@ extension PlatformColor {
     return components
   }
 
-  public static func dynamicColor(_ block: @escaping () -> PlatformColor) -> PlatformColor {
+  static func dynamicColor(_ block: @escaping () -> PlatformColor) -> PlatformColor {
     #if canImport(UIKit)
       #if os(watchOS)
         return block()
@@ -119,7 +119,7 @@ extension PlatformColor {
 extension PlatformColor {
 
   /// Creates a color from # prefix, alpha values, and 3 char shorthand hex values
-  public convenience init?(hex: String) {
+  convenience init?(hex: String) {
     let scanner = Scanner(string: hex)
     scanner.charactersToBeSkipped = nil
     _ = scanner.scanString("#")
@@ -166,7 +166,7 @@ extension PlatformColor {
     }
   }
 
-  public func toHex() -> String {
+  func toHex() -> String {
     var components = self.toRGBAComponents()
 
     // Clamp components to [0.0, 1.0]
@@ -199,7 +199,7 @@ extension PlatformColor {
 
 extension Scanner {
 
-  public func scanHexNibble() -> UInt8? {
+  func scanHexNibble() -> UInt8? {
     guard let character = scanCharacter(), character.isHexDigit else {
       return nil
     }
@@ -207,7 +207,7 @@ extension Scanner {
     return UInt8(String(character), radix: 16)
   }
 
-  public func scanHexByte() -> UInt8? {
+  func scanHexByte() -> UInt8? {
     guard let highNibble = scanHexNibble(), let lowNibble = scanHexNibble() else {
       return nil
     }
@@ -215,7 +215,7 @@ extension Scanner {
     return (highNibble << 4) | lowNibble
   }
 
-  public func charactersLeft() -> Int {
+  func charactersLeft() -> Int {
     return string.count - currentIndex.utf16Offset(in: string)
   }
 
@@ -223,7 +223,7 @@ extension Scanner {
 
 extension PlatformColor {
 
-  public func lightening(by ratio: CGFloat) -> PlatformColor {
+  func lightening(by ratio: CGFloat) -> PlatformColor {
     return .dynamicColor {
       let components = self.toHSBComponents()
       let newBrightness =
@@ -240,7 +240,7 @@ extension PlatformColor {
     }
   }
 
-  public func darkening(by ratio: CGFloat) -> PlatformColor {
+  func darkening(by ratio: CGFloat) -> PlatformColor {
     return .dynamicColor {
       let components = self.toHSBComponents()
       let newBrightness =
@@ -265,11 +265,11 @@ extension PlatformColor {
   @available(macOS 11.0, iOS 14.0, tvOS 14.0, macCatalyst 14.0, watchOS 7.0, *)
   extension Color {
 
-    public var relativeLuminance: CGFloat {
+    var relativeLuminance: CGFloat {
       PlatformColor(self).relativeLuminance
     }
 
-    public init?(hex: String) {
+    init?(hex: String) {
       guard let color = PlatformColor(hex: hex) else {
         return nil
       }
@@ -277,21 +277,21 @@ extension PlatformColor {
       self.init(color)
     }
 
-    public func toHex() -> String {
+    func toHex() -> String {
       return PlatformColor(self).toHex()
     }
 
-    public func contrastRatio(to otherColor: Color) -> CGFloat {
+    func contrastRatio(to otherColor: Color) -> CGFloat {
       return PlatformColor(self).contrastRatio(to: PlatformColor(otherColor))
     }
 
-    public func lightening(by ratio: CGFloat) -> Color {
+    func lightening(by ratio: CGFloat) -> Color {
       return Color(
         PlatformColor(self).lightening(by: ratio)
       )
     }
 
-    public func darkening(by ratio: CGFloat) -> Color {
+    func darkening(by ratio: CGFloat) -> Color {
       return Color(
         PlatformColor(self).darkening(by: ratio)
       )
