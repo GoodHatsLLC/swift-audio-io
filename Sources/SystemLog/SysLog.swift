@@ -373,7 +373,8 @@ public enum SystemLog {
       var filter: OSLogStream.Filter {
         .and(
           [
-            (subsystems).isEmpty ? .any : .and((subsystems).map { .subsystem($0) })
+            minLevel.map { .levelFloor($0) } ?? .any,
+            (subsystems).isEmpty ? .any : .and((subsystems).map { .subsystem($0) }),
             (categories).isEmpty ? .any : .and((categories).map { .category($0) })
           ]
         )
