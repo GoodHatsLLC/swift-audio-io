@@ -162,14 +162,13 @@ See `Sources/AIO.docc/MultiBandVisualization.md` for complete API documentation.
 AIO is consumed by:
 - **Packages/AppLibrary/AppTarget**: Main app logic
 - **Packages/AppLibrary/ExtensionLib**: Widget extensions
-- **Packages/RecCLI/RecLib**: CLI tool library (macOS)
 
-The package is referenced via local path from AppLibrary and RecCLI:
+The package is referenced via local path from AppLibrary:
 ```swift
 .package(path: "../AIO")
 ```
 
-Changes to AIO require rebuilding dependent packages (AppLibrary, RecCLI).
+Changes to AIO require rebuilding AppLibrary.
 
 ## Performance Considerations
 
