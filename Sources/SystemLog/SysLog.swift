@@ -2,7 +2,7 @@ import Foundation
 import Observation
 import SwiftUI
 import UniformTypeIdentifiers
-
+import AsyncAlgorithms
 import class Foundation.Bundle
 import struct OSLog.Logger
 import class OSLog.OSLogEntryLog
@@ -15,21 +15,21 @@ public typealias SystemLogger = OSLog.Logger
 extension SystemLogger {
   @_spi(SysLog) public static func make(
     file: StaticString = #file,
-    subsystem: String = Bundle.main.bundleIdentifier ?? "none.bundle",
-    category: StaticString? = nil
+    subsystem: String? = nil,
+    category: String = Bundle.main.bundleIdentifier ?? "none.bundle"
   )
     -> SystemLogger
   {
     SystemLogger(
-      subsystem: subsystem,
-      category: { () -> String in
-        category.map(String.init)
-          ?? ("\(file)"
+      subsystem: { () -> String in
+        subsystem
+        ?? ("\(file)"
           .split(separator: ".", maxSplits: 1, omittingEmptySubsequences: true).first?
           .split(separator: "/", maxSplits: 1, omittingEmptySubsequences: true).last).flatMap(
             String.init)
-          ?? "\(file)"
-      }()
+        ?? "\(file)"
+      }(),
+      category: category
     )
   }
 
@@ -199,62 +199,37 @@ public struct Reporter<E: Error> {
 
 private let logger = SystemLog.make()
 public enum SystemLog {
-  public static func make(file: StaticString = #file, category: StaticString? = nil) -> SystemLogger
+  public static func make(file: StaticString = #file, category: String = Bundle.main.bundleIdentifier ?? "none.bundle", subsystem: String? = nil) -> SystemLogger
   {
-    Logger.make(file: file, category: category)
+    Logger.make(
+      file: file,
+      subsystem: subsystem,
+      category: category
+    )
   }
   public struct Viewer: View {
-    @State private var model: LogModel = .shared
+    @State private var model: LogModel = .init()
     public init() {}
     public var body: some View {
-      NavigationStack {
-        LogExportScreen(model: model)
-      }
+        LogListScreen(model: model)
     }
   }
 
   @Observable
   fileprivate final class LogModel {
-    @MainActor
-    static var shared: LogModel = {
-      defer {
-        logger.log(level: .info, "SystemLog ready")
+    var logs: [OSLogStream.LogEntry] = [] {
+      didSet {
+        let len = max(0, logs.count - oldValue.count)
+        let new = logs.suffix(len)
+        knownCategories.formUnion(new.map { $0.category ?? "" })
+        knownSubsystems.formUnion(new.map{ $0.subsystem ?? "" })
       }
-      return LogModel()
-    }()
-
-    var logs: [LogRepresentation] = []
-    var error: (any Error)?
-    struct Filter: Hashable, Sendable {
-      init(
-        excludeSystemLogs: Bool = true,
-        filterType: FilterType = .preset,
-        specificDate: Date = Date(),
-        dateRangeStart: Date = Date(),
-        dateRangeFinish: Date = Date(),
-        hourRangeStart: Date = Date().addingTimeInterval(-3600),
-        hourRangeFinish: Date = Date(),
-        selectedPreset: Preset = .minutesFive
-      ) {
-        self.excludeSystemLogs = excludeSystemLogs
-        self.filterType = filterType
-        self.specificDate = specificDate
-        self.dateRangeStart = dateRangeStart
-        self.dateRangeFinish = dateRangeFinish
-        self.hourRangeStart = hourRangeStart
-        self.hourRangeFinish = hourRangeFinish
-        self.selectedPreset = selectedPreset
-      }
-      var excludeSystemLogs: Bool = true
-      var filterType: SystemLog.LogModel.FilterType
-      var specificDate: Date
-      var dateRangeStart: Date
-      var dateRangeFinish: Date
-      var hourRangeStart: Date
-      var hourRangeFinish: Date
-      var selectedPreset: Preset
     }
-    var filter: Filter = .init()
+    var error: (any Error)?
+    var knownCategories: Set<String> = []
+    var knownSubsystems: Set<String> = []
+    let levels = OSLogStream.LogEntry.LogLevel.allCases
+  
     var exportState: ExportState = .ready
     static let allowedTypes: [UTType] = [.log, .json, .plainText, .text, .commaSeparatedText]
     init() {
@@ -297,7 +272,7 @@ public enum SystemLog {
       case .info:
         return .blue
       case .notice:
-        return Color(PlatformColor.predatedCyan)
+        return .cyan
       case .error:
         return .orange
       case .fault:
@@ -381,110 +356,160 @@ public enum SystemLog {
   }
 
   struct FilterSheet: View {
-    @Binding var selectedCategories: Set<String>
-
-    @Binding var selectedLevels: Set<Level>
-
-    let categories: [String]
-
-    let levels: [Level]
+    struct Filters: Hashable {
+      var minLevel: OSLogStream.LogEntry.LogLevel?
+      var categories: Set<String> = []
+      var subsystems: Set<String> = []
+      
+      var levelInt: Int {
+        get {
+          minLevel?.nativeIntValue ?? -1
+        }
+        set {
+          minLevel = .init(nativeIntValue: newValue) ?? .undefined
+        }
+      }
+      
+      var filter: OSLogStream.Filter {
+        .and(
+          [
+            (subsystems).isEmpty ? .any : .and((subsystems).map { .subsystem($0) })
+            (categories).isEmpty ? .any : .and((categories).map { .category($0) })
+          ]
+        )
+      }
+    }
+    
+    fileprivate var model: LogModel
+    @Binding var filters: Filters
+    @Binding var isDisplayed: Bool
+    @State var newFilters: Filters = .init()
 
     var body: some View {
-      NavigationStack {
-        Form {
-          Section {
-            HStack {
-              Button {
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                  if selectedCategories.count == categories.count {
-                    selectedCategories.removeAll()
-                  } else {
-                    selectedCategories = Set(categories)
+      VStack {
+        HStack {
+          Rectangle().fill(.clear)
+            .overlay {
+              VStack {
+                Button {
+                  newFilters.categories = []
+                } label: {
+                  Label("Clear", systemImage: "xmark")
+                }
+                ScrollView([.vertical]) {
+                  VStack(alignment: .leading) {
+                    ForEach(model.knownCategories.compactMap{
+                      $0.isEmpty ? nil : $0
+                    }.sorted(), id: \.self) { v in
+                      Button {
+                        if !newFilters.categories.insert(v).inserted {
+                          newFilters.categories.remove(v)
+                        }
+                      } label: {
+                        Label(
+                          v.description,
+                          systemImage: newFilters.categories.contains(v)
+                          ? "checkmark.square"
+                          : "square"
+                        )
+                      }.buttonStyle(.plain)
+                    }
                   }
                 }
-              } label: {
-                Label(
-                  selectedCategories.count == categories.count ? "Deselect All" : "Select All",
-                  systemImage: selectedCategories.count == categories.count
-                    ? "checkmark.circle.fill" : "circle"
-                )
               }
-              .buttonStyle(.bordered)
-
-              Spacer()
-
-              MultiSelectPicker(
-                title: "Categories",
-                options: categories,
-                selectedOptions: $selectedCategories
-              )
             }
-          } header: {
-            Label("Categories", systemImage: "folder.fill")
-          }
-
-          Section {
-            HStack {
-              Button {
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                  if selectedLevels.count == levels.count {
-                    selectedLevels.removeAll()
-                  } else {
-                    selectedLevels = Set(levels)
+          Rectangle().fill(.clear)
+            .overlay {
+              VStack {
+                Button {
+                  newFilters.subsystems = []
+                } label: {
+                  Label("Clear", systemImage: "xmark")
+                }
+                ScrollView([.vertical]) {
+                  VStack(alignment: .leading) {
+                    ForEach(model.knownSubsystems.compactMap{
+                      $0.isEmpty ? nil : $0
+                    }.sorted(), id: \.self) { v in
+                      Button {
+                        let insert = newFilters.subsystems.insert(v).inserted
+                        if !insert {
+                          newFilters.subsystems.remove(v)
+                        }
+                      } label: {
+                        Label(
+                          v.description,
+                          systemImage: newFilters.subsystems.contains(v)
+                          ? "checkmark.square"
+                          : "square"
+                        )
+                      }.buttonStyle(.plain)
+                    }
                   }
                 }
-              } label: {
-                Label(
-                  selectedLevels.count == levels.count ? "Deselect All" : "Select All",
-                  systemImage: selectedLevels.count == levels.count
-                    ? "checkmark.circle.fill" : "circle"
-                )
               }
-              .buttonStyle(.bordered)
-
-              Spacer()
-
-              MultiSelectPicker(
-                title: "Levels",
-                options: levels,
-                selectedOptions: $selectedLevels
-              )
             }
-          } header: {
-            Label("Log Levels", systemImage: "tag.fill")
-          }
-        }
-        .navigationTitle("Filters")
-        #if os(iOS)
-          .navigationBarTitleDisplayMode(.inline)
-        #endif
-        .toolbar {
-          ToolbarItem(placement: .confirmationAction) {
-            Button("Done") {
-              // Sheet dismisses automatically
+          Rectangle().fill(.clear)
+            .overlay {
+              VStack {
+                Button {
+                  newFilters.minLevel = nil
+                } label: {
+                  Label("Clear", systemImage: "xmark")
+                }
+                ScrollView([.vertical]) {
+                  VStack(alignment: .leading) {
+                    ForEach(OSLogStream.LogEntry.LogLevel.allCases, id: \.self) { v in
+                      Button {
+                        newFilters.minLevel = v
+                      } label: {
+                        Label(
+                          v.description,
+                          systemImage: newFilters.minLevel == v
+                          ? "checkmark.square"
+                          : "square"
+                        )
+                        .foregroundStyle(.white)
+                        .shadow(color: .black, radius: 2, x: 0, y: 0)
+                        .padding(4)
+                        .background(v.color)
+                        .background(in: Capsule())
+                      }.buttonStyle(.plain)
+                    }
+                  }
+                }
+              }
             }
-          }
         }
+        .font(.caption)
+        HStack {
+          Spacer()
+          Button {
+            isDisplayed = false
+          } label: {
+            Text("dismiss")
+          }
+          Button {
+            filters = newFilters
+          } label: {
+            Text("update")
+          }
+          .disabled(newFilters == filters)
+        }
+      }
+      .padding()
+      .task {
+        newFilters = filters
       }
     }
   }
 
-  struct VerticalLabeledContentStyle: LabeledContentStyle {
-    func makeBody(configuration: Configuration) -> some View {
-      VStack(alignment: .leading) {
-        configuration.label
-          .fontWeight(.bold)
-        configuration.content
-      }
-      .padding(.bottom, 4)
-    }
-  }
 
   struct LogCell: View {
-    private let log: LogRepresentation
+    private let log: OSLogStream.LogEntry
     @State private var isExpanded: Bool = false
 
-    fileprivate init(for log: LogRepresentation) {
+    fileprivate init(for log: OSLogStream.LogEntry) {
       self.log = log
     }
 
@@ -560,7 +585,7 @@ public enum SystemLog {
       VStack(alignment: .leading, spacing: 8) {
         HStack(spacing: 8) {
           Label {
-            Text(log.subsystem)
+            Text(log.subsystem ?? "")
               .font(.system(.caption, design: .monospaced, weight: .semibold))
               .foregroundStyle(.primary)
           } icon: {
@@ -570,7 +595,7 @@ public enum SystemLog {
           .foregroundStyle(.primary)
 
           Label {
-            Text(log.category)
+            Text(log.category ?? "")
               .font(.system(.caption, design: .monospaced))
           } icon: {
             Image(systemName: "folder.fill")
@@ -620,96 +645,6 @@ public enum SystemLog {
     }
   }
 
-  fileprivate struct LogExportScreen: View {
-    fileprivate init(model: LogModel) {
-      self.model = model
-    }
-    @Bindable private var model: LogModel
-    @State private var showFileExporter: Bool = false
-    @State private var logFileDocument: MultiTypeFileDocument?
-    @State private var logFileDocumentType: UTType = .log
-    @State private var selectedExport: UTType = .log
-    @State private var showAlert: Bool = false
-    @State private var alertMessage: String = ""
-    @State private var showToast: Bool = false
-
-    enum Destination {
-      case logList
-    }
-    @State var destination: Destination?
-
-    var body: some View {
-      Form {
-        actionButtonsSection
-        filterTypeSection
-        filterOptions
-
-        Section {
-          Button {
-            destination = .logList
-          } label: {
-            HStack {
-              Label("View logs", systemImage: "list.bullet.rectangle.fill")
-                .symbolRenderingMode(.hierarchical)
-              Spacer()
-              if model.isExporting {
-                ProgressView()
-                  .controlSize(.small)
-              } else {
-                Image(systemName: "chevron.right")
-                  .font(.caption)
-                  .foregroundStyle(.secondary)
-              }
-            }
-          }
-          .buttonStyle(.borderless)
-          .disabled(model.isExporting)
-        } header: {
-          Label("Viewing", systemImage: "eye.fill")
-        } footer: {
-          if model.isExporting {
-            HStack(spacing: 8) {
-              ProgressView()
-                .controlSize(.small)
-              Text("Loading log entries...")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            }
-            .transition(.opacity.combined(with: .move(edge: .top)))
-          }
-        }
-      }
-      .formStyle(.grouped)
-      .navigationTitle("Export Logs")
-      .animation(.spring(response: 0.3, dampingFraction: 0.7), value: model.isExporting)
-      .toolbar { toolbarComponents }
-      .task { model.fetchLogEntries() }
-      .onChange(of: model.filter, initial: true) {
-        Task { model.fetchLogEntries() }
-      }
-      .fileExporter(
-        isPresented: $showFileExporter,
-        document: logFileDocument,
-        contentType: selectedExport
-      ) { result in
-        handleFileExportResult(result)
-      }
-      .alert(
-        "Error",
-        isPresented: $showAlert
-      ) {
-        Button("OK", role: .cancel) {}
-      } message: {
-        Text(alertMessage)
-      }
-      .navigationDestination(item: $destination) { it in
-        switch it {
-        case .logList:
-          LogListScreen(model: model)
-        }
-      }
-    }
-  }
   final class MultiTypeFileDocument: FileDocument {
     static let readableContentTypes: [UTType] = [.log, .json, .plainText, .commaSeparatedText]
 
@@ -736,40 +671,9 @@ public enum SystemLog {
   }
 
   struct LogListScreen: View {
-    @State private var searchText: String = ""
     @Bindable fileprivate var model: LogModel
-    private var logs: [LogRepresentation] {
-      model.logs
-    }
-
-    @State private var selectedCategories: Set<String> = []
-
-    @State private var selectedLevels: Set<Level> = []
-
     @State private var isFilterSheetPresented: Bool = false
-    @State private var hoveredLogId: String?
-
-    @Environment(\.dismiss) private var dismiss
-
-    private var categories: [String] {
-      Array(Set(logs.map { $0.category })).sorted()
-    }
-
-    private var levels: [Level] {
-      Array(Set(logs.map { $0.level })).sorted { $0.rawValue < $1.rawValue }
-    }
-
-    private var filteredLogs: [LogRepresentation] {
-      logs.filter { log in
-        (searchText.isEmpty || log.composedMessage.localizedCaseInsensitiveContains(searchText))
-          && (selectedCategories.isEmpty || selectedCategories.contains(log.category))
-          && (selectedLevels.isEmpty || selectedLevels.contains(log.level))
-      }
-    }
-
-    private var hasActiveFilters: Bool {
-      !selectedCategories.isEmpty || !selectedLevels.isEmpty
-    }
+    @State private var filters: FilterSheet.Filters = .init()
 
     fileprivate init(model: LogModel) {
       self.model = model
@@ -777,16 +681,9 @@ public enum SystemLog {
 
     var body: some View {
       List {
-        ForEach(filteredLogs) { log in
+        ForEach(model.logs) { log in
           LogCell(for: log)
             .listRowInsets(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
-            #if os(macOS)
-              .onHover { hovering in
-                withAnimation(.easeInOut(duration: 0.15)) {
-                  hoveredLogId = hovering ? log.id : nil
-                }
-              }
-            #endif
         }
       }
       .listStyle(.plain)
@@ -799,40 +696,22 @@ public enum SystemLog {
       #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
       #endif
-      .searchable(text: $searchText, prompt: "Search messages...")
-      .toolbar {
-        #if os(macOS)
-          ToolbarItem(placement: .navigation) {
-            Button {
-              dismiss()
-            } label: {
-              Label("Back", systemImage: "chevron.left")
-                .labelStyle(.iconOnly)
-            }
-            .help("Back to Export")
-          }
-        #endif
-
-        ToolbarItemGroup(placement: .automatic) {
-          if !logs.isEmpty {
-            filterButton
-          }
-        }
+        .task(id: filters) {
+        await model.subscribe(filter: filters.filter)
       }
-      .overlay {
-        if filteredLogs.isEmpty && model.error == nil {
-          emptyStateView
+      .toolbar {
+        ToolbarItemGroup(placement: .automatic) {
+            filterButton
         }
       }
       .sheet(isPresented: $isFilterSheetPresented) {
         FilterSheet(
-          selectedCategories: $selectedCategories,
-          selectedLevels: $selectedLevels,
-          categories: categories,
-          levels: levels
+          model: model,
+          filters: $filters,
+          isDisplayed: $isFilterSheetPresented
         )
         #if os(iOS)
-          .presentationDetents([.height(200)])
+        .presentationDetents([.medium, .large])
         #endif
       }
     }
@@ -845,7 +724,7 @@ public enum SystemLog {
       } label: {
         Label(
           "Filter",
-          systemImage: hasActiveFilters
+          systemImage: true
             ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle"
         )
         .symbolRenderingMode(.hierarchical)
@@ -859,7 +738,10 @@ public enum SystemLog {
         Image(systemName: "exclamationmark.triangle.fill")
           .font(.system(size: 48))
           .foregroundStyle(.orange)
-          .symbolEffect(.bounce, value: model.error?.localizedDescription)
+          .symbolEffect(
+            .bounce,
+            value: model.error?.localizedDescription
+          )
 
         Text("Error loading logs")
           .font(.title2)
@@ -868,7 +750,6 @@ public enum SystemLog {
         Button {
           withAnimation {
             model.error = nil
-            model.fetchLogEntries()
           }
         } label: {
           Label("Retry", systemImage: "arrow.clockwise")
@@ -890,32 +771,6 @@ public enum SystemLog {
         }
       }
       .padding()
-      .transition(.scale.combined(with: .opacity))
-    }
-
-    private var emptyStateView: some View {
-      VStack(spacing: 20) {
-        Image(systemName: searchText.isEmpty ? "tray" : "magnifyingglass")
-          .font(.system(size: 64))
-          .foregroundStyle(.secondary)
-          .symbolEffect(.pulse, options: .repeating)
-
-        Text(searchText.isEmpty ? "No log entries found" : "No matching logs")
-          .font(.title2)
-          .fontWeight(.bold)
-
-        if hasActiveFilters {
-          Button {
-            withAnimation {
-              selectedCategories.removeAll()
-              selectedLevels.removeAll()
-            }
-          } label: {
-            Label("Clear Filters", systemImage: "xmark.circle")
-          }
-          .buttonStyle(.bordered)
-        }
-      }
       .transition(.scale.combined(with: .opacity))
     }
   }
@@ -943,7 +798,9 @@ public enum SystemLog {
         HStack {
           Text(title)
           Spacer()
-          Text(selectedOptions.isEmpty ? "None" : "\(selectedOptions.count) selected")
+          Text(
+            selectedOptions.isEmpty ? "None" : "\(selectedOptions.count) selected"
+          )
             .foregroundColor(.gray)
         }
       }
@@ -989,7 +846,7 @@ extension OSLogEntryLog.Level {
     case .info:
       return .blue
     case .notice:
-      return Color(PlatformColor.predatedCyan)
+      return .cyan
     case .error:
       return .orange
     case .fault:
@@ -1018,303 +875,6 @@ extension OSLogEntryLog.Level {
   }
 }
 
-extension Date {
-
-  fileprivate func createDateTime(hour: Int, minute: Int) -> Date? {
-    var components = Calendar.current.dateComponents([.year, .month, .day], from: self)
-    components.hour = hour
-    components.minute = minute
-    return Calendar.current.date(from: components)
-  }
-}
-
-extension PlatformColor {
-
-  fileprivate static let predatedCyan: PlatformColor = .init(
-    red: 50 / 255, green: 173 / 255, blue: 230 / 255, alpha: 1)
-}
-
-extension LabeledContentStyle where Self == SystemLog.VerticalLabeledContentStyle {
-  fileprivate static var vertical: SystemLog.VerticalLabeledContentStyle { Self() }
-}
-
-extension SystemLog.LogExportScreen {
-  private func copyToClipboard() {
-    let logs = model.logs
-    Task { [logs] in
-      let logs = SystemLog.LogModel.exportLogs(logs, as: .plainText)
-      let contentToPaste = logs.isEmpty ? "Nothing to paste" : logs
-      setToPasteBoard(contentToPaste)
-      showToast = true
-    }
-  }
-
-  private func exportLogFile(type: UTType) {
-    guard logFileDocument == nil else {
-      showFileExporter.toggle()
-      return
-    }
-    Task {
-      do {
-        let url = createLogFileURL(for: type)
-        try await model.writeLogs(as: type, to: url)
-        await MainActor.run {
-          self.logFileDocument = SystemLog.MultiTypeFileDocument(file: url, fileType: type)
-          self.showFileExporter = true
-        }
-      } catch {
-        alertMessage = "Failed to write logs to file: \(error.localizedDescription)"
-        showAlert = true
-      }
-    }
-  }
-
-  private func shareLogFile(type: UTType) -> URL {
-    let url = createLogFileURL(for: type)
-    Task {
-      do {
-        try await model.writeLogs(as: type, to: url)
-      } catch {
-      }
-    }
-    return url
-  }
-
-  private func createLogFileURL(for type: UTType) -> URL {
-    let fileName = "\(ProcessInfo.processInfo.processName)-\(Date().timeIntervalSince1970)"
-    let fileExtension = type.fileExtension
-    let fullFile = "\(fileName).\(fileExtension)"
-    return URL.temporaryDirectory.appendingPathComponent(fullFile)
-  }
-
-  private func handleFileExportResult(_ result: Result<URL, Error>) {
-    switch result {
-    case .success:
-      break
-    case .failure(let error):
-      alertMessage = "Failed to export the file: \(error.localizedDescription)"
-      showAlert = true
-    }
-    logFileDocument = nil
-  }
-
-  private func setToPasteBoard(_ string: String) {
-    #if os(macOS)
-      let pasteboard = NSPasteboard.general
-      pasteboard.declareTypes([.string], owner: nil)
-      pasteboard.setString(string, forType: .string)
-    #else
-      UIPasteboard.general.string = string
-    #endif
-  }
-}
-
-extension SystemLog.LogExportScreen {
-  @ToolbarContentBuilder
-  private var toolbarComponents: some ToolbarContent {
-    ToolbarItemGroup(placement: .navigation) {
-      if model.isExporting {
-        overlayProgress
-      }
-      if showToast {
-        copiedConfirmation
-      }
-    }
-  }
-
-  private var overlayProgress: some View {
-    HStack(spacing: 6) {
-      ProgressView()
-        .controlSize(.small)
-      Text("Loading...")
-        .font(.caption.weight(.medium))
-        .foregroundStyle(.secondary)
-    }
-    .padding(.horizontal, 8)
-    .padding(.vertical, 4)
-    .background(Color(.systemGray).opacity(0.15))
-    .clipShape(Capsule())
-    .transition(.scale.combined(with: .opacity))
-  }
-
-  private var copiedConfirmation: some View {
-    HStack(spacing: 4) {
-      Image(systemName: "checkmark.circle.fill")
-        .foregroundStyle(.green)
-      Text("Copied")
-        .font(.caption.weight(.medium))
-    }
-    .padding(.horizontal, 8)
-    .padding(.vertical, 4)
-    .background(Color.green.opacity(0.15))
-    .clipShape(Capsule())
-    .transition(.scale.combined(with: .opacity))
-    .task {
-      try? await Task.sleep(for: .seconds(2))
-      withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-        showToast = false
-      }
-    }
-  }
-
-  private var filterTypeSection: some View {
-    Section {
-      Picker(
-        "Filter by", selection: $model.filter.filterType
-      ) {
-        ForEach(SystemLog.LogModel.FilterType.allCases) { type in
-          Text(type.description).tag(type)
-        }
-      }
-      .pickerStyle(.segmented)
-      filterBySegments
-    } header: {
-      Label("Time Filter", systemImage: "clock.fill")
-    } footer: {
-      Text(filterFooterText)
-        .font(.caption)
-    }
-    .animation(.spring(response: 0.3, dampingFraction: 0.7), value: model.filter.filterType)
-  }
-
-  private var filterOptions: some View {
-    Section {
-      Toggle(isOn: $model.filter.excludeSystemLogs) {
-        Label("Exclude system logs", systemImage: "line.3.horizontal.decrease.circle")
-      }
-
-      VStack(alignment: .leading, spacing: 8) {
-        Text("Export format")
-          .font(.subheadline)
-          .foregroundStyle(.secondary)
-
-        Picker("Export filetype", selection: $selectedExport) {
-          ForEach(SystemLog.LogModel.allowedTypes, id: \.self) { type in
-            Text(type.description).tag(type)
-          }
-        }
-        .pickerStyle(.segmented)
-        .labelsHidden()
-      }
-    } header: {
-      Label("Options", systemImage: "gearshape.fill")
-    } footer: {
-      Text(
-        "When **Exclude system logs** is enabled, only log entries from this app will be included in the export."
-      )
-      .font(.caption)
-    }
-    .animation(.spring(response: 0.3, dampingFraction: 0.7), value: model.filter.excludeSystemLogs)
-  }
-
-  private var actionButtonsSection: some View {
-    Section {
-      SystemLog.ActionButton("Copy to clipboard", systemImage: "doc.on.doc.fill", iconTint: .blue) {
-        copyToClipboard()
-      }
-
-      SystemLog.ActionButton("Export log file", systemImage: "arrow.down.doc.fill", iconTint: .cyan)
-      {
-        exportLogFile(type: selectedExport)
-      }
-
-      ShareLink(item: shareLogFile(type: selectedExport)) {
-        Label {
-          Text("Share log file")
-        } icon: {
-          Image(systemName: "square.and.arrow.up.fill")
-            .symbolRenderingMode(.hierarchical)
-            .foregroundStyle(.green)
-        }
-
-      }
-
-    } header: {
-      Label("Actions", systemImage: "bolt.fill")
-    }
-  }
-
-  @ViewBuilder
-  private var filterBySegments: some View {
-    switch model.filter.filterType {
-    case .specificDate: specificDateSegment
-    case .dateRange: dateRangeSegment
-    case .hourRange: hourRangeSegment
-    case .preset: presetSegment
-    }
-  }
-
-  private var specificDateSegment: some View {
-    DatePicker(
-      "Specific date",
-      selection: $model.filter.specificDate,
-      in: ...Date.now,
-      displayedComponents: .date
-    )
-  }
-
-  private var dateRangeSegment: some View {
-    Group {
-      DatePicker(
-        "Start date",
-        selection: $model.filter.dateRangeStart,
-        in: ...model.filter.dateRangeFinish,
-        displayedComponents: .date
-      )
-      DatePicker(
-        "Finish date",
-        selection: $model.filter.dateRangeFinish,
-        in: model.filter.dateRangeStart...,
-        displayedComponents: .date
-      )
-    }
-  }
-
-  private var hourRangeSegment: some View {
-    Group {
-      DatePicker(
-        "Specific date",
-        selection: $model.filter.specificDate,
-        in: ...Date.now,
-        displayedComponents: .date
-      )
-      DatePicker(
-        "Start time",
-        selection: $model.filter.hourRangeStart,
-        in: ...model.filter.hourRangeFinish,
-        displayedComponents: .hourAndMinute
-      )
-      DatePicker(
-        "Finish time",
-        selection: $model.filter.hourRangeFinish,
-        in: model.filter.hourRangeStart...,
-        displayedComponents: .hourAndMinute
-      )
-    }
-  }
-
-  private var presetSegment: some View {
-    Picker("Recent", selection: $model.filter.selectedPreset) {
-      ForEach(SystemLog.LogModel.Preset.allCases, id: \.self) { preset in
-        Text("Last \(preset.description)").id(preset)
-      }
-    }
-  }
-
-  private var filterFooterText: String {
-    switch model.filter.filterType {
-    case .specificDate:
-      "Select a specific date to filter logs from that day only. All times are considered within the selected date."
-    case .dateRange:
-      "Choose a start and end date to filter logs within a specific date range. Logs from both dates will be included."
-    case .hourRange:
-      "Set a specific date and a range of hours to narrow down logs to a precise time window within the chosen day."
-    case .preset:
-      "Select a preset option to quickly apply common date and time filters without manual adjustments."
-    }
-  }
-}
-
 extension UTType {
   fileprivate var fileExtension: String {
     switch self {
@@ -1339,308 +899,6 @@ extension UTType {
   }
 }
 
-#if canImport(UIKit)
-  import UIKit
-#else
-  import AppKit
-#endif
-
-#if canImport(UIKit)
-  typealias PlatformColor = UIColor
-#else
-  typealias PlatformColor = NSColor
-#endif
-
-extension PlatformColor {
-  fileprivate var relativeLuminance: CGFloat {
-    let components = self.toRGBAComponents()
-
-    // Convert from sRGB to linear RGB
-    let r = components.r < 0.04045 ? components.r / 12.92 : pow((components.r + 0.055) / 1.055, 2.4)
-    let g = components.g < 0.04045 ? components.g / 12.92 : pow((components.g + 0.055) / 1.055, 2.4)
-    let b = components.b < 0.04045 ? components.b / 12.92 : pow((components.b + 0.055) / 1.055, 2.4)
-
-    // Calculate relative luminance (Y)
-    let y = r * 0.2126 + g * 0.7152 + b * 0.0722
-
-    return min(max(y, 0), 1)
-  }
-
-  fileprivate func contrastRatio(to otherColor: PlatformColor) -> CGFloat {
-    let luminance1 = self.relativeLuminance
-    let luminance2 = otherColor.relativeLuminance
-    return (max(luminance1, luminance2) + 0.05) / (min(luminance1, luminance2) + 0.05)
-  }
-
-}
-
-extension PlatformColor {
-  fileprivate struct RGBAComponents {
-    var r: CGFloat = 0
-    var g: CGFloat = 0
-    var b: CGFloat = 0
-    var a: CGFloat = 0
-  }
-
-  fileprivate struct HSBComponents {
-    var h: CGFloat = 0
-    var s: CGFloat = 0
-    var b: CGFloat = 0
-    var a: CGFloat = 0
-  }
-
-  fileprivate func toRGBAComponents() -> RGBAComponents {
-    var components = RGBAComponents()
-
-    #if canImport(UIKit)
-      let result = self.getRed(
-        &components.r,
-        green: &components.g,
-        blue: &components.b,
-        alpha: &components.a
-      )
-      assert(result, "Failed to get RGBA components from UIColor")
-    #else
-      if let rgbColor = self.usingColorSpace(.sRGB) {
-        rgbColor.getRed(
-          &components.r,
-          green: &components.g,
-          blue: &components.b,
-          alpha: &components.a
-        )
-      } else {
-        assertionFailure("Failed to convert color space")
-      }
-    #endif
-
-    return components
-  }
-
-  fileprivate func toHSBComponents() -> HSBComponents {
-    var components = HSBComponents()
-
-    #if canImport(UIKit)
-      let result = self.getHue(
-        &components.h,
-        saturation: &components.s,
-        brightness: &components.b,
-        alpha: &components.a
-      )
-      assert(result, "Failed to get HSB components from UIColor")
-    #else
-      if let rgbColor = self.usingColorSpace(.sRGB) {
-        rgbColor.getHue(
-          &components.h,
-          saturation: &components.s,
-          brightness: &components.b,
-          alpha: &components.a
-        )
-      } else {
-        assertionFailure("Failed to convert color space")
-      }
-    #endif
-
-    return components
-  }
-
-  fileprivate static func dynamicColor(_ block: @escaping () -> PlatformColor) -> PlatformColor {
-    #if canImport(UIKit)
-      #if os(watchOS)
-        return block()
-      #else
-        return PlatformColor { _ in block() }
-      #endif
-    #else
-      return PlatformColor(name: nil) { _ in block() }
-    #endif
-  }
-
-}
-
-extension PlatformColor {
-
-  /// Creates a color from # prefix, alpha values, and 3 char shorthand hex values
-  fileprivate convenience init?(hex: String) {
-    let scanner = Scanner(string: hex)
-    scanner.charactersToBeSkipped = nil
-    _ = scanner.scanString("#")
-
-    switch scanner.charactersLeft() {
-    case 6, 8:
-      guard let red = scanner.scanHexByte(),
-        let green = scanner.scanHexByte(),
-        let blue = scanner.scanHexByte()
-      else {
-        return nil
-      }
-      var alpha: UInt8 = 255
-      if scanner.charactersLeft() == 2 {
-        guard let parsedAlpha = scanner.scanHexByte() else {
-          return nil
-        }
-
-        alpha = parsedAlpha
-      }
-
-      self.init(
-        red: CGFloat(red) / 255,
-        green: CGFloat(green) / 255,
-        blue: CGFloat(blue) / 255,
-        alpha: CGFloat(alpha) / 255
-      )
-    case 3:
-      guard let red = scanner.scanHexNibble(),
-        let green = scanner.scanHexNibble(),
-        let blue = scanner.scanHexNibble()
-      else {
-        return nil
-      }
-
-      self.init(
-        red: CGFloat(red) / 15,
-        green: CGFloat(green) / 15,
-        blue: CGFloat(blue) / 15,
-        alpha: 1
-      )
-    default:
-      return nil
-    }
-  }
-
-  fileprivate func toHex() -> String {
-    var components = self.toRGBAComponents()
-
-    // Clamp components to [0.0, 1.0]
-    components.r = max(0, min(1, components.r))
-    components.g = max(0, min(1, components.g))
-    components.b = max(0, min(1, components.b))
-    components.a = max(0, min(1, components.a))
-
-    if components.a == 1 {
-      // RGB
-      return String(
-        format: "#%02lX%02lX%02lX",
-        Int(round(components.r * 255)),
-        Int(round(components.g * 255)),
-        Int(round(components.b * 255))
-      )
-    } else {
-      // RGBA
-      return String(
-        format: "#%02lX%02lX%02lX%02lX",
-        Int(round(components.r * 255)),
-        Int(round(components.g * 255)),
-        Int(round(components.b * 255)),
-        Int(round(components.a * 255))
-      )
-    }
-  }
-
-}
-
-extension Scanner {
-
-  fileprivate func scanHexNibble() -> UInt8? {
-    guard let character = scanCharacter(), character.isHexDigit else {
-      return nil
-    }
-
-    return UInt8(String(character), radix: 16)
-  }
-
-  fileprivate func scanHexByte() -> UInt8? {
-    guard let highNibble = scanHexNibble(), let lowNibble = scanHexNibble() else {
-      return nil
-    }
-
-    return (highNibble << 4) | lowNibble
-  }
-
-  fileprivate func charactersLeft() -> Int {
-    return string.count - currentIndex.utf16Offset(in: string)
-  }
-
-}
-
-extension PlatformColor {
-
-  fileprivate func lightening(by ratio: CGFloat) -> PlatformColor {
-    return .dynamicColor {
-      let components = self.toHSBComponents()
-      let newBrightness =
-        components.b != 0
-        ? components.b + (components.b * ratio)
-        : ratio
-
-      return PlatformColor(
-        hue: components.h,
-        saturation: components.s,
-        brightness: min(newBrightness, 1),
-        alpha: components.a
-      )
-    }
-  }
-
-  fileprivate func darkening(by ratio: CGFloat) -> PlatformColor {
-    return .dynamicColor {
-      let components = self.toHSBComponents()
-      let newBrightness =
-        components.b != 1
-        ? components.b - (components.b * ratio)
-        : 1 - ratio
-
-      return PlatformColor(
-        hue: components.h,
-        saturation: components.s,
-        brightness: max(newBrightness, 0),
-        alpha: components.a
-      )
-    }
-  }
-
-}
-
-#if canImport(SwiftUI)
-  import SwiftUI
-
-  @available(macOS 11.0, iOS 14.0, tvOS 14.0, macCatalyst 14.0, watchOS 7.0, *)
-  extension Color {
-
-    fileprivate var relativeLuminance: CGFloat {
-      PlatformColor(self).relativeLuminance
-    }
-
-    fileprivate init?(hex: String) {
-      guard let color = PlatformColor(hex: hex) else {
-        return nil
-      }
-
-      self.init(color)
-    }
-
-    fileprivate func toHex() -> String {
-      return PlatformColor(self).toHex()
-    }
-
-    fileprivate func contrastRatio(to otherColor: Color) -> CGFloat {
-      return PlatformColor(self).contrastRatio(to: PlatformColor(otherColor))
-    }
-
-    fileprivate func lightening(by ratio: CGFloat) -> Color {
-      return Color(
-        PlatformColor(self).lightening(by: ratio)
-      )
-    }
-
-    fileprivate func darkening(by ratio: CGFloat) -> Color {
-      return Color(
-        PlatformColor(self).darkening(by: ratio)
-      )
-    }
-
-  }
-#endif
-
 extension SystemLog.LogModel {
   fileprivate enum ExportState {
     case ready
@@ -1650,60 +908,6 @@ extension SystemLog.LogModel {
   }
   fileprivate var isExporting: Bool {
     exportState == .processing
-  }
-  fileprivate enum FilterType: CustomStringConvertible, CaseIterable, Hashable, Identifiable {
-    case preset
-    case specificDate
-    case dateRange
-    case hourRange
-    var id: Self { self }
-    var description: String {
-      switch self {
-      case .specificDate: return "Date"
-      case .dateRange: return "Date range"
-      case .hourRange: return "Time range"
-      case .preset: return "Recent"
-      }
-    }
-  }
-  fileprivate enum Preset: CustomStringConvertible, CaseIterable {
-    case minutesFive
-    case minutesTen
-    case minutesFifteen
-    case minutesThirty
-    case hourOne
-    case hoursSix
-    case hoursTwelve
-    case hoursTwentyFour
-    var description: String {
-      switch self {
-      case .minutesFive: return "5 minutes"
-      case .minutesTen: return "10 minutes"
-      case .minutesFifteen: return "15 minutes"
-      case .minutesThirty: return "30 minutes"
-      case .hourOne: return "1 hour"
-      case .hoursSix: return "6 hours"
-      case .hoursTwelve: return "12 hours"
-      case .hoursTwentyFour: return "24 hours"
-      }
-    }
-    internal var presetDate: Date {
-      return Date().addingTimeInterval(-timeInterval)
-    }
-    private var timeInterval: TimeInterval {
-      let minute: TimeInterval = 60
-      let hour: TimeInterval = 3600
-      switch self {
-      case .minutesFive: return 5 * minute
-      case .minutesTen: return 10 * minute
-      case .minutesFifteen: return 15 * minute
-      case .minutesThirty: return 30 * minute
-      case .hourOne: return hour
-      case .hoursSix: return 6 * hour
-      case .hoursTwelve: return 12 * hour
-      case .hoursTwentyFour: return 24 * hour
-      }
-    }
   }
 }
 
@@ -1733,36 +937,28 @@ extension SystemLog.LogModel {
 
 extension SystemLog.LogModel {
 
-  fileprivate func setLogs(to logs: [LogRepresentation]) {
-    self.logs = logs
-    self.exportState = logs.isEmpty ? .failed : .completed
-  }
-
   @MainActor
-  fileprivate func fetchLogEntries() {
+  fileprivate func subscribe(filter: OSLogStream.Filter) async {
+    logs = []
     self.exportState = .processing
-    Task { @MainActor in
-      do {
-        let it = filter
-        self.logs = try await Task { @BGActor @Sendable [filter = it] in
-          let logPredicate: NSPredicate? = Self.getLogPredicate(
-            filter: filter, for: filter.excludeSystemLogs ? Bundle.main : nil)
-          let store = try OSLogStore(scope: .currentProcessIdentifier)
-          return
-            try store
-            .getEntries(matching: logPredicate)
-            .compactMap { $0 as? OSLogEntryLog }
-            .map { LogRepresentation(entry: $0) }
-        }.value
-
-      } catch {
-        self.error = error
+    do {
+      try await OSLogStream.withCallback(
+        batchSize: 100,
+        filter: filter
+      ) { entries in
+        self.logs.append(contentsOf: entries)
+        if self.exportState == .processing {
+          self.exportState = .ready
+        }
       }
+    } catch {
+      self.error = error
     }
-
   }
   fileprivate static func exportLogs(
-    _ logs: [LogRepresentation], as format: UTType, csvDelimiter: SystemLog.Delimiter = .comma
+    _ logs: [OSLogStream.LogEntry],
+    as format: UTType,
+    csvDelimiter: SystemLog.Delimiter = .comma
   ) -> String {
     guard Self.allowedTypes.contains(format) else {
       return "Unsupported export format."
@@ -1774,7 +970,7 @@ extension SystemLog.LogModel {
     case .commaSeparatedText:
       return logEntriesToCSV(logEntries: logs, delimiter: csvDelimiter)
     case .plainText, .log:
-      return logEntriesToString(logEntries: logs)
+      return logs.map { $0.formatted() }.joined(separator: "\n")
     default:
       return ""
     }
@@ -1786,7 +982,7 @@ extension SystemLog.LogModel {
       throw LoggerError.unsupportedFormatType
     }
     let logs = self.logs
-    let task = Task { @BGActor [logs] in
+    let task = Task { @Background [logs] in
       let logString = Self.exportLogs(logs, as: format)
       try logString.write(to: url, atomically: true, encoding: .utf8)
     }
@@ -1799,96 +995,8 @@ extension SystemLog.LogModel {
       throw LoggerError.failedToWriteFile
     }
   }
-}
 
-extension SystemLog.LogModel {
-  private static func getLogPredicate(filter: Filter, for bundle: Bundle?) -> NSPredicate? {
-    switch filter.filterType {
-    case .specificDate:
-      return datePredicate(for: filter.specificDate, and: bundle)
-    case .dateRange:
-      return datePredicate(from: filter.dateRangeStart, to: filter.dateRangeFinish, and: bundle)
-    case .hourRange:
-      guard let (startDate, endDate) = getHourRangeDates(filter: filter) else { return nil }
-      return datePredicate(from: startDate, to: endDate, and: bundle)
-    case .preset:
-      let startDate = filter.selectedPreset.presetDate
-      return datePredicate(from: startDate, and: bundle)
-    }
-  }
-  private static func getHourRangeDates(filter: Filter) -> (startDate: Date, endDate: Date)? {
-    let startHour = Calendar.current.component(.hour, from: filter.hourRangeStart)
-    let startMinute = Calendar.current.component(.minute, from: filter.hourRangeStart)
-    let finishHour = Calendar.current.component(.hour, from: filter.hourRangeFinish)
-    let finishMinute = Calendar.current.component(.minute, from: filter.hourRangeFinish)
-
-    guard let startDate = filter.specificDate.createDateTime(hour: startHour, minute: startMinute),
-      let endDate = filter.specificDate.createDateTime(hour: finishHour, minute: finishMinute)
-    else {
-      return nil
-    }
-    return (startDate, endDate)
-  }
-  private static func datePredicate(for date: Date, and bundle: Bundle?) -> NSPredicate {
-    guard let nextDay = Calendar.current.date(byAdding: .day, value: 1, to: date) else {
-      return NSPredicate(value: false)
-    }
-    if let b = bundle?.bundleIdentifier {
-      return NSPredicate(
-        format: "date >= %@ AND date < %@ AND subsystem = %@",
-        date as NSDate,
-        nextDay as NSDate,
-        b as NSString
-      )
-    } else {
-      return NSPredicate(
-        format: "date >= %@ AND date < %@",
-        date as NSDate,
-        nextDay as NSDate
-      )
-    }
-  }
-  private static func datePredicate(
-    from startDate: Date, to endDate: Date? = nil, and bundle: Bundle?
-  ) -> NSPredicate {
-    if let endDate = endDate {
-      if let b = bundle?.bundleIdentifier {
-        return NSPredicate(
-          format: "date >= %@ AND date <= %@ AND subsystem = %@",
-          startDate as NSDate,
-          endDate as NSDate,
-          b as NSString
-        )
-      } else {
-        return NSPredicate(
-          format: "date >= %@ AND date <= %@",
-          startDate as NSDate,
-          endDate as NSDate
-        )
-      }
-    } else {
-      if let b = bundle?.bundleIdentifier {
-        return NSPredicate(
-          format: "date >= %@ AND subsystem = %@",
-          startDate as NSDate,
-          b as NSString
-        )
-      } else {
-        return NSPredicate(
-          format: "date >= %@",
-          startDate as NSDate
-        )
-      }
-    }
-  }
-  private static func logEntriesToString(logEntries logs: [LogRepresentation]) -> String {
-    let logStrings = logs.map { entry in
-      let message = entry.composedMessage.replacingOccurrences(of: "|", with: "\\|")
-      return "\(entry.date) | \(entry.level) | \(entry.subsystem) | \(entry.category) | \(message)"
-    }
-    return logStrings.joined(separator: "\n")
-  }
-  private static func logEntriesToJSON(logEntries: [LogRepresentation]) -> String {
+  private static func logEntriesToJSON(logEntries: [OSLogStream.LogEntry]) -> String {
     let jsonEncoder = JSONEncoder()
     jsonEncoder.outputFormatting = .prettyPrinted
     if let jsonData = try? jsonEncoder.encode(logEntries),
@@ -1899,7 +1007,7 @@ extension SystemLog.LogModel {
     return ""
   }
   private static func logEntriesToCSV(
-    logEntries: [LogRepresentation], delimiter: SystemLog.Delimiter
+    logEntries: [OSLogStream.LogEntry], delimiter: SystemLog.Delimiter
   ) -> String {
     let headers = ["Date", "Level", "Subsystem", "Category", "Message"]
     let csvHeaders = headers.joined(separator: delimiter.rawValue)
@@ -1907,7 +1015,10 @@ extension SystemLog.LogModel {
     let csvStrings = logEntries.map { entry in
 
       return [
-        entry.dateString, entry.level.description, entry.subsystem, entry.category,
+        entry.date.ISO8601Format(),
+        entry.level.rawValue,
+        entry.subsystem ?? "",
+        entry.category ?? "",
         entry.composedMessage,
       ]
       .joined(separator: delimiter.rawValue)
@@ -1915,73 +1026,6 @@ extension SystemLog.LogModel {
     return ([csvHeaders] + csvStrings).joined(separator: "\n")
   }
 }
-
-private struct LogRepresentation: Hashable, Identifiable, Codable {
-  let id: String
-  let date: Date
-  var dateString: String {
-    let dateFormatter = ISO8601DateFormatter()
-    return dateFormatter.string(from: date)
-  }
-  let level: SystemLog.Level
-  let subsystem: String
-  let category: String
-  let message: String
-  let color: String
-  let description: String
-  let composedMessage: String
-  init(entry: OSLogEntryLog) {
-    self.id = "\(ObjectIdentifier(entry))"
-    self.date = entry.date
-    self.level = entry.level.level
-    self.subsystem = entry.subsystem
-    self.category = entry.category
-    self.message = entry.composedMessage
-    self.color = entry.level.color.toHex()
-    self.description = entry.description
-    self.composedMessage = entry.composedMessage
-  }
-}
-
-private protocol LoggerCategoryRepresentable: RawRepresentable, Hashable, Equatable
-where RawValue == String {}
-
-private actor LoggerCategoryManager {
-  private var existingRawValues = Set<String>()
-  internal func addCategoryIfNew(_ rawValue: String) -> Bool {
-    let lowercasedValue = rawValue.lowercased()
-    if existingRawValues.contains(lowercasedValue) {
-      return true
-    } else {
-      existingRawValues.insert(lowercasedValue)
-      return false
-    }
-  }
-}
-struct LoggerCategory: LoggerCategoryRepresentable, Sendable {
-  let rawValue: String
-  private static let manager = LoggerCategoryManager()
-  init(rawValue: String) {
-    self.rawValue = rawValue
-    Task {
-      _ = await LoggerCategory.manager.addCategoryIfNew(rawValue)
-    }
-  }
-  init(_ value: String) {
-    self.init(rawValue: value)
-  }
-}
-extension os.Logger {
-  fileprivate init(subsystem: String, category: LoggerCategory) {
-    self.init(subsystem: subsystem, category: category.rawValue)
-  }
-}
-
-@globalActor
-private actor BGActor {
-  static let shared = BGActor()
-}
-
 // MARK: - macOS Window Integration
 
 #if os(macOS)
@@ -2223,3 +1267,24 @@ private actor BGActor {
   }
 
 #endif
+
+extension OSLogStream.LogEntry.LogLevel {
+  var systemLog: SystemLog.Level {
+    switch self {
+    case .debug:
+        .debug
+    case .info:
+        .info
+    case .notice:
+        .notice
+    case .error:
+        .error
+    case .fault:
+        .fault
+    case .undefined:
+        .undefined
+    case .unknown:
+        .unknown
+    }
+  }
+}
