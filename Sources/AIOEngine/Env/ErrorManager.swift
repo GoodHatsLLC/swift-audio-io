@@ -52,7 +52,7 @@ public final class ErrorManager: Sendable {
 
   @MainActor
   public var errors: [ErrorEvent] = []
-  
+
   @MainActor
   public func popError() -> ErrorEvent? {
     if !errors.isEmpty {
@@ -116,7 +116,7 @@ public final class ErrorManager: Sendable {
             context: context
           )
         }
-        }
+      }
     )
   }
 
@@ -132,8 +132,8 @@ public final class ErrorManager: Sendable {
 #if canImport(SwiftUI)
   import SwiftUI
 
-  public extension EnvironmentValues {
-    @Entry var errorManager: ErrorManager = .init()
+  extension EnvironmentValues {
+    @Entry public var errorManager: ErrorManager = .init()
   }
 
 #endif
