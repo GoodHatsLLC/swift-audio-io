@@ -961,6 +961,74 @@
       return url
     }
 
+    /// Rotates the recording to a new file without interrupting audio capture.
+    ///
+    /// This method is used for segmented recording mode, where the recorder automatically
+    /// creates new track files at specified intervals. The ring buffers continue receiving
+    /// audio throughout the rotation - no samples are lost.
+    ///
+    /// The rotation process:
+    /// 1. Creates a new output file
+    /// 2. Cancels the current writer task (it will flush remaining data)
+    /// 3. Waits briefly for the writer to finish the current chunk
+    /// 4. Updates state with the new file
+    /// 5. Starts a new writer loop
+    ///
+    /// - Returns: URL of the completed (previous) recording file
+    /// - Throws: `AIOError.notRecording` if not currently recording
+    @MainActor
+    public func rotateRecordingFile() async throws -> URL {
+      guard isRecording,
+            let currentURL = state.recordingURL,
+            let configuration = state.recordingConfiguration,
+            let processingFormat = configuration.processingFormat,
+            let audioBuffers = state.audioBuffers
+      else {
+        throw AIOError.notRecording
+      }
+
+      // Get file settings from configuration
+      guard let fileSettings = configuration.fileFormat?.settings else {
+        throw AIOError.invalidRecordingConfiguration(details: "file format settings")
+      }
+
+      // Create new file with fresh filename
+      let newURL = FileManager.default.temporaryDirectory.appendingPathComponent(
+        Self.generateRecordingFilename(extension: configuration.fileExtension),
+        conformingTo: configuration.outputConfiguration.fileFormat.utType
+      )
+      let newFile = try AVAudioFile(forWriting: newURL, settings: fileSettings)
+
+      // Cancel current writer task (it will flush remaining data to the old file)
+      writerTask?.cancel()
+
+      // Wait briefly for writer to finish current chunk
+      // The writer loop checks Task.isCancelled and exits cleanly
+      try? await Task.sleep(for: .milliseconds(50))
+
+      // Close the old file
+      state.file?.close()
+
+      // Update state with new file
+      state.file = newFile
+      state.recordingURL = newURL
+
+      // Start new writer loop for the new file
+      startFileWriteLoop(flushing: audioBuffers, of: processingFormat, to: newFile)
+
+      // Notify of new file (for crash detection tracking)
+      let fileFormat = configuration.outputConfiguration.fileFormat.rawValue
+      onRecordingStarted?(newURL, fileFormat)
+
+      log.info("📼 Rotated recording file to: \(newURL.lastPathComponent, privacy: .public)")
+
+      return currentURL
+    }
+
+    /// Called when a recording segment is completed (file rotated).
+    /// The handler receives the URL of the completed segment and its format.
+    @MainActor public var onSegmentCompleted: (@Sendable @MainActor (URL, String) -> Void)?
+
     /// Plays an audio file from the specified URL.
     ///
     /// This method stops any current playback or recording before starting the new playback.
