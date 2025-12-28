@@ -40,20 +40,20 @@ public enum FileFormat: String, CaseIterable, CustomStringConvertible, Sendable,
     switch self {
     case .aac, .adts:
       // Compressed formats should use 16-bit or Float32, not 24-bit
-      [BitDepth.pcmFloat32, BitDepth.pcm16]
+      [BitDepth.pcmFloat32, BitDepth.pcmInt16]
     case .flac:
-      // FLAC supports 16-bit and 24-bit PCM (not float)
-      [BitDepth.pcm16, BitDepth.pcm24]
+      // FLAC supports 16-bit and 24-bit PCM
+      [BitDepth.pcmInt16, BitDepth.pcmInt24]
     case .wav, .caf:
       // PCM formats support all bit depths
       BitDepth.allCases
     }
   }
 
-  public var requiresConversion: Bool {
+  public var requiresQuality: Bool {
     switch self {
-    case .aac, .adts, .flac: return true
-    case .wav, .caf: return false
+    case .aac, .adts: return true
+    case .wav, .caf, .flac: return false
     }
   }
 }

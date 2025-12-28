@@ -25,7 +25,7 @@
     }
 
     public var description: String {
-      "\(outputConfiguration.fileFormat): \(inputConfiguration.channels) \(inputConfiguration.sampleRate), \(outputConfiguration.bitDepth) \(outputConfiguration.fileFormat.requiresConversion ? "\(outputConfiguration.quality)" : "")"
+      "\(outputConfiguration.fileFormat): \(inputConfiguration.channels) \(inputConfiguration.sampleRate), \(outputConfiguration.bitDepth) \(outputConfiguration.fileFormat.requiresQuality ? "\(outputConfiguration.quality)" : "")"
     }
 
     public var summary: String {
@@ -57,8 +57,8 @@
 
     var commonFormat: AVAudioCommonFormat {
       switch outputConfiguration.bitDepth {
-      case .pcm16: .pcmFormatInt16
-      case .pcm24: .pcmFormatInt32
+      case .pcmInt16: .pcmFormatInt16
+      case .pcmInt24: .pcmFormatInt32
       case .pcmFloat32: .pcmFormatFloat32
       }
     }

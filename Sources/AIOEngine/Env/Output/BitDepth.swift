@@ -1,8 +1,8 @@
 public enum BitDepth: Int, CaseIterable, Sendable, Hashable, Identifiable, CustomStringConvertible,
   TypeDescribable, Comparable
 {
-  case pcm16 = 16
-  case pcm24 = 24
+  case pcmInt16 = 16
+  case pcmInt24 = 24
   case pcmFloat32 = 32
 
   public var id: Self { self }
@@ -13,8 +13,8 @@ public enum BitDepth: Int, CaseIterable, Sendable, Hashable, Identifiable, Custo
 
   public var description: String {
     switch self {
-    case .pcm16: return "16-bit"
-    case .pcm24: return "24-bit"
+    case .pcmInt16: return "16-bit"
+    case .pcmInt24: return "24-bit"
     case .pcmFloat32: return "32-bit"
     }
   }

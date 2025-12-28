@@ -58,7 +58,7 @@ public final class OutputConfigurationManager {
 
   /// The available encoding qualities for the selected file format.
   public var availableEncodingQualities: [EncodingQuality] {
-    if outputFormat?.requiresConversion == true {
+    if outputFormat?.requiresQuality == true {
       EncodingQuality.allCases
     } else {
       [EncodingQuality.maximum]
@@ -87,7 +87,7 @@ public final class OutputConfigurationManager {
       self.bitDepth = format.supportedBitDepths.first
     }
 
-    if format.requiresConversion == false {
+    if format.requiresQuality == false {
       _encodingQuality = .maximum
     }
   }
