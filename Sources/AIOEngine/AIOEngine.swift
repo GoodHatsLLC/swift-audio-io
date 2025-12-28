@@ -979,10 +979,10 @@
     @MainActor
     public func rotateRecordingFile() async throws -> URL {
       guard isRecording,
-            let currentURL = state.recordingURL,
-            let configuration = state.recordingConfiguration,
-            let processingFormat = configuration.processingFormat,
-            let audioBuffers = state.audioBuffers
+        let currentURL = state.recordingURL,
+        let configuration = state.recordingConfiguration,
+        let processingFormat = configuration.processingFormat,
+        let audioBuffers = state.audioBuffers
       else {
         throw AIOError.notRecording
       }

@@ -1,8 +1,9 @@
+import AsyncAlgorithms
 import Foundation
 import Observation
 import SwiftUI
 import UniformTypeIdentifiers
-import AsyncAlgorithms
+
 import class Foundation.Bundle
 import struct OSLog.Logger
 import class OSLog.OSLogEntryLog
@@ -23,11 +24,11 @@ extension SystemLogger {
     SystemLogger(
       subsystem: { () -> String in
         subsystem
-        ?? ("\(file)"
+          ?? ("\(file)"
           .split(separator: ".", maxSplits: 1, omittingEmptySubsequences: true).first?
           .split(separator: "/", maxSplits: 1, omittingEmptySubsequences: true).last).flatMap(
             String.init)
-        ?? "\(file)"
+          ?? "\(file)"
       }(),
       category: category
     )
@@ -199,8 +200,10 @@ public struct Reporter<E: Error> {
 
 private let logger = SystemLog.make()
 public enum SystemLog {
-  public static func make(file: StaticString = #file, category: String = Bundle.main.bundleIdentifier ?? "none.bundle", subsystem: String? = nil) -> SystemLogger
-  {
+  public static func make(
+    file: StaticString = #file, category: String = Bundle.main.bundleIdentifier ?? "none.bundle",
+    subsystem: String? = nil
+  ) -> SystemLogger {
     Logger.make(
       file: file,
       subsystem: subsystem,
@@ -211,7 +214,7 @@ public enum SystemLog {
     @State private var model: LogModel = .init()
     public init() {}
     public var body: some View {
-        LogListScreen(model: model)
+      LogListScreen(model: model)
     }
   }
 
@@ -222,14 +225,14 @@ public enum SystemLog {
         let len = max(0, logs.count - oldValue.count)
         let new = logs.suffix(len)
         knownCategories.formUnion(new.map { $0.category ?? "" })
-        knownSubsystems.formUnion(new.map{ $0.subsystem ?? "" })
+        knownSubsystems.formUnion(new.map { $0.subsystem ?? "" })
       }
     }
     var error: (any Error)?
     var knownCategories: Set<String> = []
     var knownSubsystems: Set<String> = []
     let levels = OSLogStream.LogEntry.LogLevel.allCases
-  
+
     var exportState: ExportState = .ready
     static let allowedTypes: [UTType] = [.log, .json, .plainText, .text, .commaSeparatedText]
     init() {
@@ -360,7 +363,7 @@ public enum SystemLog {
       var minLevel: OSLogStream.LogEntry.LogLevel?
       var categories: Set<String> = []
       var subsystems: Set<String> = []
-      
+
       var levelInt: Int {
         get {
           minLevel?.nativeIntValue ?? -1
@@ -369,18 +372,18 @@ public enum SystemLog {
           minLevel = .init(nativeIntValue: newValue) ?? .undefined
         }
       }
-      
+
       var filter: OSLogStream.Filter {
         .and(
           [
             minLevel.map { .levelFloor($0) } ?? .any,
             (subsystems).isEmpty ? .any : .and((subsystems).map { .subsystem($0) }),
-            (categories).isEmpty ? .any : .and((categories).map { .category($0) })
+            (categories).isEmpty ? .any : .and((categories).map { .category($0) }),
           ]
         )
       }
     }
-    
+
     fileprivate var model: LogModel
     @Binding var filters: Filters
     @Binding var isDisplayed: Bool
@@ -399,9 +402,11 @@ public enum SystemLog {
                 }
                 ScrollView([.vertical]) {
                   VStack(alignment: .leading) {
-                    ForEach(model.knownCategories.compactMap{
-                      $0.isEmpty ? nil : $0
-                    }.sorted(), id: \.self) { v in
+                    ForEach(
+                      model.knownCategories.compactMap {
+                        $0.isEmpty ? nil : $0
+                      }.sorted(), id: \.self
+                    ) { v in
                       Button {
                         if !newFilters.categories.insert(v).inserted {
                           newFilters.categories.remove(v)
@@ -410,8 +415,8 @@ public enum SystemLog {
                         Label(
                           v.description,
                           systemImage: newFilters.categories.contains(v)
-                          ? "checkmark.square"
-                          : "square"
+                            ? "checkmark.square"
+                            : "square"
                         )
                       }.buttonStyle(.plain)
                     }
@@ -429,9 +434,11 @@ public enum SystemLog {
                 }
                 ScrollView([.vertical]) {
                   VStack(alignment: .leading) {
-                    ForEach(model.knownSubsystems.compactMap{
-                      $0.isEmpty ? nil : $0
-                    }.sorted(), id: \.self) { v in
+                    ForEach(
+                      model.knownSubsystems.compactMap {
+                        $0.isEmpty ? nil : $0
+                      }.sorted(), id: \.self
+                    ) { v in
                       Button {
                         let insert = newFilters.subsystems.insert(v).inserted
                         if !insert {
@@ -441,8 +448,8 @@ public enum SystemLog {
                         Label(
                           v.description,
                           systemImage: newFilters.subsystems.contains(v)
-                          ? "checkmark.square"
-                          : "square"
+                            ? "checkmark.square"
+                            : "square"
                         )
                       }.buttonStyle(.plain)
                     }
@@ -467,8 +474,8 @@ public enum SystemLog {
                         Label(
                           v.description,
                           systemImage: newFilters.minLevel == v
-                          ? "checkmark.square"
-                          : "square"
+                            ? "checkmark.square"
+                            : "square"
                         )
                         .foregroundStyle(.white)
                         .shadow(color: .black, radius: 2, x: 0, y: 0)
@@ -504,7 +511,6 @@ public enum SystemLog {
       }
     }
   }
-
 
   struct LogCell: View {
     private let log: OSLogStream.LogEntry
@@ -697,12 +703,12 @@ public enum SystemLog {
       #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
       #endif
-        .task(id: filters) {
+      .task(id: filters) {
         await model.subscribe(filter: filters.filter)
       }
       .toolbar {
         ToolbarItemGroup(placement: .automatic) {
-            filterButton
+          filterButton
         }
       }
       .sheet(isPresented: $isFilterSheetPresented) {
@@ -712,7 +718,7 @@ public enum SystemLog {
           isDisplayed: $isFilterSheetPresented
         )
         #if os(iOS)
-        .presentationDetents([.medium, .large])
+          .presentationDetents([.medium, .large])
         #endif
       }
     }
@@ -802,7 +808,7 @@ public enum SystemLog {
           Text(
             selectedOptions.isEmpty ? "None" : "\(selectedOptions.count) selected"
           )
-            .foregroundColor(.gray)
+          .foregroundColor(.gray)
         }
       }
     }
@@ -1273,19 +1279,19 @@ extension OSLogStream.LogEntry.LogLevel {
   var systemLog: SystemLog.Level {
     switch self {
     case .debug:
-        .debug
+      .debug
     case .info:
-        .info
+      .info
     case .notice:
-        .notice
+      .notice
     case .error:
-        .error
+      .error
     case .fault:
-        .fault
+      .fault
     case .undefined:
-        .undefined
+      .undefined
     case .unknown:
-        .unknown
+      .unknown
     }
   }
 }

@@ -11,17 +11,17 @@
 //  @State private var showAlert: Bool = false
 //  @State private var alertMessage: String = ""
 //  @State private var showToast: Bool = false
-//  
+//
 //  enum Destination {
 //    case logList
 //  }
 //  @State var destination: Destination?
-//  
+//
 //  var body: some View {
 //    Form {
 //      actionButtonsSection
 //      filterOptions
-//      
+//
 //      Section {
 //        Button {
 //          destination = .logList
@@ -207,11 +207,11 @@
 //    }
 //  }
 //
-//  
+//
 //
 //  private var filterOptions: some View {
 //    Section {
-//      
+//
 //      VStack(alignment: .leading, spacing: 8) {
 //        Text("Export format")
 //          .font(.subheadline)
@@ -224,7 +224,7 @@
 //        }
 //        .pickerStyle(.segmented)
 //        .labelsHidden()
-//        
+//
 //        Picker(selection: $model.filter) {
 //          ForEach(
 //            [
