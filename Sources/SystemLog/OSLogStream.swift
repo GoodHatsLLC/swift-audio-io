@@ -1,10 +1,7 @@
+import AsyncAlgorithms
+import Foundation
 import OSLog
 import SwiftUI
-import Foundation
-import AsyncAlgorithms
-import OSLog
-import Foundation
-import AsyncAlgorithms
 
 public struct OSLogStream: AsyncSequence {
 
@@ -27,35 +24,34 @@ public struct OSLogStream: AsyncSequence {
           from: date,
           filter: filter
         ) {
-            // we await consumption
-            await channel.send(batch)
+          // we await consumption
+          await channel.send(batch)
         }
       }
       group.addTask {
         // consume in a loop
-          for try await batch in channel {
-            let callOut = Date.now
-            // only notify the consumer if we have data
-            if batch.count > 0 {
-              // await the callback's execution before continuing
-              await callback(batch)
-            }
-            // if we did not hit the batch size, sleep
-            // before allowing polling again.
-            if batch.count < batchSize {
-              let callTime = Date.now.timeIntervalSince(callOut)
-              let sleepTime = Swift.max(0.0, pollInterval / .seconds(1) - callTime)
-              if sleepTime > 0.0 {
-                try await Task.sleep(for: pollInterval)
-              }
+        for try await batch in channel {
+          let callOut = Date.now
+          // only notify the consumer if we have data
+          if batch.count > 0 {
+            // await the callback's execution before continuing
+            await callback(batch)
+          }
+          // if we did not hit the batch size, sleep
+          // before allowing polling again.
+          if batch.count < batchSize {
+            let callTime = Date.now.timeIntervalSince(callOut)
+            let sleepTime = Swift.max(0.0, pollInterval / .seconds(1) - callTime)
+            if sleepTime > 0.0 {
+              try await Task.sleep(for: pollInterval)
             }
           }
+        }
       }
       try await group.waitForAll()
     }
   }
-  
-  
+
   @concurrent
   public static nonisolated func to(
     file url: URL,
@@ -72,7 +68,7 @@ public struct OSLogStream: AsyncSequence {
       filter: filter
     )
   }
-  
+
   @concurrent
   public static nonisolated func toStandardOut(
     batchSize: Int = 100,
@@ -87,7 +83,7 @@ public struct OSLogStream: AsyncSequence {
       filter: filter
     )
   }
-  
+
   @concurrent
   public static nonisolated func toStandardError(
     batchSize: Int = 100,
@@ -102,7 +98,7 @@ public struct OSLogStream: AsyncSequence {
       filter: filter
     )
   }
-  
+
   public static nonisolated func to(
     textStream: inout some TextOutputStream,
     batchSize: Int = 100,
@@ -117,7 +113,7 @@ public struct OSLogStream: AsyncSequence {
     ) {
       if chunk.count > 0 {
         let str = chunk.reduce(into: "") { acc, entry in
-          acc.append(entry.formatted()+"\n")
+          acc.append(entry.formatted() + "\n")
         }
         str.write(to: &textStream)
       }
@@ -126,7 +122,7 @@ public struct OSLogStream: AsyncSequence {
       }
     }
   }
-  
+
   public func makeAsyncIterator() -> AsyncIterator {
     AsyncIterator(
       date: date,
@@ -134,7 +130,7 @@ public struct OSLogStream: AsyncSequence {
       batchSize: batchSize
     )
   }
-  
+
   public init(
     batchSize: Int? = nil,
     from: Date? = nil,
@@ -144,11 +140,11 @@ public struct OSLogStream: AsyncSequence {
     self.date = from
     self.filter = filter
   }
-  
+
   let batchSize: Int?
   let date: Date?
   let filter: Filter
-  
+
   public struct AsyncIterator: AsyncIteratorProtocol {
     var date: Date?
     let filter: Filter
@@ -166,7 +162,7 @@ public struct OSLogStream: AsyncSequence {
     let logStore = Result {
       try OSLogStore(scope: .currentProcessIdentifier)
     }
-    
+
     private var processStartDate: Date {
       (Date() - ProcessInfo.processInfo.systemUptime)
     }
@@ -178,7 +174,7 @@ public struct OSLogStream: AsyncSequence {
         date = newValue
       }
     }
-    
+
     private mutating func get() throws -> [OSLogEntry] {
       let logStore = try self.logStore.get()
       let datePredicate = NSPredicate(
@@ -189,13 +185,14 @@ public struct OSLogStream: AsyncSequence {
       let compoundPredicate = NSCompoundPredicate(
         andPredicateWithSubpredicates: [
           datePredicate,
-          predicate()
+          predicate(),
         ]
       )
-      
-      let itemSequence: AnySequence<OSLogEntry> = try logStore
+
+      let itemSequence: AnySequence<OSLogEntry> =
+        try logStore
         .getEntries(matching: compoundPredicate)
-        
+
       var items: [OSLogEntry] = []
       // the maxDate serves as the data cursor
       var maxDate: Date? = nil
@@ -217,21 +214,20 @@ public struct OSLogStream: AsyncSequence {
       queryStartDate = maxDate ?? queryStartDate
       return items
     }
-    
+
     public mutating func next(
       isolation actor: isolated (any Actor)?
     ) async throws(any Error) -> [LogEntry]? {
       try get().map { ent in
-          LogEntry(log: ent)
+        LogEntry(log: ent)
       }
     }
   }
-  
+
 }
 
-
 extension OSLogStream {
-  
+
   public indirect enum Filter: Sendable, Hashable, Identifiable {
     case any
     case text(String)
@@ -243,11 +239,11 @@ extension OSLogStream {
     case after(Date)
     case and([Filter])
     case or([Filter])
-    
+
     public var id: Self {
       self
     }
-    
+
     public var description: String {
       switch self {
       case .any: "*"
@@ -271,7 +267,7 @@ extension OSLogStream {
         "(\(filters.map(\.description).joined(separator: " AND ")))"
       }
     }
-    
+
     public var predicate: NSPredicate {
       switch self {
       case .any: NSPredicate.init(value: true)
@@ -321,9 +317,16 @@ extension OSLogStream {
       }
     }
   }
-  
+
   public struct LogEntry: Identifiable, Hashable, Sendable, Codable {
-    public init(type: EntryType, level: LogLevel, activityIdentifier: UInt64? = nil, category: String? = nil, composedMessage: String, date: Date, parentActivityIdentifier: UInt64? = nil, process: String? = nil, processIdentifier: Int32? = nil, sender: String? = nil, signpostIdentifier: UInt64? = nil, signpostName: String? = nil, signpostType: SignpostType? = nil, storeCategory: StoreCategory, subsystem: String? = nil, threadIdentifier: UInt64? = nil) {
+    public init(
+      type: EntryType, level: LogLevel, activityIdentifier: UInt64? = nil, category: String? = nil,
+      composedMessage: String, date: Date, parentActivityIdentifier: UInt64? = nil,
+      process: String? = nil, processIdentifier: Int32? = nil, sender: String? = nil,
+      signpostIdentifier: UInt64? = nil, signpostName: String? = nil,
+      signpostType: SignpostType? = nil, storeCategory: StoreCategory, subsystem: String? = nil,
+      threadIdentifier: UInt64? = nil
+    ) {
       self.type = type
       self.level = level
       self.activityIdentifier = activityIdentifier
@@ -342,112 +345,113 @@ extension OSLogStream {
       self.threadIdentifier = threadIdentifier
     }
     public init(log: OSLogEntry) {
-      self = switch log {
-      case let log as OSLogEntryLog:
-        LogEntry(
-          type: .log,
-          level: .init(level: log.level),
-          activityIdentifier: log.activityIdentifier,
-          category: log.category,
-          composedMessage: log.composedMessage,
-          date: log.date,
-          parentActivityIdentifier: nil,
-          process: log.process,
-          processIdentifier: log.processIdentifier,
-          sender: log.sender,
-          signpostIdentifier: nil,
-          signpostName: nil,
-          signpostType: nil,
-          storeCategory: .init(
-            category: log.storeCategory
-          ),
-          subsystem: log.subsystem,
-          threadIdentifier: log.threadIdentifier
-        )
-      case let log as OSLogEntrySignpost:
-        LogEntry(
-          type: .signpost,
-          level: .undefined,
-          activityIdentifier: log.activityIdentifier,
-          category: log.category,
-          composedMessage: log.composedMessage,
-          date: log.date,
-          parentActivityIdentifier: nil,
-          process: log.process,
-          processIdentifier: log.processIdentifier,
-          sender: log.sender,
-          signpostIdentifier: log.signpostIdentifier,
-          signpostName: log.signpostName,
-          signpostType: .init(type: log.signpostType),
-          storeCategory: .init(
-            category: log.storeCategory
-          ),
-          subsystem: log.subsystem,
-          threadIdentifier: log.threadIdentifier
-        )
-      case let log as OSLogEntryActivity:
-        LogEntry(
-          type: .activity,
-          level: .undefined,
-          activityIdentifier: log.activityIdentifier,
-          category: nil,
-          composedMessage: log.composedMessage,
-          date: log.date,
-          parentActivityIdentifier: log.parentActivityIdentifier,
-          process: log.process,
-          processIdentifier: log.processIdentifier,
-          sender: log.sender,
-          signpostIdentifier: nil,
-          signpostName: nil,
-          storeCategory: .init(
-            category: log.storeCategory
-          ),
-          subsystem: nil,
-          threadIdentifier: log.threadIdentifier
-        )
-      case let log as OSLogEntryBoundary:
-        LogEntry(
-          type: .boundary,
-          level: .undefined,
-          activityIdentifier: nil,
-          category: nil,
-          composedMessage: log.composedMessage,
-          date: log.date,
-          parentActivityIdentifier: nil,
-          process: nil,
-          processIdentifier: nil,
-          sender: nil,
-          signpostIdentifier: nil,
-          signpostName: nil,
-          signpostType: nil,
-          storeCategory: .init(
-            category: log.storeCategory
-          ),
-          subsystem: nil,
-          threadIdentifier: nil
-        )
-      default:
-        LogEntry(
-          type: .other,
-          level: .undefined,
-          activityIdentifier: nil,
-          category: nil,
-          composedMessage: log.composedMessage,
-          date: log.date,
-          parentActivityIdentifier: nil,
-          process: nil,
-          processIdentifier: nil,
-          sender: nil,
-          signpostIdentifier: nil,
-          signpostName: nil,
-          signpostType: nil,
-          storeCategory: .init(
-            category: log.storeCategory
-          ),
-          subsystem: nil,
-          threadIdentifier: nil
-        )
-      }
+      self =
+        switch log {
+        case let log as OSLogEntryLog:
+          LogEntry(
+            type: .log,
+            level: .init(level: log.level),
+            activityIdentifier: log.activityIdentifier,
+            category: log.category,
+            composedMessage: log.composedMessage,
+            date: log.date,
+            parentActivityIdentifier: nil,
+            process: log.process,
+            processIdentifier: log.processIdentifier,
+            sender: log.sender,
+            signpostIdentifier: nil,
+            signpostName: nil,
+            signpostType: nil,
+            storeCategory: .init(
+              category: log.storeCategory
+            ),
+            subsystem: log.subsystem,
+            threadIdentifier: log.threadIdentifier
+          )
+        case let log as OSLogEntrySignpost:
+          LogEntry(
+            type: .signpost,
+            level: .undefined,
+            activityIdentifier: log.activityIdentifier,
+            category: log.category,
+            composedMessage: log.composedMessage,
+            date: log.date,
+            parentActivityIdentifier: nil,
+            process: log.process,
+            processIdentifier: log.processIdentifier,
+            sender: log.sender,
+            signpostIdentifier: log.signpostIdentifier,
+            signpostName: log.signpostName,
+            signpostType: .init(type: log.signpostType),
+            storeCategory: .init(
+              category: log.storeCategory
+            ),
+            subsystem: log.subsystem,
+            threadIdentifier: log.threadIdentifier
+          )
+        case let log as OSLogEntryActivity:
+          LogEntry(
+            type: .activity,
+            level: .undefined,
+            activityIdentifier: log.activityIdentifier,
+            category: nil,
+            composedMessage: log.composedMessage,
+            date: log.date,
+            parentActivityIdentifier: log.parentActivityIdentifier,
+            process: log.process,
+            processIdentifier: log.processIdentifier,
+            sender: log.sender,
+            signpostIdentifier: nil,
+            signpostName: nil,
+            storeCategory: .init(
+              category: log.storeCategory
+            ),
+            subsystem: nil,
+            threadIdentifier: log.threadIdentifier
+          )
+        case let log as OSLogEntryBoundary:
+          LogEntry(
+            type: .boundary,
+            level: .undefined,
+            activityIdentifier: nil,
+            category: nil,
+            composedMessage: log.composedMessage,
+            date: log.date,
+            parentActivityIdentifier: nil,
+            process: nil,
+            processIdentifier: nil,
+            sender: nil,
+            signpostIdentifier: nil,
+            signpostName: nil,
+            signpostType: nil,
+            storeCategory: .init(
+              category: log.storeCategory
+            ),
+            subsystem: nil,
+            threadIdentifier: nil
+          )
+        default:
+          LogEntry(
+            type: .other,
+            level: .undefined,
+            activityIdentifier: nil,
+            category: nil,
+            composedMessage: log.composedMessage,
+            date: log.date,
+            parentActivityIdentifier: nil,
+            process: nil,
+            processIdentifier: nil,
+            sender: nil,
+            signpostIdentifier: nil,
+            signpostName: nil,
+            signpostType: nil,
+            storeCategory: .init(
+              category: log.storeCategory
+            ),
+            subsystem: nil,
+            threadIdentifier: nil
+          )
+        }
     }
     public enum EntryType: String, Sendable, Codable {
       case log
@@ -458,11 +462,11 @@ extension OSLogStream {
       public init(from decoder: any Decoder) throws {
         let container = try decoder.singleValueContainer()
         let str = try container.decode(String.self)
-        if
-          let value = EntryType(rawValue: str) {
+        if let value = EntryType(rawValue: str) {
           self = value
         } else {
-          throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unknown EntryType: \(str)")
+          throw DecodingError.dataCorruptedError(
+            in: container, debugDescription: "Unknown EntryType: \(str)")
         }
       }
       public func encode(to encoder: Encoder) throws {
@@ -479,11 +483,11 @@ extension OSLogStream {
       public init(from decoder: any Decoder) throws {
         let container = try decoder.singleValueContainer()
         let str = try container.decode(String.self)
-        if
-          let value = SignpostType(rawValue: str) {
+        if let value = SignpostType(rawValue: str) {
           self = value
         } else {
-          throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unknown SignpostType: \(str)")
+          throw DecodingError.dataCorruptedError(
+            in: container, debugDescription: "Unknown SignpostType: \(str)")
         }
       }
       public func encode(to encoder: Encoder) throws {
@@ -503,25 +507,26 @@ extension OSLogStream {
     }
     public enum LogLevel: String, Sendable, Codable, CaseIterable {
       public init(level: OSLogEntryLog.Level) {
-        self = switch level {
-        case .debug:  .debug
-        case .info:  .info
-        case .notice:  .notice
-        case .error:  .error
-        case .fault:  .fault
-        case .undefined: .undefined
-        @unknown default: .undefined
-        }
+        self =
+          switch level {
+          case .debug: .debug
+          case .info: .info
+          case .notice: .notice
+          case .error: .error
+          case .fault: .fault
+          case .undefined: .undefined
+          @unknown default: .undefined
+          }
       }
       public init?(nativeIntValue: Int) {
         switch nativeIntValue {
-          case 0: self = .undefined
-          case 1: self = .debug
-          case 2: self = .info
-          case 3: self = .notice
-          case 4: self = .error
-          case 5: self = .fault
-          default: self = .unknown
+        case 0: self = .undefined
+        case 1: self = .debug
+        case 2: self = .info
+        case 3: self = .notice
+        case 4: self = .error
+        case 5: self = .fault
+        default: self = .unknown
         }
       }
       public var nativeIntValue: Int {
@@ -535,7 +540,7 @@ extension OSLogStream {
         case .fault: 5
         }
       }
-      
+
       var description: String {
         switch self {
         case .undefined:
@@ -594,11 +599,11 @@ extension OSLogStream {
       public init(from decoder: any Decoder) throws {
         let container = try decoder.singleValueContainer()
         let str = try container.decode(String.self)
-        if
-          let value = LogLevel(rawValue: str) {
+        if let value = LogLevel(rawValue: str) {
           self = value
         } else {
-          throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unknown LogLevel: \(str)")
+          throw DecodingError.dataCorruptedError(
+            in: container, debugDescription: "Unknown LogLevel: \(str)")
         }
       }
       public func encode(to encoder: Encoder) throws {
@@ -611,9 +616,9 @@ extension OSLogStream {
       case error
       case fault
       case undefined
-       case unknown
+      case unknown
     }
-    
+
     public enum StoreCategory: String, Sendable, Codable {
       case undefined
       case metadata
@@ -626,27 +631,28 @@ extension OSLogStream {
       case longTerm30
       case unknown
       public init(category: OSLogEntry.StoreCategory) {
-        self = switch category {
-        case .undefined: .undefined
-        case .metadata: .metadata
-        case .shortTerm: .shortTerm
-        case .longTermAuto: .longTermAuto
-        case .longTerm1: .longTerm1
-        case .longTerm3: .longTerm3
-        case .longTerm7: .longTerm7
-        case .longTerm14: .longTerm14
-        case .longTerm30: .longTerm30
-        @unknown default: .unknown
-        }
+        self =
+          switch category {
+          case .undefined: .undefined
+          case .metadata: .metadata
+          case .shortTerm: .shortTerm
+          case .longTermAuto: .longTermAuto
+          case .longTerm1: .longTerm1
+          case .longTerm3: .longTerm3
+          case .longTerm7: .longTerm7
+          case .longTerm14: .longTerm14
+          case .longTerm30: .longTerm30
+          @unknown default: .unknown
+          }
       }
       public init(from decoder: any Decoder) throws {
         let container = try decoder.singleValueContainer()
         let str = try container.decode(String.self)
-        if
-          let value = StoreCategory(rawValue: str) {
+        if let value = StoreCategory(rawValue: str) {
           self = value
         } else {
-          throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unknown StoreCategory: \(str)")
+          throw DecodingError.dataCorruptedError(
+            in: container, debugDescription: "Unknown StoreCategory: \(str)")
         }
       }
       public func encode(to encoder: Encoder) throws {

@@ -1,13 +1,11 @@
 import Dispatch
 
 #if canImport(Foundation)
-import Foundation
-let prefix = Bundle.main.bundleIdentifier ?? "com.app"
+  import Foundation
+  let prefix = Bundle.main.bundleIdentifier ?? "com.app"
 #else
-let prefix = "com.app"
+  let prefix = "com.app"
 #endif
-
-
 
 public final class BackgroundSerialExecutor: TaskExecutor, SerialExecutor, Sendable {
   private let queue = DispatchQueue(
@@ -22,8 +20,8 @@ public final class BackgroundSerialExecutor: TaskExecutor, SerialExecutor, Senda
   }
 }
 
-public extension SerialExecutor where Self == BackgroundSerialExecutor {
-  static var serialBackground: BackgroundSerialExecutor {
+extension SerialExecutor where Self == BackgroundSerialExecutor {
+  public static var serialBackground: BackgroundSerialExecutor {
     Background.executor
   }
 }
@@ -36,4 +34,3 @@ public actor Background {
     Self.executor.asUnownedSerialExecutor()
   }
 }
-
