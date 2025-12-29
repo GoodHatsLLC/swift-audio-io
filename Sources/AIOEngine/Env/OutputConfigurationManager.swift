@@ -7,7 +7,7 @@ import Observation
 public final class OutputConfigurationManager {
 
   let env: AudioEnvironment
-  let errorManager: ErrorManager
+  let errorManager: any ErrorManaging
 
   /// Creates a new `OutputConfigurationManager` instance.
   ///
@@ -16,7 +16,7 @@ public final class OutputConfigurationManager {
   ///   - errorManager: The error manager to use for reporting errors.
   public init(
     env: AudioEnvironment,
-    errorManager: ErrorManager
+    errorManager: any ErrorManaging
   ) {
     self.env = env
     self.errorManager = errorManager

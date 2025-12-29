@@ -23,7 +23,7 @@
     ///   - errorManager: The error manager to use for reporting errors.
     public init(
       env: AudioEnvironment,
-      errorManager: ErrorManager
+      errorManager: any ErrorManaging
     ) {
       self.env = env
       self.errorManager = errorManager
@@ -38,7 +38,7 @@
     private let env: AudioEnvironment
     /// The underlying `AVAudioSession`.
     public var session: AVAudioSession { env.session }
-    private let errorManager: ErrorManager
+    private let errorManager: any ErrorManaging
 
     /// A Boolean value that indicates whether this `AudioEnvironmentManager` is fully primed and subscribed.
     public private(set) var isReady: Bool = false {

@@ -43,7 +43,7 @@ extension String {
     self = str
   }
 }
-public struct SourceLocation {
+public struct SourceLocation: Sendable {
   public init(file: String, function: String, line: Int, column: Int) {
     self.file = file
     self.function = function
