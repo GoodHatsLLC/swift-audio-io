@@ -1,7 +1,7 @@
 # AIO Package - Audio I/O Engine
 
 **Location**: `Packages/AIO/`
-**Last Updated**: 2025-12-15
+**Last Updated**: 2025-12-29
 
 ## Purpose
 
@@ -108,6 +108,20 @@ Tests use **Swift Testing** framework (`@Test` macros, `@Suite`), not XCTest.
 - **Type Safety**: Strong typing with Swift 6
 - **Modular**: Clear separation between Tools and Engine
 - **Multi-Band Visualization**: Frequency-separated LOD waveform data for GPU rendering
+
+## Error Reporting (Injection Boundary)
+
+The engine exports a narrow, injectable interface for error reporting:
+
+- `ErrorManaging` (protocol)
+- `AnyErrorManager` (type erasure)
+- `MockErrorManager` (debug-only test double)
+
+**Location**: `Sources/AIOEngine/Env/ErrorManaging.swift`
+
+Policy:
+- View/UI layers may keep a concrete `ErrorManager` via environment access.
+- Business logic layers should accept `any ErrorManaging` via constructor injection (non-optional) so missing wiring is caught at build time.
 
 ## Audio Visualization
 

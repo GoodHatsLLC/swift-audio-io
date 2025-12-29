@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 
 @testable import AIOEngine
@@ -9,35 +10,24 @@ struct ErrorManagingTests {
   }
 
   @Test
-  func mockErrorManagerStoresEvents() async {
-#if DEBUG
+  @MainActor
+  func mockErrorManagerStoresEvents() {
     let manager = MockErrorManager()
-    await MainActor.run {
-      manager.enqueue(TestError(), visibility: .debug, context: "test")
-    }
+    manager.enqueue(TestError(), visibility: .debug, context: "test")
 
-    let event = await MainActor.run { manager.popEvent() }
+    let event = manager.popEvent()
     #expect(event?.localizedDescription == "test error")
-#else
-    #expect(true)
-#endif
   }
 
   @Test
-  func anyErrorManagerForwardsToBase() async {
-#if DEBUG
+  @MainActor
+  func anyErrorManagerForwardsToBase() {
     let base = MockErrorManager()
     let erased = AnyErrorManager(base)
 
-    await MainActor.run {
-      erased.enqueue(TestError(), visibility: .userInterrupting, context: "forward")
-    }
+    erased.enqueue(TestError(), visibility: .userInterrupting, context: "forward")
 
-    let event = await MainActor.run { base.popEvent() }
+    let event = base.popEvent()
     #expect(event?.context == "forward")
-#else
-    #expect(true)
-#endif
   }
 }
-
