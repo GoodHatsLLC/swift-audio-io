@@ -6,7 +6,11 @@
   ///
   /// The detector analyzes audio energy levels and compares them against a running
   /// average to identify transient peaks that correspond to musical beats.
-  public final class BeatDetector: @unchecked Sendable {
+  ///
+  /// This type contains mutable state optimized for single-consumer use (e.g. a dedicated
+  /// processing queue). Callers must not invoke `analyze(...)` concurrently on the same
+  /// instance.
+  public final class BeatDetector {
     // MARK: - Configuration
 
     private var configuration: BeatDetectionConfiguration

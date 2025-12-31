@@ -175,6 +175,9 @@ extension RecordingFilename: Codable {
 
 extension RecordingFilename {
   /// ISO 8601 basic format formatter: `YYYYMMDDTHHmmss` (UTC, no separators).
+  ///
+  /// This type is `@unchecked Sendable` because `ISO8601DateFormatter` is not `Sendable`,
+  /// but access is synchronized by an internal lock.
   private final class FormatterBox: @unchecked Sendable {
     private let lock = NSLock()
     private let formatter: ISO8601DateFormatter

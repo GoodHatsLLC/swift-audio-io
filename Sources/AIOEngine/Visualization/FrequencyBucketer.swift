@@ -5,7 +5,7 @@
   /// Converts raw spectrum data into frequency buckets with configurable grouping.
   ///
   /// Supports MEL scale, logarithmic, linear, and predefined band configurations.
-  public final class FrequencyBucketer: @unchecked Sendable {
+  public final class FrequencyBucketer {
     // MARK: - Configuration
 
     private var mode: FrequencyBucketMode
