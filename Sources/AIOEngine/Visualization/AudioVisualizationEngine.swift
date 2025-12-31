@@ -48,6 +48,17 @@
   ///
   /// - ``updateBucketMode(_:)``
   /// - ``updateBeatDetectionConfiguration(_:)``
+  ///
+  /// This type is `@unchecked Sendable` because it is used as a real-time audio callback
+  /// target (via `BufferReceiver`) and is passed across concurrency boundaries.
+  ///
+  /// ## Safety
+  /// - The audio thread only calls `processBuffer(_:)` (which uses atomics and does not
+  ///   touch `@Observable` state directly).
+  /// - Observable state (`timeDomain` / `frequencyDomain` / `beat`) is published from the
+  ///   main queue.
+  /// - Optional LOD processing must be configured before the instance is attached as a
+  ///   buffer receiver; it must not be enabled/disabled while active.
   @Observable
   public final class AudioVisualizationEngine: @unchecked Sendable, Identifiable {
     // MARK: - Public Properties
@@ -427,6 +438,12 @@
     ///
     /// - Parameter configuration: LOD processing configuration.
     public func enableMultiBandLOD(configuration: MultiBandLODConfiguration = .default) {
+      #if DEBUG
+        precondition(
+          !isActiveAtomic.load(ordering: .relaxed),
+          "Multi-band LOD must be configured before attaching/activating AudioVisualizationEngine"
+        )
+      #endif
       let resolvedSampleRate = max(Int(self.configuration.sampleRate.rounded()), 1)
       let resolvedConfig = MultiBandLODConfiguration(
         bandCount: configuration.bandCount,
@@ -442,6 +459,12 @@
 
     /// Disables multi-band LOD processing.
     public func disableMultiBandLOD() {
+      #if DEBUG
+        precondition(
+          !isActiveAtomic.load(ordering: .relaxed),
+          "Multi-band LOD must be configured before attaching/activating AudioVisualizationEngine"
+        )
+      #endif
       lodProcessor = nil
       log.info("Multi-band LOD disabled")
     }
