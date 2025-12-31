@@ -108,11 +108,11 @@ public func configure(dependencies: RecorderDependencies) async {
 
 ### 1.2 Progressive UI Rendering
 
-**Problem**: `CoordinatorProvidingView` shows a blank `ProgressView` until all initialization completes. Users see a spinner instead of content.
+**Problem**: `ServicesProvidingView` shows a blank `ProgressView` until all initialization completes. Users see a spinner instead of content.
 
 **Current Code** (`RecorderApp.swift:149-173`):
 ```swift
-struct CoordinatorProvidingView: View {
+struct ServicesProvidingView: View {
   @State private var isReady = false
 
   var body: some View {
@@ -129,7 +129,7 @@ struct CoordinatorProvidingView: View {
 
 **Proposed Implementation**:
 ```swift
-struct CoordinatorProvidingView: View {
+struct ServicesProvidingView: View {
   @State private var initializationState: InitState = .starting
 
   enum InitState {
