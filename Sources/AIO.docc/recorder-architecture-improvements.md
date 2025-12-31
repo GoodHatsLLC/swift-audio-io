@@ -8,15 +8,21 @@ This plan addresses two critical goals for the Recorder demo app:
 
 Current launch flow blocks UI rendering until ALL services initialize (~15-20 services synchronously). The architecture uses a massive coordinator with scattered state and complex nested view hierarchies.
 
+## Update (2025-12-31)
+
+This document describes the legacy coordinator-based architecture. The app has since migrated to an explicit composition root:
+- `RecorderCoreServices` for core singletons + recording domain wiring
+- `RecorderDatabaseServicesAvailability` / `RecorderDatabaseServices` for DB-dependent graph build and lifecycle
+
 ---
 
 ## Priority 1: Launch Speed Optimizations
 
 ### 1.1 Lazy Service Initialization
 
-**Problem**: `RecorderCoordinator.configure()` initializes all 15+ services before UI can render, blocking the main thread for 500-1500ms on cold start.
+**Problem**: (Legacy) `RecorderCoordinator.configure()` initialized all 15+ services before UI could render, blocking the main thread for 500-1500ms on cold start.
 
-**Current Code** (`RecorderCoordinator.swift:64-104`):
+**Legacy Code** (`RecorderCoordinator.swift` — removed):
 ```swift
 public func configure(dependencies: RecorderDependencies) async {
   // ALL of these happen before UI renders:
@@ -915,7 +921,7 @@ sequenceDiagram
 7. UI reactively updates via GRDBQuery
 ```
 
-**In-code documentation** (`RecorderCoordinator.swift`):
+**In-code documentation** (`RecorderCoordinator.swift` — removed):
 ```swift
 /// Central coordinator for the Recorder app.
 ///
@@ -1103,9 +1109,7 @@ AppTarget/
 │   │   ├── TrackManagementService.swift
 │   │   ├── ProcessingOrchestrator.swift
 │   │   └── PlaybackService.swift
-│   └── Coordinator/
-│       ├── RecorderCoordinator.swift
-│       └── InitializationState.swift
+│   └── (Coordinator removed)
 ├── Features/
 │   ├── Recording/
 │   │   ├── RecordButton.swift
