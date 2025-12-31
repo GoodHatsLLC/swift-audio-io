@@ -50,8 +50,10 @@
       buffer.frameLength = frameCount
 
       if let channelData = buffer.floatChannelData {
+        let twoPiFrequency = 2.0 * Double.pi * 440.0
         for i in 0..<Int(frameCount) {
-          channelData[0][i] = sin(2.0 * .pi * 440.0 * Double(i) / sampleRate)
+          let t = Double(i) / sampleRate
+          channelData[0][i] = Float(sin(twoPiFrequency * t))
         }
       }
 
