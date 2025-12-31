@@ -212,7 +212,7 @@ List {
 
 4. **EmbeddingDB Initialization Failure**
    - On device, ChromaDB might fail to initialize
-   - Current code: `RecorderCoordinator` already handles this with optional `embeddingDB`
+   - Current code: this used to live on `RecorderCoordinator`, but the coordinator has since been removed; the DB-dependent graph is now built in the composition root (`RecorderDatabaseServices.build(...)`).
    - Behavior: Fall back to local text search (same as simulator)
 
 ### Fallback Guarantees
