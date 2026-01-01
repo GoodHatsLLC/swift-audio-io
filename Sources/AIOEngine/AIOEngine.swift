@@ -641,6 +641,11 @@
         else {
           throw AIOError.invalidRecordingConfiguration(details: "(Tap configuration)")
         }
+        guard tapConfiguration.bufferSize > 0 else {
+          throw AIOError.invalidRecordingConfiguration(details: "Tap bufferSize is 0")
+        }
+        // Defensive: ensure we never double-install a tap if state got out of sync.
+        engine.inputNode.removeTap(onBus: tapConfiguration.bus)
         // Install tap
         engine.inputNode.installTap(
           onBus: tapConfiguration.bus,
@@ -1521,11 +1526,9 @@
       processingFormat: AVAudioFormat,
       file: AVAudioFile
     ) throws {
-      // Remove old tap
-      if let tapBus = state.installedTapBus {
-        engine.inputNode.removeTap(onBus: tapBus)
-        state.installedTapBus = nil
-      }
+      // Remove old tap (defensive: remove even if state got out of sync).
+      engine.inputNode.removeTap(onBus: state.installedTapBus ?? 0)
+      state.installedTapBus = nil
 
       // Stop engine briefly
       engine.stop()
@@ -1551,6 +1554,9 @@
         let tapConfiguration = currentConfig.tapConfiguration(bus: 0, input: currentInputFormat)
       else {
         throw AIOError.invalidRecordingConfiguration(details: "Cannot create tap configuration")
+      }
+      guard tapConfiguration.bufferSize > 0 else {
+        throw AIOError.invalidRecordingConfiguration(details: "Tap bufferSize is 0")
       }
 
       // Final validation of the format we'll pass to installTap

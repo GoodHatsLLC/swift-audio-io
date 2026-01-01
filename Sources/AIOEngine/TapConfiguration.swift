@@ -3,6 +3,29 @@
 
   struct TapConfiguration: Hashable, Sendable {
 
+    private static func normalizedBufferSize(
+      sampleRate: Double,
+      tapReadSeconds: Double
+    ) -> AVAudioFrameCount {
+      let minFrames = 256
+      let maxFrames = 8192
+
+      guard sampleRate.isFinite, sampleRate > 0, tapReadSeconds.isFinite, tapReadSeconds > 0 else {
+        return AVAudioFrameCount(1024)
+      }
+
+      let desired = tapReadSeconds * sampleRate
+      guard desired.isFinite else { return AVAudioFrameCount(1024) }
+
+      let desiredFrames = min(max(Int(desired.rounded()), minFrames), maxFrames)
+
+      let lower = 1 << (Int.bitWidth - 1 - desiredFrames.leadingZeroBitCount)
+      let upper = min(lower << 1, maxFrames)
+      let chosen = (desiredFrames - lower) < (upper - desiredFrames) ? lower : upper
+
+      return AVAudioFrameCount(chosen)
+    }
+
     init(
       bus: Int,
       channelCount: Int,
@@ -14,9 +37,9 @@
         bus: bus,
         inputFormat: inputFormat,
         outputFormat: outputFormat,
-        bufferSize: AVAudioFrameCount(
-          tapReadSeconds * inputFormat.sampleRate
-            * Double(channelCount)
+        bufferSize: Self.normalizedBufferSize(
+          sampleRate: inputFormat.sampleRate,
+          tapReadSeconds: tapReadSeconds
         )
       )
     }
