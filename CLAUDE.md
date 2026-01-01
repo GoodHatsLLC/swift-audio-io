@@ -1,7 +1,7 @@
 # AIO Package â€” Audio I/O Engine
 
 **Location**: `Packages/AIO/`
-**Last Updated**: 2025-12-29
+**Last Updated**: 2025-12-31
 
 ## Purpose
 
@@ -13,13 +13,33 @@ AIO (Audio I/O) is the core audio recording and processing engine for Recorderâ€
 **Location**: `Sources/Tools/`
 **Purpose**: Core audio types and utilities (no dependency on AIOEngine)
 
+**Dependencies**:
+- swift-atomics (Atomics)
+- swift-collections (OrderedCollections)
+- swift-async-algorithms (AsyncAlgorithms)
+
 ### AIOEngine
 **Location**: `Sources/AIOEngine/`
 **Purpose**: Audio recording engine and processing pipeline
 
+**Dependencies**:
+- Tools (local)
+- SystemLog (local)
+- swift-async-algorithms (AsyncAlgorithms)
+- swift-atomics (Atomics)
+- swift-collections (Collections, DequeModule, OrderedCollections)
+
 ### SystemLog
 **Location**: `Sources/SystemLog/`
 **Purpose**: Structured logging utilities used by the engine
+
+**Dependencies**:
+- swift-async-algorithms (AsyncAlgorithms)
+
+## Platform & Swift
+
+- **Platforms**: iOS 18+, macOS 15+
+- **Swift**: 6.2 with strict concurrency (`StrictConcurrency` enabled)
 
 ## Error Reporting (Injection Boundary)
 
