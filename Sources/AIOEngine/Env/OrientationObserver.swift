@@ -41,8 +41,6 @@ import Tools
       }
     }
 
-    private var cancellable: AnyCancellable?
-
     init() {
       self.orientation = UIDevice.current.orientation
     }
