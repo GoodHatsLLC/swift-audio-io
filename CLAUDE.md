@@ -1,7 +1,7 @@
 # AIO Package — Audio I/O Engine
 
 **Location**: `Packages/AIO/`
-**Last Updated**: 2025-12-31
+**Last Updated**: 2026-01-03
 
 ## Purpose
 
