@@ -1,5 +1,6 @@
 #if canImport(AVFoundation)
   @preconcurrency import AVFoundation
+  import Atomics
   import Tools
   import AsyncAlgorithms
   import Dispatch
@@ -176,6 +177,8 @@
 
     private nonisolated let engine = AVAudioEngine()
     private nonisolated let player = AVAudioPlayerNode()
+
+    private let recordingSampleTimeAtomic = ManagedAtomic<Int64>(0)
 
     struct InternalState {
       var file: AVAudioFile?
@@ -563,6 +566,7 @@
       if let recordingConfiguration = state.recordingConfiguration {
         if configuration == recordingConfiguration {
           log.info("engine already warmed")
+          recordingSampleTimeAtomic.store(0, ordering: .relaxed)
           return
         } else {
           log.info("engine requires hard stop")
@@ -646,6 +650,7 @@
         }
         // Defensive: ensure we never double-install a tap if state got out of sync.
         engine.inputNode.removeTap(onBus: tapConfiguration.bus)
+        recordingSampleTimeAtomic.store(0, ordering: .relaxed)
         // Install tap
         engine.inputNode.installTap(
           onBus: tapConfiguration.bus,
@@ -654,9 +659,10 @@
         ) {
           @Sendable [bufferReceivers]
           buffer,
-          _ in
+          time in
           self.processAudio(
             buffer: buffer,
+            time: time,
             to: processingFormat,
             enqueueingTo: audioBuffers,
             bufferReceivers: bufferReceivers
@@ -748,6 +754,7 @@
 
     nonisolated private func processAudio(
       buffer: AVAudioPCMBuffer,
+      time: AVAudioTime?,
       to processingFormat: AVAudioFormat,
       enqueueingTo audioBuffers: [RingBuffer<Float>],
       bufferReceivers: Synchronized<[any BufferReceiver<Float>]>
@@ -845,6 +852,21 @@
         return
       }
 
+      let processingStartSampleTime = recordingSampleTimeAtomic.load(ordering: .relaxed)
+      let sourceHostTime: UInt64? =
+        (time?.isHostTimeValid ?? false) ? time?.hostTime : nil
+      let sourceSampleTime: Int64? =
+        (time?.isSampleTimeValid ?? false) ? time.map { Int64($0.sampleTime) } : nil
+      let sourceSampleRate: Double? =
+        (time?.isSampleTimeValid ?? false) ? time?.sampleRate : nil
+      let receiverTiming = BufferTiming(
+        sampleTime: processingStartSampleTime,
+        sampleRate: processingFormat.sampleRate,
+        hostTime: sourceHostTime,
+        sourceSampleTime: sourceSampleTime,
+        sourceSampleRate: sourceSampleRate
+      )
+
       for i in 0..<channelCount {
         guard let channelData = convertedBuffer.floatChannelData?[i] else {
           log.error(
@@ -858,10 +880,18 @@
         // Feed data to visualization engine (non-blocking)
         if i == 0 {
           bufferReceivers({ $0 }).forEach {
-            $0.processBuffer(UnsafeBufferPointer(start: channelData, count: frameLength))
+            $0.processBuffer(
+              UnsafeBufferPointer(start: channelData, count: frameLength),
+              timing: receiverTiming
+            )
           }
         }
       }
+
+      recordingSampleTimeAtomic.wrappingIncrement(
+        by: Int64(convertedBuffer.frameLength),
+        ordering: .relaxed
+      )
     }
 
     private static func writerLoop(
@@ -1584,9 +1614,10 @@
       ) {
         @Sendable [bufferReceivers]
         buffer,
-        _ in
+        time in
         self.processAudio(
           buffer: buffer,
+          time: time,
           to: processingFormat,
           enqueueingTo: audioBuffers,
           bufferReceivers: bufferReceivers
