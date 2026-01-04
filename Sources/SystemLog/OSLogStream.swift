@@ -1,9 +1,113 @@
 import AsyncAlgorithms
+import Dispatch
 import Foundation
 import OSLog
 import SwiftUI
 
 public struct OSLogStream: AsyncSequence {
+
+  /// Fetches log entries for a fixed time range.
+  ///
+  /// This is intended for fast "initial load" style queries. It does not poll.
+  @concurrent
+  public static nonisolated func fetchRange(
+    from startDate: Date,
+    to endDate: Date,
+    inclusiveEnd: Bool = false,
+    scope: OSLogStore.Scope = .currentProcessIdentifier,
+    filter: Filter = .any
+  ) async throws -> [LogEntry] {
+    guard startDate <= endDate else { return [] }
+    try Task.checkCancellation()
+    return try await withCheckedThrowingContinuation { continuation in
+      DispatchQueue.global(qos: .userInitiated).async { [filter] in
+        do {
+          let logStore = try OSLogStore(scope: scope)
+          let datePredicate: NSPredicate =
+            if inclusiveEnd {
+              NSPredicate(format: "date >= %@ AND date <= %@", startDate as NSDate, endDate as NSDate)
+            } else {
+              NSPredicate(format: "date >= %@ AND date < %@", startDate as NSDate, endDate as NSDate)
+            }
+
+          let compoundPredicate = NSCompoundPredicate(
+            andPredicateWithSubpredicates: [
+              datePredicate,
+              filter.predicate,
+            ]
+          )
+
+          let itemSequence = try logStore.getEntries(matching: compoundPredicate)
+          var items: [LogEntry] = []
+          for item in itemSequence {
+            items.append(LogEntry(log: item))
+          }
+          continuation.resume(returning: items)
+        } catch {
+          continuation.resume(throwing: error)
+        }
+      }
+    }
+  }
+
+  /// Fetches log entries for a fixed time range by splitting it into multiple non-overlapping shards.
+  ///
+  /// This can significantly reduce "time to first render" when the underlying store query is slow.
+  @concurrent
+  public static nonisolated func fetchSharded(
+    from startDate: Date,
+    to endDate: Date,
+    shardCount: Int,
+    scope: OSLogStore.Scope = .currentProcessIdentifier,
+    filter: Filter = .any
+  ) async throws -> [LogEntry] {
+    guard startDate <= endDate else { return [] }
+    let shardCount = Swift.max(1, shardCount)
+
+    let total = endDate.timeIntervalSince(startDate)
+    if total <= 0 || shardCount == 1 {
+      return try await fetchRange(
+        from: startDate,
+        to: endDate,
+        inclusiveEnd: true,
+        scope: scope,
+        filter: filter
+      )
+    }
+
+    let shardDuration = total / Double(shardCount)
+
+    return try await withThrowingTaskGroup(of: (Int, [LogEntry]).self) { group in
+      for shardIndex in 0..<shardCount {
+        let shardStart = startDate.addingTimeInterval(Double(shardIndex) * shardDuration)
+        let shardEnd: Date =
+          if shardIndex == shardCount - 1 {
+            endDate
+          } else {
+            startDate.addingTimeInterval(Double(shardIndex + 1) * shardDuration)
+          }
+        let inclusiveEnd = shardIndex == shardCount - 1
+
+        group.addTask {
+          try Task.checkCancellation()
+          let entries = try await fetchRange(
+            from: shardStart,
+            to: shardEnd,
+            inclusiveEnd: inclusiveEnd,
+            scope: scope,
+            filter: filter
+          )
+          return (shardIndex, entries)
+        }
+      }
+
+      var buckets = Array(repeating: [LogEntry](), count: shardCount)
+      for try await (index, entries) in group {
+        buckets[index] = entries
+      }
+      return buckets.flatMap { $0 }
+    }
+  }
 
   public static nonisolated func withCallback(
     batchSize: Int = 100,
@@ -197,7 +301,8 @@ public struct OSLogStream: AsyncSequence {
       // the maxDate serves as the data cursor
       var maxDate: Date? = nil
       // pull from the underlying iterator one at a time.
-      while let item = itemSequence.makeIterator().next() {
+      let iterator = itemSequence.makeIterator()
+      while let item = iterator.next() {
         // store the item
         items.append(item)
         // update the cursor

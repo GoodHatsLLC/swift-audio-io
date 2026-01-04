@@ -947,19 +947,37 @@ extension SystemLog.LogModel {
   @MainActor
   fileprivate func subscribe(filter: OSLogStream.Filter) async {
     logs = []
+    error = nil
     self.exportState = .processing
     do {
+      let startDate = Date() - ProcessInfo.processInfo.systemUptime
+      let endDate = Date.now
+      let shardCount = Swift.min(8, Swift.max(1, ProcessInfo.processInfo.activeProcessorCount))
+
+      let initial = try await OSLogStream.fetchSharded(
+        from: startDate,
+        to: endDate,
+        shardCount: shardCount,
+        filter: filter
+      )
+      try Task.checkCancellation()
+      self.logs = initial
+      self.exportState = .ready
+
       try await OSLogStream.withCallback(
-        batchSize: 100,
+        batchSize: 200,
+        from: endDate,
+        pollInterval: .seconds(2),
         filter: filter
       ) { entries in
         self.logs.append(contentsOf: entries)
-        if self.exportState == .processing {
-          self.exportState = .ready
-        }
       }
     } catch {
+      if error is CancellationError {
+        return
+      }
       self.error = error
+      self.exportState = .ready
     }
   }
   fileprivate static func exportLogs(
