@@ -691,6 +691,7 @@ public enum SystemLog {
         ForEach(model.logs) { log in
           LogCell(for: log)
             .listRowInsets(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
+            .listRowSeparator(.hidden)
         }
       }
       .listStyle(.plain)
