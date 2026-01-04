@@ -22,9 +22,9 @@ public protocol ErrorManaging: Sendable {
   ) -> Reporter<any Error>
 }
 
-public extension ErrorManaging {
+extension ErrorManaging {
   @MainActor
-  func enqueue(
+  public func enqueue(
     _ error: any Error,
     visibility: ErrorManager.ErrorEvent.Visibility = .userInterrupting,
     userMessage: String? = nil,
@@ -44,7 +44,7 @@ public extension ErrorManaging {
     )
   }
 
-  func reporter(
+  public func reporter(
     visibility: ErrorManager.ErrorEvent.Visibility,
     userMessage: String? = nil,
     context: String? = nil
@@ -62,11 +62,11 @@ public extension ErrorManaging {
     }
   }
 
-  var report: Reporter<any Error> {
+  public var report: Reporter<any Error> {
     reporter(visibility: .userInterrupting)
   }
 
-  var debugReport: Reporter<any Error> {
+  public var debugReport: Reporter<any Error> {
     reporter(visibility: .debug)
   }
 }
@@ -105,9 +105,9 @@ public struct AnyErrorManager: ErrorManaging {
   }
 }
 
-public extension ErrorManager {
+extension ErrorManager {
   @MainActor
-  func enqueue(
+  public func enqueue(
     _ error: any Error,
     visibility: ErrorEvent.Visibility,
     userMessage: String?,
@@ -130,46 +130,46 @@ public extension ErrorManager {
 extension ErrorManager: ErrorManaging {}
 
 #if DEBUG
-/// A lightweight error manager for tests.
-///
-/// Stores enqueued errors for later inspection without any UI coupling.
-@Observable
-public final class MockErrorManager: Sendable, ErrorManaging {
-  public nonisolated init() {}
+  /// A lightweight error manager for tests.
+  ///
+  /// Stores enqueued errors for later inspection without any UI coupling.
+  @Observable
+  public final class MockErrorManager: Sendable, ErrorManaging {
+    public nonisolated init() {}
 
-  @MainActor
-  public private(set) var events: [ErrorManager.ErrorEvent] = []
+    @MainActor
+    public private(set) var events: [ErrorManager.ErrorEvent] = []
 
-  @MainActor
-  public func enqueue(
-    _ error: any Error,
-    visibility: ErrorManager.ErrorEvent.Visibility,
-    userMessage: String?,
-    context: String?,
-    source: SourceLocation
-  ) {
-    events.append(
-      ErrorManager.ErrorEvent(
-        error: error,
-        visibility: visibility,
-        userMessage: userMessage,
-        context: context,
-        source: source
+    @MainActor
+    public func enqueue(
+      _ error: any Error,
+      visibility: ErrorManager.ErrorEvent.Visibility,
+      userMessage: String?,
+      context: String?,
+      source: SourceLocation
+    ) {
+      events.append(
+        ErrorManager.ErrorEvent(
+          error: error,
+          visibility: visibility,
+          userMessage: userMessage,
+          context: context,
+          source: source
+        )
       )
-    )
-  }
-
-  @MainActor
-  public func popEvent() -> ErrorManager.ErrorEvent? {
-    if !events.isEmpty {
-      return events.removeFirst()
     }
-    return nil
-  }
 
-  @MainActor
-  public func reset() {
-    events.removeAll()
+    @MainActor
+    public func popEvent() -> ErrorManager.ErrorEvent? {
+      if !events.isEmpty {
+        return events.removeFirst()
+      }
+      return nil
+    }
+
+    @MainActor
+    public func reset() {
+      events.removeAll()
+    }
   }
-}
 #endif

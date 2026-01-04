@@ -25,9 +25,11 @@ public struct OSLogStream: AsyncSequence {
           let logStore = try OSLogStore(scope: scope)
           let datePredicate: NSPredicate =
             if inclusiveEnd {
-              NSPredicate(format: "date >= %@ AND date <= %@", startDate as NSDate, endDate as NSDate)
+              NSPredicate(
+                format: "date >= %@ AND date <= %@", startDate as NSDate, endDate as NSDate)
             } else {
-              NSPredicate(format: "date >= %@ AND date < %@", startDate as NSDate, endDate as NSDate)
+              NSPredicate(
+                format: "date >= %@ AND date < %@", startDate as NSDate, endDate as NSDate)
             }
 
           let compoundPredicate = NSCompoundPredicate(
