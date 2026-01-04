@@ -279,6 +279,9 @@
       private let maxVisualizationSamples: Int
       private var readScratchBuffer: [Float]
       private let fallbackSampleTimeAtomic = ManagedAtomic<Int64>(0)
+      private let latestEndSampleTimeAtomic = ManagedAtomic<Int64>(0)
+      private let latestSampleRateBitsAtomic: ManagedAtomic<UInt64>
+      private let lastBeatUpdateEndSampleTimeAtomic = ManagedAtomic<Int64>(0)
     #endif
 
     // MARK: - Initialization
@@ -290,6 +293,7 @@
       self.configuration = configuration
 
       #if DEBUG
+        self.latestSampleRateBitsAtomic = ManagedAtomic(configuration.sampleRate.bitPattern)
         self.amplitudeAnalyzer = AmplitudeAnalyzer(
           configuration: configuration.amplitudeAnalyzerConfiguration)
         self.frequencyBucketer = FrequencyBucketer(
@@ -387,6 +391,9 @@
         beatDetector.reset()
         ringBuffer.clearIndices()
         fallbackSampleTimeAtomic.store(0, ordering: .relaxed)
+        latestEndSampleTimeAtomic.store(0, ordering: .relaxed)
+        latestSampleRateBitsAtomic.store(configuration.sampleRate.bitPattern, ordering: .relaxed)
+        lastBeatUpdateEndSampleTimeAtomic.store(0, ordering: .relaxed)
       #endif
       lodProcessor?.reset()
 
@@ -528,7 +535,15 @@
 
         guard readCount > 0 else { return }
 
-        let deltaTime = Double(readCount) / max(configuration.sampleRate, 1)
+        let sampleRate = {
+          let bits = latestSampleRateBitsAtomic.load(ordering: .relaxed)
+          let value = Double(bitPattern: bits)
+          return value > 0 ? value : configuration.sampleRate
+        }()
+        let latestEnd = latestEndSampleTimeAtomic.load(ordering: .relaxed)
+        let lastEnd = lastBeatUpdateEndSampleTimeAtomic.exchange(latestEnd, ordering: .relaxed)
+        let deltaSamples = max(Int64(0), latestEnd - lastEnd)
+        let deltaTime = Double(deltaSamples) / max(sampleRate, 1)
         let audioChunk = Array(readScratchBuffer.prefix(readCount))
         let amplitudeResult = amplitudeAnalyzer.processAmplitudeData(audioChunk)
         let spectrumResult = frequencyAnalyzer?.processFrequencyData(audioChunk)
@@ -605,6 +620,7 @@
     public typealias T = Float
 
     nonisolated public func processBuffer(_ data: UnsafeBufferPointer<Float>) {
+      guard isActiveAtomic.load(ordering: .relaxed), data.count > 0 else { return }
       let startSampleTime = fallbackSampleTimeAtomic.load(ordering: .relaxed)
       fallbackSampleTimeAtomic.wrappingIncrement(by: Int64(data.count), ordering: .relaxed)
       let timing = BufferTiming(
@@ -621,6 +637,11 @@
       guard isActiveAtomic.load(ordering: .relaxed), data.count > 0 else { return }
       #if DEBUG
         self.updateAudioBuffer(data)
+        latestEndSampleTimeAtomic.store(
+          timing.sampleTime + Int64(data.count),
+          ordering: .relaxed
+        )
+        latestSampleRateBitsAtomic.store(timing.sampleRate.bitPattern, ordering: .relaxed)
       #endif
 
       // Also feed multi-band LOD processor if enabled
