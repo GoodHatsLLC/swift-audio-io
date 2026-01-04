@@ -149,6 +149,9 @@
     private let isForegroundAtomic = ManagedAtomic<Bool>(true)
     private let visualizationConsumerCountAtomic = ManagedAtomic<Int>(0)
 
+    /// Most recently received buffer timing (published from the main queue).
+    public var latestBufferTiming: BufferTiming?
+
     // MARK: - Configuration
 
     /// A struct that defines the configuration for the audio visualization engine.
@@ -276,6 +279,7 @@
       private let maxVisualizationSamples: Int
       private var readScratchBuffer: [Float]
       private var lastUpdateTime: Date = .now
+      private let fallbackSampleTimeAtomic = ManagedAtomic<Int64>(0)
     #endif
 
     // MARK: - Initialization
@@ -378,10 +382,12 @@
       frequencyDomain = .empty
       beat = .empty
       spectrumPeakHold.removeAll()
+      latestBufferTiming = nil
       #if DEBUG
         frequencyBucketer.resetPeakHold()
         beatDetector.reset()
         ringBuffer.clearIndices()
+        fallbackSampleTimeAtomic.store(0, ordering: .relaxed)
       #endif
       lodProcessor?.reset()
 
@@ -604,6 +610,19 @@
     public typealias T = Float
 
     nonisolated public func processBuffer(_ data: UnsafeBufferPointer<Float>) {
+      let startSampleTime = fallbackSampleTimeAtomic.load(ordering: .relaxed)
+      fallbackSampleTimeAtomic.wrappingIncrement(by: Int64(data.count), ordering: .relaxed)
+      let timing = BufferTiming(
+        sampleTime: startSampleTime,
+        sampleRate: configuration.sampleRate
+      )
+      processBuffer(data, timing: timing)
+    }
+
+    nonisolated public func processBuffer(
+      _ data: UnsafeBufferPointer<Float>,
+      timing: BufferTiming
+    ) {
       guard isActiveAtomic.load(ordering: .relaxed), data.count > 0 else { return }
       #if DEBUG
         self.updateAudioBuffer(data)
@@ -611,6 +630,10 @@
 
       // Also feed multi-band LOD processor if enabled
       lodProcessor?.process(data)
+
+      DispatchQueue.main.async {
+        self.latestBufferTiming = timing
+      }
     }
 
     public func endBufferTask() {}
