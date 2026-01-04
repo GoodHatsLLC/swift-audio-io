@@ -278,7 +278,6 @@
       private let ringBuffer: RingBuffer<Float>
       private let maxVisualizationSamples: Int
       private var readScratchBuffer: [Float]
-      private var lastUpdateTime: Date = .now
       private let fallbackSampleTimeAtomic = ManagedAtomic<Int64>(0)
     #endif
 
@@ -405,7 +404,6 @@
 
       #if DEBUG
         if shouldBeActive {
-          lastUpdateTime = .now
           setupUpdateTimer()
         } else {
           updateTimer?.cancel()
@@ -519,10 +517,6 @@
       }
 
       private func updateVisualizations() {
-        let now = Date.now
-        let deltaTime = now.timeIntervalSince(lastUpdateTime)
-        lastUpdateTime = now
-
         let desiredSamples = maxVisualizationSamples
         var readCount = 0
 
@@ -534,6 +528,7 @@
 
         guard readCount > 0 else { return }
 
+        let deltaTime = Double(readCount) / max(configuration.sampleRate, 1)
         let audioChunk = Array(readScratchBuffer.prefix(readCount))
         let amplitudeResult = amplitudeAnalyzer.processAmplitudeData(audioChunk)
         let spectrumResult = frequencyAnalyzer?.processFrequencyData(audioChunk)
