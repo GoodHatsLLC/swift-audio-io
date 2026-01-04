@@ -152,6 +152,30 @@
     /// Most recently received buffer timing (published from the main queue).
     public var latestBufferTiming: BufferTiming?
 
+    /// A monotonically-increasing audio clock derived from `BufferTiming.sampleTime`.
+    ///
+    /// This clock advances even when visualization processing is gated off by consumer visibility,
+    /// so the app can rely on sample-accurate time while recording continues in the background.
+    public nonisolated var currentTimeSeconds: TimeInterval {
+      let endSampleTime = latestEndSampleTimeAtomic.load(ordering: .relaxed)
+      let sampleRate = currentSampleRate
+      return Double(endSampleTime) / max(sampleRate, 1)
+    }
+
+    /// Current sample rate derived from the latest `BufferTiming` seen by this engine.
+    ///
+    /// Falls back to the configured sample rate if no timing has been received yet.
+    public nonisolated var currentSampleRate: Double {
+      let bits = latestSampleRateBitsAtomic.load(ordering: .relaxed)
+      let value = Double(bitPattern: bits)
+      return value > 0 ? value : configuration.sampleRate
+    }
+
+    private let fallbackSampleTimeAtomic = ManagedAtomic<Int64>(0)
+    private let latestEndSampleTimeAtomic = ManagedAtomic<Int64>(0)
+    private let latestSampleRateBitsAtomic: ManagedAtomic<UInt64>
+    private let lastBeatUpdateEndSampleTimeAtomic = ManagedAtomic<Int64>(0)
+
     // MARK: - Configuration
 
     /// A struct that defines the configuration for the audio visualization engine.
@@ -278,10 +302,6 @@
       private let ringBuffer: RingBuffer<Float>
       private let maxVisualizationSamples: Int
       private var readScratchBuffer: [Float]
-      private let fallbackSampleTimeAtomic = ManagedAtomic<Int64>(0)
-      private let latestEndSampleTimeAtomic = ManagedAtomic<Int64>(0)
-      private let latestSampleRateBitsAtomic: ManagedAtomic<UInt64>
-      private let lastBeatUpdateEndSampleTimeAtomic = ManagedAtomic<Int64>(0)
     #endif
 
     // MARK: - Initialization
@@ -291,9 +311,9 @@
     /// - Parameter configuration: The configuration to use for the visualization engine.
     public init(configuration: Configuration = Configuration()) {
       self.configuration = configuration
+      self.latestSampleRateBitsAtomic = ManagedAtomic(configuration.sampleRate.bitPattern)
 
       #if DEBUG
-        self.latestSampleRateBitsAtomic = ManagedAtomic(configuration.sampleRate.bitPattern)
         self.amplitudeAnalyzer = AmplitudeAnalyzer(
           configuration: configuration.amplitudeAnalyzerConfiguration)
         self.frequencyBucketer = FrequencyBucketer(
@@ -386,15 +406,15 @@
       beat = .empty
       spectrumPeakHold.removeAll()
       latestBufferTiming = nil
+      lastBeatUpdateEndSampleTimeAtomic.store(0, ordering: .relaxed)
       #if DEBUG
         frequencyBucketer.resetPeakHold()
         beatDetector.reset()
         ringBuffer.clearIndices()
-        fallbackSampleTimeAtomic.store(0, ordering: .relaxed)
-        latestEndSampleTimeAtomic.store(0, ordering: .relaxed)
-        latestSampleRateBitsAtomic.store(configuration.sampleRate.bitPattern, ordering: .relaxed)
-        lastBeatUpdateEndSampleTimeAtomic.store(0, ordering: .relaxed)
       #endif
+      fallbackSampleTimeAtomic.store(0, ordering: .relaxed)
+      latestEndSampleTimeAtomic.store(0, ordering: .relaxed)
+      latestSampleRateBitsAtomic.store(configuration.sampleRate.bitPattern, ordering: .relaxed)
       lodProcessor?.reset()
 
       log.info("Audio visualization stopped")
@@ -535,11 +555,7 @@
 
         guard readCount > 0 else { return }
 
-        let sampleRate = {
-          let bits = latestSampleRateBitsAtomic.load(ordering: .relaxed)
-          let value = Double(bitPattern: bits)
-          return value > 0 ? value : configuration.sampleRate
-        }()
+        let sampleRate = currentSampleRate
         let latestEnd = latestEndSampleTimeAtomic.load(ordering: .relaxed)
         let lastEnd = lastBeatUpdateEndSampleTimeAtomic.exchange(latestEnd, ordering: .relaxed)
         let deltaSamples = max(Int64(0), latestEnd - lastEnd)
@@ -620,7 +636,7 @@
     public typealias T = Float
 
     nonisolated public func processBuffer(_ data: UnsafeBufferPointer<Float>) {
-      guard isActiveAtomic.load(ordering: .relaxed), data.count > 0 else { return }
+      guard wantsActiveAtomic.load(ordering: .relaxed), data.count > 0 else { return }
       let startSampleTime = fallbackSampleTimeAtomic.load(ordering: .relaxed)
       fallbackSampleTimeAtomic.wrappingIncrement(by: Int64(data.count), ordering: .relaxed)
       let timing = BufferTiming(
@@ -634,14 +650,16 @@
       _ data: UnsafeBufferPointer<Float>,
       timing: BufferTiming
     ) {
-      guard isActiveAtomic.load(ordering: .relaxed), data.count > 0 else { return }
+      guard wantsActiveAtomic.load(ordering: .relaxed), data.count > 0 else { return }
+      latestEndSampleTimeAtomic.store(
+        timing.sampleTime + Int64(data.count),
+        ordering: .relaxed
+      )
+      latestSampleRateBitsAtomic.store(timing.sampleRate.bitPattern, ordering: .relaxed)
+
+      guard isActiveAtomic.load(ordering: .relaxed) else { return }
       #if DEBUG
         self.updateAudioBuffer(data)
-        latestEndSampleTimeAtomic.store(
-          timing.sampleTime + Int64(data.count),
-          ordering: .relaxed
-        )
-        latestSampleRateBitsAtomic.store(timing.sampleRate.bitPattern, ordering: .relaxed)
       #endif
 
       // Also feed multi-band LOD processor if enabled
