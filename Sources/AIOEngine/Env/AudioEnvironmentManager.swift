@@ -64,7 +64,7 @@
 
     /// A callback that is invoked when the audio route changes.
     public var onRouteChange:
-      (@Sendable @MainActor (AVAudioSession.RouteChangeReason) async -> Void)?
+      (@Sendable @MainActor (AudioRouteChangeEvent) async -> Void)?
 
     /// A callback that is invoked when an audio interruption occurs.
     public var onInterruption:
@@ -710,7 +710,12 @@
               await self.updateAudioInputs(reason: "routeChange notification: .\(reasonMsg)")
 
               // Forward route change to audio engine
-              await self.onRouteChange?(notification.reason)
+              let event = AudioRouteChangeEvent(
+                reason: notification.reason,
+                previousRoute: notification.previous,
+                session: env.session
+              )
+              await self.onRouteChange?(event)
             } catch {
               log.error("Route change notification handling error: \(error, privacy: .public)")
             }
