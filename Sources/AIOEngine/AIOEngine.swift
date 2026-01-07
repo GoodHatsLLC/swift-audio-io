@@ -1717,21 +1717,21 @@
     public nonisolated func attachBufferReceiver(_ receiver: consuming some BufferReceiver<Float>)
       async
     {
-      _ = await Task { @MainActor in
+      await MainActor.run {
         self.bufferReceivers({ $0.append(receiver) })
-      }.result
+      }
     }
 
     /// Detaches all buffer receivers from the engine.
     public nonisolated func detachBufferReceivers() async {
-      _ = await Task { @MainActor in
+      await MainActor.run {
         self.bufferReceivers({ b in
           defer { b = [] }
           return b
         }).forEach {
           $0.endBufferTask()
         }
-      }.result
+      }
     }
 
     // MARK: - Filename Generation
