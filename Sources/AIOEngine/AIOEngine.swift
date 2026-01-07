@@ -51,7 +51,7 @@
   ///
   /// - ``switchInput(to:)``
   /// - ``switchOutput(to:)``
-  /// - ``handleRouteChange(reason:)``
+  /// - ``handleRouteChange(event:)``
   /// - ``handleInterruption(type:options:)``
   ///
   private let log = SystemLog.make()
@@ -132,14 +132,14 @@
       public let currentSampleRate: Double
 
       public var description: String {
-        "\(reason): channels \(previousChannels)→\(currentChannels), sample rate \(previousSampleRate)→\(currentSampleRate)"
+        "Format changed: \(previousChannels)ch@\(Int(previousSampleRate))Hz → \(currentChannels)ch@\(Int(currentSampleRate))Hz"
       }
     }
 
     /// An event representing a recording interruption.
     public enum RecordingInterruption: Sendable {
       /// The audio route changed, but recording is continuing.
-      case routeChangeContinuing(reason: String, qualityChange: AudioQualityChange?)
+      case routeChangeContinuing(event: AudioRouteChangeEvent, qualityChange: AudioQualityChange?)
       /// The recording was stopped gracefully.
       case stoppedGracefully(reason: String)
       /// The recording was stopped by an interruption (e.g., a phone call).
@@ -147,11 +147,11 @@
 
       public var description: String {
         switch self {
-        case .routeChangeContinuing(let reason, let qualityChange):
+        case .routeChangeContinuing(let event, let qualityChange):
           if let change = qualityChange {
-            return "Route changed (\(reason)), continuing with: \(change.description)"
+            return "\(event.userMessage), continuing with: \(change.description)"
           } else {
-            return "Route changed (\(reason)), continuing with same quality"
+            return "\(event.userMessage), continuing with same quality"
           }
         case .stoppedGracefully(let reason):
           return "Recording stopped gracefully: \(reason)"
@@ -189,6 +189,7 @@
       var audioBuffers: [RingBuffer<Float>]?
       var isHandlingRouteChange: Bool = false
       var initialInputFormat: AVAudioFormat?
+      var lastInputFormat: AVAudioFormat?
     }
     private let state: Synchronized<InternalState> = .init(.init())
 
@@ -677,6 +678,7 @@
           $0.installedTapBus = tapConfiguration.bus
           $0.recordingConfiguration = configuration
           $0.initialInputFormat = inputFormat
+          $0.lastInputFormat = inputFormat
         }
       } catch {
         log.error(
@@ -737,6 +739,7 @@
           state.recordingConfiguration = nil
           state.audioBuffers = nil
           state.initialInputFormat = nil
+          state.lastInputFormat = nil
           state.isHandlingRouteChange = false
         }
         return state.file
@@ -1398,9 +1401,9 @@
     /// This method is called when the audio route changes (e.g., headphones are disconnected).
     /// It attempts to continue recording with the new route if possible.
     ///
-    /// - Parameter reason: The reason for the route change.
+    /// - Parameter event: The route change details.
     @MainActor
-    public func handleRouteChange(reason: AVAudioSession.RouteChangeReason) async {
+    public func handleRouteChange(event: AudioRouteChangeEvent) async {
       guard isRecording else { return }
 
       // Prevent re-entrant calls
@@ -1412,7 +1415,7 @@
       state.isHandlingRouteChange = true
       defer { state.isHandlingRouteChange = false }
 
-      log.info("Handling route change: \(String(describing: reason), privacy: .public)")
+      log.info("Handling route change: \(String(describing: event.reason), privacy: .public)")
 
       let session = AVAudioSession.sharedInstance()
       let newInputFormat = engine.inputNode.inputFormat(forBus: 0)
@@ -1425,10 +1428,11 @@
         log.error("Missing configuration or file during route change")
         return
       }
+      let previousFormat = state.lastInputFormat ?? initialFormat
 
       // Check if we can continue recording
       let canContinue = canContinueRecording(
-        from: initialFormat,
+        from: previousFormat,
         to: newInputFormat,
         processingFormat: processingFormat,
         session: session
@@ -1445,16 +1449,17 @@
 
           // Notify about quality change if channels or sample rate differ
           let qualityChange = createQualityChange(
-            from: initialFormat,
+            from: previousFormat,
             to: newInputFormat,
-            reason: describeRouteChangeReason(reason)
+            reason: describeRouteChangeReason(event.reason)
           )
 
           let interruption = RecordingInterruption.routeChangeContinuing(
-            reason: describeRouteChangeReason(reason),
+            event: event,
             qualityChange: qualityChange
           )
           await onRecordingInterruption?(interruption)
+          placeState(\.lastInputFormat, newInputFormat)
 
           log.info("Successfully continued recording after route change")
         } catch {
@@ -1685,7 +1690,7 @@
       case .categoryChange:
         return "Audio category changed"
       case .override:
-        return "Route overridden"
+        return "Overridden"
       case .routeConfigurationChange:
         return "Route configuration changed"
       case .wakeFromSleep:
