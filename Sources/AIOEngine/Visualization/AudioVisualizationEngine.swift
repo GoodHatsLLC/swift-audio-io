@@ -670,7 +670,12 @@
       }
     }
 
-    public func endBufferTask() {}
+    nonisolated public func endBufferTask() {
+      wantsActiveAtomic.store(false, ordering: .relaxed)
+      Task { @MainActor [weak self] in
+        self?.stopVisualization()
+      }
+    }
   }
 
   // MARK: - Configuration Extensions
