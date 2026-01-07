@@ -718,11 +718,10 @@
       if let writerTask {
         writerTask.cancel()
         do {
-          _ = try await withTimeout(of: .seconds(3)) {
-            await writerTask.result
-          }
+          try await writerTask.value
         } catch {
-          log.error("writer task timed out after 3 seconds")
+          // If this happens, we still proceed with cleanup to keep the engine consistent.
+          log.error("writer task failed during stop: \(error, privacy: .public)")
         }
       }
       cleanUp()
@@ -1040,9 +1039,14 @@
       // Cancel current writer task (it will flush remaining data to the old file)
       writerTask?.cancel()
 
-      // Wait briefly for writer to finish current chunk
-      // The writer loop checks Task.isCancelled and exits cleanly
-      try? await Task.sleep(for: .milliseconds(50))
+      // Wait for the writer to observe cancellation so we don't close the file while it's still writing.
+      if let writerTask {
+        do {
+          try await writerTask.value
+        } catch {
+          log.error("writer task failed during rotate: \(error, privacy: .public)")
+        }
+      }
 
       // Close the old file
       state.file?.close()
