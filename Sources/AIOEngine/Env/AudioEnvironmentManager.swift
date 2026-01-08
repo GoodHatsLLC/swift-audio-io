@@ -16,6 +16,54 @@
   @MainActor
   @Observable
   public class AudioEnvironmentManager {
+    /// Prepares the shared audio session category/options as early as possible on app launch.
+    ///
+    /// This intentionally does **not** activate the audio session; activation should only occur when
+    /// the app has expressed an intent to capture or play audio.
+    @MainActor
+    public static func prepareAudioSessionCategoryForAppLaunch() {
+      do {
+        try configureAudioSessionCategory(AVAudioSession.sharedInstance())
+      } catch {
+        log.error(
+          "Failed to prepare audio session category on launch: \(error.localizedDescription, privacy: .public)"
+        )
+      }
+    }
+
+    /// Configures the audio session category/options, but does not activate the session.
+    ///
+    /// Activation (`setActive(true)`) is intentionally separated so the app can avoid claiming the
+    /// microphone/audio session until explicitly requested.
+    public nonisolated static func configureAudioSessionCategory(_ session: AVAudioSession) throws {
+      // Platform-specific options based on AVAudioSession API availability
+      #if os(iOS)
+        let sessionOptions: AVAudioSession.CategoryOptions = [
+          .defaultToSpeaker,
+          .allowBluetoothA2DP,
+          .allowAirPlay,
+          .allowBluetoothHFP,
+          .overrideMutedMicrophoneInterruption,
+        ]
+      #elseif os(macOS)
+        // macOS has more limited session options
+        let sessionOptions: AVAudioSession.CategoryOptions = [
+          .allowBluetooth
+        ]
+      #else
+        let sessionOptions: AVAudioSession.CategoryOptions = []
+      #endif
+
+      try session.setCategory(
+        .playAndRecord,
+        mode: .default,
+        options: sessionOptions
+      )
+      try session.setAllowHapticsAndSystemSoundsDuringRecording(true)
+      try session.setPrefersNoInterruptionsFromSystemAlerts(true)
+      try session.setPrefersInterruptionOnRouteDisconnect(false)
+    }
+
     /// Creates a new `AudioEnvironmentManager` instance.
     ///
     /// - Parameters:
@@ -436,68 +484,42 @@
     /// It will suspend without returning until its task is cancelled. On cancellation, it performs teardown and returns.
     ///
     /// - Throws: An error if the manager is already running.
-	    public func run() async throws {
-	      guard !isRunning else {
-	        throw AIOError.unknown(.init(domain: "audioenvironmentmanager.alreadyrunning", code: -99))
-	      }
-	      log.info("🔊 AudioEnvironmentManager.run() started")
-      isRunning = true
-      defer { isRunning = false }
+		    public func run() async throws {
+		      guard !isRunning else {
+		        throw AIOError.unknown(.init(domain: "audioenvironmentmanager.alreadyrunning", code: -99))
+		      }
+		      log.info("🔊 AudioEnvironmentManager.run() started")
+	      isRunning = true
+	      defer { isRunning = false }
       /// Within this task group:
       /// - teardown symmetric with setup must always happen
       /// - it should be applied at the same level of nesting as its setup
       /// - the end effect once returning should be that `run()` is ready to be called
 	      await withThrowingTaskGroup(of: Void.self) { group in
 
-	        func configureAudioSession() {
-	          group.addTask {
-	            do {
-	              // Configure session settings atomically
-	              // Platform-specific options based on AVAudioSession API availability
-	              #if os(iOS)
-	                let sessionOptions: AVAudioSession.CategoryOptions = [
-	                  .defaultToSpeaker,
-	                  .allowBluetoothA2DP,
-	                  .allowAirPlay,
-	                  .allowBluetoothHFP,
-	                  .overrideMutedMicrophoneInterruption,
-	                ]
-	              #elseif os(macOS)
-	                // macOS has more limited session options
-	                let sessionOptions: AVAudioSession.CategoryOptions = [
-	                  .allowBluetooth
-	                ]
-	              #else
-	                let sessionOptions: AVAudioSession.CategoryOptions = []
-	              #endif
-
-	              try self.env.session.setCategory(
-	                .playAndRecord,
-	                mode: .default,
-	                options: sessionOptions
-	              )
-	              try self.env.session.setAllowHapticsAndSystemSoundsDuringRecording(true)
-	              try self.env.session.setPrefersNoInterruptionsFromSystemAlerts(true)
-	              try self.env.session.setPrefersInterruptionOnRouteDisconnect(false)
-	              try self.env.session.setActive(true, options: .notifyOthersOnDeactivation)
-	              await MainActor.run { self.isAudioSessionActive = true }
-	              try self.env
-	                .request(
-	                  input: self.env.input
-	                    ?? self.env.availableInputs
+		        func configureAudioSession() {
+		          group.addTask {
+		            do {
+		              // Configure audio session category/options early, but do NOT activate.
+		              // Activation should only occur when the app expresses intent to record or play audio.
+		              try Self.configureAudioSessionCategory(self.env.session)
+		              try self.env
+		                .request(
+		                  input: self.env.input
+		                    ?? self.env.availableInputs
 	                    .first(where: { $0.platform.portType == .builtInMic })
 	                )
-	              log.info(
-	                """
-	                🔊 AudioEnvironmentManager.run() started, activating AudioSession with base setings:
-	                category: \(self.env.session.category.rawValue, privacy: .public)
-	                options: \(self.env.session.categoryOptions.description, privacy: .public)
-	                allowHapticsAndSystemSoundsDuringRecording: \(self.env.session.allowHapticsAndSystemSoundsDuringRecording, privacy: .public)
-	                prefersNoInterruptionsFromSystemAlerts: \(self.env.session.prefersNoInterruptionsFromSystemAlerts, privacy: .public)
-	                prefersInterruptionOnRouteDisconnect: \(self.env.session.prefersInterruptionOnRouteDisconnect, privacy: .public)
-	                """
-	              )
-	            } catch {
+		              log.info(
+		                """
+		                🔊 AudioEnvironmentManager.run() configured AudioSession (inactive) with base settings:
+		                category: \(self.env.session.category.rawValue, privacy: .public)
+		                options: \(self.env.session.categoryOptions.description, privacy: .public)
+		                allowHapticsAndSystemSoundsDuringRecording: \(self.env.session.allowHapticsAndSystemSoundsDuringRecording, privacy: .public)
+		                prefersNoInterruptionsFromSystemAlerts: \(self.env.session.prefersNoInterruptionsFromSystemAlerts, privacy: .public)
+		                prefersInterruptionOnRouteDisconnect: \(self.env.session.prefersInterruptionOnRouteDisconnect, privacy: .public)
+		                """
+		              )
+		            } catch {
 	              log.error(
 	                """
 	                🔊 AudioEnvironmentManager.run() failed:
@@ -531,18 +553,22 @@
             }
           }
         }
-        group.addTask { [weak self] in
-          guard let self else { return }
-          try? await subscribe()
-        }
-      }
-      try? await withCancellationOperation {
-        try self.env.session.setActive(false, options: .notifyOthersOnDeactivation)
-        await MainActor.run { self.isAudioSessionActive = false }
-      }
-      log.info("🔇AudioEnvironmentManager.run() finished, deactivating AudioSession")
-    }
-  }
+		        group.addTask { [weak self] in
+		          guard let self else { return }
+		          try? await subscribe()
+		        }
+		      }
+	      let wasActive = isAudioSessionActive
+	      try? await withCancellationOperation {
+	        if wasActive {
+	          try self.env.session.setActive(false, options: .notifyOthersOnDeactivation)
+	          await MainActor.run { self.isAudioSessionActive = false }
+	        }
+	      }
+	      let deactivationSuffix = wasActive ? ", deactivating AudioSession" : ""
+	      log.info("🔇AudioEnvironmentManager.run() finished\(deactivationSuffix)")
+	    }
+	  }
 
   extension AudioEnvironmentManager {
 

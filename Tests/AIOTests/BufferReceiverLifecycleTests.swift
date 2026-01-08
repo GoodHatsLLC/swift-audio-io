@@ -1,6 +1,7 @@
 #if canImport(AVFoundation)
   import Atomics
   import Testing
+  import Tools
 
   @testable import AIOEngine
 
@@ -10,7 +11,8 @@
     func testDetachCallsEndBufferTaskAndReleasesReceiver() async {
       let engine = AIOEngine()
 
-      final class TestReceiver: BufferReceiver<Float>, @unchecked Sendable {
+      final class TestReceiver: BufferReceiver, @unchecked Sendable {
+        typealias T = Float
         let endCount = ManagedAtomic<Int>(0)
 
         nonisolated func processBuffer(_ data: UnsafeBufferPointer<Float>) {}
@@ -38,4 +40,3 @@
     }
   }
 #endif
-
