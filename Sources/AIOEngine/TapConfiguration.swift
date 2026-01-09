@@ -29,7 +29,7 @@
     init(
       bus: Int,
       channelCount: Int,
-      inputFormat: AVAudioFormat,  // inputNode.inputFormat(forBus: 0)
+      inputFormat: AVAudioFormat,  // inputNode.outputFormat(forBus: 0)
       outputFormat: AVAudioFormat,
       tapReadSeconds: Double
     ) {
