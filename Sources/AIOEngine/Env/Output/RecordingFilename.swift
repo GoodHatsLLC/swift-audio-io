@@ -55,6 +55,9 @@ public struct RecordingFilename: Sendable, Equatable, Hashable {
   /// Example: `20251216T143052_rec.aac`
   public var filename: String {
     let timestampString = Self.formatter.string(from: timestamp)
+    if fileExtension.isEmpty {
+      return "\(timestampString)_\(word)"
+    }
     return "\(timestampString)_\(word).\(fileExtension)"
   }
 
