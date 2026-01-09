@@ -3,7 +3,7 @@ import os
 // MARK: - Timeout
 
 /// A function that executes an asynchronous operation with a timeout.
-public struct Timeout: TypedThrowsError, Hashable {
+public struct Timeout: AudioError, Hashable {
 
   let fromLocation: SourceLocation
   let afterDuration: Duration
@@ -14,7 +14,7 @@ public struct Timeout: TypedThrowsError, Hashable {
   }
 }
 
-public enum WithTimeoutError<Failure: TypedThrowsError>: TypedThrowsError {
+public enum WithTimeoutError<Failure: AudioError>: AudioError {
   case timedOut(Timeout)
   case operationFailed(Failure)
   case cancelled
@@ -31,7 +31,7 @@ public enum WithTimeoutError<Failure: TypedThrowsError>: TypedThrowsError {
   }
 }
 
-public enum TimeoutOnlyError: TypedThrowsError {
+public enum TimeoutOnlyError: AudioError {
   case timedOut(Timeout)
   case cancelled
 
@@ -92,7 +92,7 @@ public func withTimeout<Return: Sendable>(
 ///   - operation: The operation to execute.
 /// - Returns: The result of the operation, if any.
 /// - Throws: `WithTimeoutError` if the operation times out, fails, or the surrounding task is cancelled.
-public func withTimeout<Return: Sendable, Failure: TypedThrowsError>(
+public func withTimeout<Return: Sendable, Failure: AudioError>(
   of duration: Duration,
   file: StaticString = #file,
   line: UInt = #line,

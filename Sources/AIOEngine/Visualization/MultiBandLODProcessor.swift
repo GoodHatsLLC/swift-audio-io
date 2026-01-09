@@ -757,7 +757,7 @@
     }
 
     /// Errors that can occur during LOD generation.
-    public enum LODGenerationError: TypedThrowsError, LocalizedError {
+    public enum LODGenerationError: AudioError, LocalizedError {
       case bufferCreationFailed
       case invalidAudioFormat
       case audioFileOpenFailed(url: URL, error: ErrorContext)

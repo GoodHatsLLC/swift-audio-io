@@ -16,7 +16,7 @@
   @MainActor
   @Observable
   public class AudioEnvironmentManager {
-    public enum ManagerError: TypedThrowsError {
+    public enum ManagerError: AudioError {
       public enum AudioSessionOperation: String, Sendable, Equatable, CustomStringConvertible {
         case setCategory
         case setAllowHapticsAndSystemSoundsDuringRecording

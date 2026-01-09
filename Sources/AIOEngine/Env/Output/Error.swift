@@ -2,7 +2,7 @@ import AVFAudio
 import Foundation
 import Tools
 
-public enum AIOError: TypedThrowsError, Hashable {
+public enum AIOError: AudioError, Hashable {
   case unknown(ErrorContext)
   case audioSession(AudioSessionError)
 
@@ -19,7 +19,7 @@ public enum AIOError: TypedThrowsError, Hashable {
 extension AIOError {
 
   /// `AVAudioSession.ErrorCode`
-  public enum AudioSessionError: Int, TypedThrowsError {
+  public enum AudioSessionError: Int, AudioError {
     case none = 0
     case unknownDefaultError = -999
     case mediaServicesFailed = 1_836_282_486

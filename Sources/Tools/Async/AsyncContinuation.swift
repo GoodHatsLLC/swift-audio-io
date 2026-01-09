@@ -15,7 +15,7 @@ public struct AsyncContinuation<Value: Sendable>: Sendable, ~Copyable {
   // MARK: Public
 
   public typealias Failure = Never
-  public struct AlreadyYielded: TypedThrowsError, Hashable {
+  public struct AlreadyYielded: AudioError, Hashable {
     public let id: UUID
     public let yieldedValueDescription: String
 

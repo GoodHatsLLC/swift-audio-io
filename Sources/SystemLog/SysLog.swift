@@ -84,7 +84,7 @@ public struct Reporter<E: Error> {
     line: Int = #line,
     column: Int = #column,
     @_inheritActorContext(always) _ operation: sending @isolated(any) () async throws(E) -> V
-  ) async throws(E) -> V where E: TypedThrowsError {
+  ) async throws(E) -> V where E: AudioError {
     let sl = SourceLocation(file: file, function: function, line: line, column: column)
     do {
       return try await operation()
@@ -115,7 +115,7 @@ public struct Reporter<E: Error> {
     line: Int = #line,
     column: Int = #column,
     _ operation: () throws(E) -> V
-  ) throws(E) -> V where E: TypedThrowsError {
+  ) throws(E) -> V where E: AudioError {
     let sl = SourceLocation(file: file, function: function, line: line, column: column)
     do {
       return try operation()
@@ -199,7 +199,7 @@ public struct Reporter<E: Error> {
   }
 }
 
-public enum ReportedError: TypedThrowsError {
+public enum ReportedError: AudioError {
   case cancelled
   case error(ErrorContext)
 
@@ -982,7 +982,7 @@ extension SystemLog.LogModel {
 }
 
 extension SystemLog.LogModel {
-  fileprivate enum LoggerError: TypedThrowsError, LocalizedError {
+  fileprivate enum LoggerError: AudioError, LocalizedError {
     case failedToFetch
     case failedToWriteFile
     case unsupportedFormatType

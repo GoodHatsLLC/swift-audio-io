@@ -3,7 +3,7 @@
   import Tools
 
   public struct AudioInput: Hashable, Sendable, Identifiable, CustomStringConvertible {
-    public enum PreferenceError: TypedThrowsError {
+    public enum PreferenceError: AudioError {
       case setPreferredSourceFailed(inputID: String, error: ErrorContext)
 
       public var description: String {

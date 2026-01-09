@@ -2,7 +2,7 @@
 	  import AVFoundation
 	  import Tools
 
-	  public struct VerboseError: TypedThrowsError {
+	  public struct VerboseError: AudioError {
 	    public init(error: any Error) {
       let nserror = error as NSError
       let code = nserror.code

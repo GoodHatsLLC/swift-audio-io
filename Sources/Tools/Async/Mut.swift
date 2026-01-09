@@ -41,7 +41,7 @@ extension Mut {
 
   public borrowing func withLock<Result, E>(
     _ body: (inout sending Value) throws(E) -> sending Result
-  ) throws(E) -> sending Result where E: TypedThrowsError {
+  ) throws(E) -> sending Result where E: AudioError {
     do {
       #if canImport(Synchronization)
         return try lock.withLock { (v) -> Transferring<Result> in
@@ -83,7 +83,7 @@ extension Mut {
 
   public borrowing func withLockIfAvailable<Result, E>(
     _ body: (inout sending Value) throws(E) -> sending Result
-  ) throws(E) -> sending Result? where E: TypedThrowsError {
+  ) throws(E) -> sending Result? where E: AudioError {
     do {
       #if canImport(Synchronization)
         return try lock.withLockIfAvailable { (v) -> Transferring<Result> in
