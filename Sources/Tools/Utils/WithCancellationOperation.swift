@@ -19,7 +19,7 @@ public func withCancellationOperation<T: Sendable>(
 }
 
 /// Suspend until the current task context is cancelled, then execute the operation.
-public func withCancellationOperation<T: Sendable, Failure: TypedThrowsError>(
+public func withCancellationOperation<T: Sendable, Failure: AudioError>(
   isolation: isolated (any Actor)? = #isolation,
   operation: () async throws(Failure) -> T
 ) async throws(Failure) -> T {
@@ -54,7 +54,7 @@ public final class AwaitableBox<Value: Sendable>: Identifiable, Hashable, Sendab
   // MARK: Public
 
   public typealias Failure = Never
-  public struct AlreadyYielded: TypedThrowsError, Hashable {
+  public struct AlreadyYielded: AudioError, Hashable {
     public let id: UUID
     public let yieldedValueDescription: String
 

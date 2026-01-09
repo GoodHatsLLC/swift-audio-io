@@ -15,7 +15,7 @@ public func OnCancellationHandler<T: Sendable>(
   )
 }
 
-public func OnCancellationHandler<T: Sendable, Failure: TypedThrowsError>(
+public func OnCancellationHandler<T: Sendable, Failure: AudioError>(
   isolation: isolated (any Actor)? = #isolation,
   cleanup: () async throws(Failure) -> T
 ) async throws(Failure) -> T {

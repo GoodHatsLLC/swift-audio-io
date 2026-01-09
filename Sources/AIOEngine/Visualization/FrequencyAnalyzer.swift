@@ -425,7 +425,7 @@ public struct SpectrumData {
 
 // MARK: - Errors
 
-public enum FrequencyAnalyzerError: TypedThrowsError, LocalizedError {
+public enum FrequencyAnalyzerError: AudioError, LocalizedError {
   case invalidFFTSize
   case allocationFailed
 

@@ -30,7 +30,7 @@ public actor TokenBucket {
 
   public func withToken<ReturnType: Sendable, Failure>(
     _ body: @Sendable () async throws(Failure) -> ReturnType
-  ) async throws(Failure) -> ReturnType where Failure: TypedThrowsError {
+  ) async throws(Failure) -> ReturnType where Failure: AudioError {
     await self.getToken()
     defer {
       self.returnToken()

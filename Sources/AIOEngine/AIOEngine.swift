@@ -59,7 +59,7 @@
   @Observable
   public final class AIOEngine: Sendable {
     /// Errors that can occur during audio engine operations.
-    public enum AIOError: TypedThrowsError, LocalizedError {
+    public enum AIOError: AudioError, LocalizedError {
       public enum AudioSessionOperation: String, Sendable, Equatable, CustomStringConvertible {
         case setPreferredSampleRate
         case setPreferredIOBufferDuration
@@ -507,7 +507,7 @@
           // Success!
           log.info("Recording started successfully after \(elapsed, privacy: .public)")
           return
-        } catch let error as AIOError where error.isTransient {
+        } catch let error where error.isTransient {
           // Transient error - wait and retry
           lastError = error
           log.info(
@@ -626,14 +626,19 @@
       do {
 
         guard let fileSettings = configuration.fileFormat?.settings else {
-          throw AIOError.invalidRecordingConfiguration(details: "(file format settings)")
+          throw AIOError.invalidRecordingConfiguration(
+            details: "(file format settings)"
+          )
         }
         // Configure audio session
         try configureAudioSession(for: configuration)
 
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(
-          Self.generateRecordingFilename(extension: configuration.fileExtension),
-          conformingTo: configuration.outputConfiguration.fileFormat.utType)
+          Self.generateRecordingFilename(
+            extension: configuration.fileExtension
+          ),
+          conformingTo: configuration.outputConfiguration.fileFormat.utType
+        )
 
         let file: AVAudioFile
         do {
@@ -734,7 +739,7 @@
         }
       } catch let error as AIOError {
         log.error(
-          "Failed to warm engine: \(error, privacy: .public) (\((((error as? AVError)?.code as? Int) ?? (error as NSError).code as Int), privacy: .public))"
+          "Failed to warm engine: \(error, privacy: .public)"
         )
         hardStop()
         onRecordingFailed?()

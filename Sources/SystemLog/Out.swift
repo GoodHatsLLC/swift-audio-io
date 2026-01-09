@@ -40,7 +40,7 @@ public enum Standard {
 }
 
 public final class File: TextOutputStream, Sendable {
-  public enum FileError: TypedThrowsError {
+  public enum FileError: AudioError {
     case openForUpdatingFailed(url: URL, error: ErrorContext)
 
     public var description: String {

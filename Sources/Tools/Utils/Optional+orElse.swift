@@ -2,7 +2,7 @@ extension Optional {
   public func orElse(_ transform: @autoclosure () -> Wrapped) -> Wrapped {
     self ?? transform()
   }
-  public struct MissingWrappedValue<T>: TypedThrowsError {
+  public struct MissingWrappedValue<T>: AudioError {
     public init() {}
 
     public var description: String {

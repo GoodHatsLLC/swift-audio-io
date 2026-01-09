@@ -7,7 +7,7 @@
 
   /// A struct that provides information about the audio environment and allows for its configuration.
   public struct AudioEnvironment: Sendable {
-    public enum RequestError: TypedThrowsError {
+    public enum RequestError: AudioError {
       public enum Operation: String, Sendable, Equatable, CustomStringConvertible {
         case setPreferredInput
         case setPreferredSampleRate

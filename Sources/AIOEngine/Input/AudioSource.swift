@@ -5,7 +5,7 @@
   #if !os(macOS)
     public struct AudioSource: Hashable, Sendable, Identifiable, CustomStringConvertible, Comparable
     {
-      public enum PreferenceError: TypedThrowsError {
+      public enum PreferenceError: AudioError {
         case setPreferredPolarPatternFailed(sourceID: String, pattern: String, error: ErrorContext)
 
         public var description: String {

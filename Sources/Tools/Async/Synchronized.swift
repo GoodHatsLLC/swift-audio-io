@@ -14,7 +14,7 @@ public final class Synchronized<Value>: Sendable {
 
   public borrowing func withLock<Result, E>(
     _ body: (inout sending Value) throws(E) -> sending Result
-  ) throws(E) -> sending Result where E: TypedThrowsError {
+  ) throws(E) -> sending Result where E: AudioError {
     try mut.withLock(body)
   }
 

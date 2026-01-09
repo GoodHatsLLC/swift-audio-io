@@ -6,7 +6,7 @@ import SwiftUI
 import Tools
 
 public struct OSLogStream: AsyncSequence {
-  public enum StreamError: TypedThrowsError {
+  public enum StreamError: AudioError {
     case cancelled
     case file(File.FileError)
     case logStoreCreationFailed(scope: String, error: ErrorContext)
