@@ -3,8 +3,28 @@ import Dispatch
 import Foundation
 import OSLog
 import SwiftUI
+import Tools
 
 public struct OSLogStream: AsyncSequence {
+  public enum StreamError: TypedThrowsError {
+    case cancelled
+    case file(File.FileError)
+    case logStoreCreationFailed(scope: String, error: ErrorContext)
+    case queryFailed(error: ErrorContext)
+
+    public var description: String {
+      switch self {
+      case .cancelled:
+        "OSLogStream operation cancelled"
+      case .file(let error):
+        "OSLogStream file output failed: \(error)"
+      case .logStoreCreationFailed(let scope, let error):
+        "Failed to create OSLogStore (scope: \(scope)): \(error)"
+      case .queryFailed(let error):
+        "OSLogStore query failed: \(error)"
+      }
+    }
+  }
 
   /// Fetches log entries for a fixed time range.
   ///
@@ -16,13 +36,31 @@ public struct OSLogStream: AsyncSequence {
     inclusiveEnd: Bool = false,
     scope: OSLogStore.Scope = .currentProcessIdentifier,
     filter: Filter = .any
-  ) async throws -> [LogEntry] {
+  ) async throws(StreamError) -> [LogEntry] {
     guard startDate <= endDate else { return [] }
-    try Task.checkCancellation()
-    return try await withCheckedThrowingContinuation { continuation in
+    guard !Task.isCancelled else {
+      throw .cancelled
+    }
+
+    let result = await withCheckedContinuation {
+      (continuation: CheckedContinuation<Result<[LogEntry], StreamError>, Never>) in
       DispatchQueue.global(qos: .userInitiated).async { [filter] in
         do {
-          let logStore = try OSLogStore(scope: scope)
+          let logStore: OSLogStore
+          do {
+            logStore = try OSLogStore(scope: scope)
+          } catch {
+            continuation.resume(
+              returning: .failure(
+                .logStoreCreationFailed(
+                  scope: String(describing: scope),
+                  error: ErrorContext(error)
+                )
+              )
+            )
+            return
+          }
+
           let datePredicate: NSPredicate =
             if inclusiveEnd {
               NSPredicate(
@@ -44,11 +82,22 @@ public struct OSLogStream: AsyncSequence {
           for item in itemSequence {
             items.append(LogEntry(log: item))
           }
-          continuation.resume(returning: items)
+          continuation.resume(returning: .success(items))
         } catch {
-          continuation.resume(throwing: error)
+          continuation.resume(returning: .failure(.queryFailed(error: ErrorContext(error))))
         }
       }
+    }
+
+    guard !Task.isCancelled else {
+      throw .cancelled
+    }
+
+    switch result {
+    case .success(let items):
+      return items
+    case .failure(let error):
+      throw error
     }
   }
 
@@ -62,7 +111,7 @@ public struct OSLogStream: AsyncSequence {
     shardCount: Int,
     scope: OSLogStore.Scope = .currentProcessIdentifier,
     filter: Filter = .any
-  ) async throws -> [LogEntry] {
+  ) async throws(StreamError) -> [LogEntry] {
     guard startDate <= endDate else { return [] }
     let shardCount = Swift.max(1, shardCount)
 
@@ -79,35 +128,43 @@ public struct OSLogStream: AsyncSequence {
 
     let shardDuration = total / Double(shardCount)
 
-    return try await withThrowingTaskGroup(of: (Int, [LogEntry]).self) { group in
-      for shardIndex in 0..<shardCount {
-        let shardStart = startDate.addingTimeInterval(Double(shardIndex) * shardDuration)
-        let shardEnd: Date =
-          if shardIndex == shardCount - 1 {
-            endDate
-          } else {
-            startDate.addingTimeInterval(Double(shardIndex + 1) * shardDuration)
+    do {
+      return try await withThrowingTaskGroup(of: (Int, [LogEntry]).self) { group in
+        for shardIndex in 0..<shardCount {
+          let shardStart = startDate.addingTimeInterval(Double(shardIndex) * shardDuration)
+          let shardEnd: Date =
+            if shardIndex == shardCount - 1 {
+              endDate
+            } else {
+              startDate.addingTimeInterval(Double(shardIndex + 1) * shardDuration)
+            }
+          let inclusiveEnd = shardIndex == shardCount - 1
+
+          group.addTask {
+            guard !Task.isCancelled else {
+              throw StreamError.cancelled
+            }
+            let entries = try await fetchRange(
+              from: shardStart,
+              to: shardEnd,
+              inclusiveEnd: inclusiveEnd,
+              scope: scope,
+              filter: filter
+            )
+            return (shardIndex, entries)
           }
-        let inclusiveEnd = shardIndex == shardCount - 1
-
-        group.addTask {
-          try Task.checkCancellation()
-          let entries = try await fetchRange(
-            from: shardStart,
-            to: shardEnd,
-            inclusiveEnd: inclusiveEnd,
-            scope: scope,
-            filter: filter
-          )
-          return (shardIndex, entries)
         }
-      }
 
-      var buckets = Array(repeating: [LogEntry](), count: shardCount)
-      for try await (index, entries) in group {
-        buckets[index] = entries
+        var buckets = Array(repeating: [LogEntry](), count: shardCount)
+        for try await (index, entries) in group {
+          buckets[index] = entries
+        }
+        return buckets.flatMap { $0 }
       }
-      return buckets.flatMap { $0 }
+    } catch let error as StreamError {
+      throw error
+    } catch {
+      preconditionFailure("Unexpected error type: \(error)")
     }
   }
 
@@ -117,44 +174,72 @@ public struct OSLogStream: AsyncSequence {
     pollInterval: Duration = .seconds(5),
     filter: Filter = .any,
     _ callback: @escaping @MainActor ([LogEntry]) async -> Void
-  ) async throws {
+  ) async throws(StreamError) {
     // Apply backpressure to the iteration via a channel
     let channel = AsyncChannel<[LogEntry]>()
-    try await withThrowingTaskGroup { group in
-      group.addTask(
-        executorPreference: Background.executor,
-        priority: .background
-      ) {
-        for try await batch in OSLogStream(
-          batchSize: batchSize,
-          from: date,
-          filter: filter
+    do {
+      try await withThrowingTaskGroup(of: Void.self) { group in
+        group.addTask(
+          executorPreference: Background.executor,
+          priority: .background
         ) {
-          // we await consumption
-          await channel.send(batch)
-        }
-      }
-      group.addTask {
-        // consume in a loop
-        for try await batch in channel {
-          let callOut = Date.now
-          // only notify the consumer if we have data
-          if batch.count > 0 {
-            // await the callback's execution before continuing
-            await callback(batch)
-          }
-          // if we did not hit the batch size, sleep
-          // before allowing polling again.
-          if batch.count < batchSize {
-            let callTime = Date.now.timeIntervalSince(callOut)
-            let sleepTime = Swift.max(0.0, pollInterval / .seconds(1) - callTime)
-            if sleepTime > 0.0 {
-              try await Task.sleep(for: pollInterval)
+          do {
+            for try await batch in OSLogStream(
+              batchSize: batchSize,
+              from: date,
+              filter: filter
+            ) {
+              await channel.send(batch)
             }
+          } catch let error as StreamError {
+            throw error
+          } catch {
+            if Task.isCancelled {
+              throw StreamError.cancelled
+            }
+            throw StreamError.queryFailed(error: ErrorContext(error))
           }
         }
+        group.addTask {
+          do {
+            // consume in a loop
+            for await batch in channel {
+              let callOut = Date.now
+              // only notify the consumer if we have data
+              if batch.count > 0 {
+                // await the callback's execution before continuing
+                await callback(batch)
+              }
+              // if we did not hit the batch size, sleep
+              // before allowing polling again.
+              if batch.count < batchSize {
+                let callTime = Date.now.timeIntervalSince(callOut)
+                let sleepTime = Swift.max(0.0, pollInterval / .seconds(1) - callTime)
+                if sleepTime > 0.0 {
+                  do {
+                    try await Task.sleep(for: pollInterval)
+                  } catch {
+                    throw StreamError.cancelled
+                  }
+                }
+              }
+            }
+          } catch {
+            if Task.isCancelled {
+              throw StreamError.cancelled
+            }
+            throw StreamError.queryFailed(error: ErrorContext(error))
+          }
+        }
+        try await group.waitForAll()
       }
-      try await group.waitForAll()
+    } catch let error as StreamError {
+      throw error
+    } catch {
+      if Task.isCancelled {
+        throw .cancelled
+      }
+      preconditionFailure("Unexpected error type: \(error)")
     }
   }
 
@@ -165,14 +250,22 @@ public struct OSLogStream: AsyncSequence {
     pollInterval interval: Duration = .seconds(5),
     filter: Filter = .any,
     from date: Date? = nil
-  ) async throws {
-    var file = try File(url: url)
-    try await to(
-      textStream: &file,
-      batchSize: batchSize,
-      pollInterval: interval,
-      filter: filter
-    )
+  ) async throws(StreamError) {
+    do {
+      var file = try File(url: url)
+      try await to(
+        textStream: &file,
+        batchSize: batchSize,
+        pollInterval: interval,
+        filter: filter
+      )
+    } catch let error as File.FileError {
+      throw .file(error)
+    } catch let error as StreamError {
+      throw error
+    } catch {
+      throw .queryFailed(error: ErrorContext(error))
+    }
   }
 
   @concurrent
@@ -181,7 +274,7 @@ public struct OSLogStream: AsyncSequence {
     pollInterval interval: Duration = .seconds(5),
     filter: Filter = .any,
     from date: Date? = nil
-  ) async throws {
+  ) async throws(StreamError) {
     var stdout = Standard.Out()
     try await to(
       textStream: &stdout,
@@ -196,7 +289,7 @@ public struct OSLogStream: AsyncSequence {
     pollInterval interval: Duration = .seconds(5),
     filter: Filter = .any,
     from date: Date? = nil
-  ) async throws {
+  ) async throws(StreamError) {
     var stdout = Standard.Error()
     try await to(
       textStream: &stdout,
@@ -211,7 +304,7 @@ public struct OSLogStream: AsyncSequence {
     pollInterval: Duration = .seconds(5),
     filter: Filter,
     from date: Date? = nil
-  ) async throws {
+  ) async throws(StreamError) {
     for try await chunk in OSLogStream(
       batchSize: batchSize,
       from: date,
@@ -224,7 +317,11 @@ public struct OSLogStream: AsyncSequence {
         str.write(to: &textStream)
       }
       if chunk.count < batchSize {
-        try await Task.sleep(for: pollInterval)
+        do {
+          try await Task.sleep(for: pollInterval)
+        } catch {
+          throw .cancelled
+        }
       }
     }
   }
@@ -265,9 +362,18 @@ public struct OSLogStream: AsyncSequence {
         return predicate
       }
     }
-    let logStore = Result {
-      try OSLogStore(scope: .currentProcessIdentifier)
-    }
+    let logStore: Result<OSLogStore, StreamError> = {
+      do {
+        return .success(try OSLogStore(scope: .currentProcessIdentifier))
+      } catch {
+        return .failure(
+          .logStoreCreationFailed(
+            scope: "currentProcessIdentifier",
+            error: ErrorContext(error)
+          )
+        )
+      }
+    }()
 
     private var processStartDate: Date {
       (Date() - ProcessInfo.processInfo.systemUptime)
@@ -281,8 +387,14 @@ public struct OSLogStream: AsyncSequence {
       }
     }
 
-    private mutating func get() throws -> [OSLogEntry] {
-      let logStore = try self.logStore.get()
+    private mutating func get() throws(StreamError) -> [OSLogEntry] {
+      let logStore: OSLogStore
+      switch self.logStore {
+      case .success(let store):
+        logStore = store
+      case .failure(let error):
+        throw error
+      }
       let datePredicate = NSPredicate(
         format: "date > %@",
         queryStartDate as NSDate
@@ -295,9 +407,12 @@ public struct OSLogStream: AsyncSequence {
         ]
       )
 
-      let itemSequence: AnySequence<OSLogEntry> =
-        try logStore
-        .getEntries(matching: compoundPredicate)
+      let itemSequence: AnySequence<OSLogEntry>
+      do {
+        itemSequence = try logStore.getEntries(matching: compoundPredicate)
+      } catch {
+        throw .queryFailed(error: ErrorContext(error))
+      }
 
       var items: [OSLogEntry] = []
       // the maxDate serves as the data cursor
@@ -324,7 +439,7 @@ public struct OSLogStream: AsyncSequence {
 
     public mutating func next(
       isolation actor: isolated (any Actor)?
-    ) async throws(any Error) -> [LogEntry]? {
+    ) async throws(StreamError) -> [LogEntry]? {
       try get().map { ent in
         LogEntry(log: ent)
       }

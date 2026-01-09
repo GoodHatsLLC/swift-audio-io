@@ -2,6 +2,7 @@
   import Accelerate
   import Foundation
   import SystemLog
+  import Tools
 
   private let sysLog = SystemLog.make()
 
@@ -65,7 +66,7 @@
 
     // MARK: - Initialization
 
-    public init(configuration: Configuration) throws {
+    public init(configuration: Configuration) throws(FrequencyAnalyzerError) {
       self.configuration = configuration
 
       // Validate FFT size (must be power of 2)
@@ -424,7 +425,7 @@ public struct SpectrumData {
 
 // MARK: - Errors
 
-public enum FrequencyAnalyzerError: Error, LocalizedError {
+public enum FrequencyAnalyzerError: TypedThrowsError, LocalizedError {
   case invalidFFTSize
   case allocationFailed
 
@@ -435,6 +436,10 @@ public enum FrequencyAnalyzerError: Error, LocalizedError {
     case .allocationFailed:
       return "Failed to allocate memory for FFT buffers"
     }
+  }
+
+  public var description: String {
+    errorDescription ?? String(describing: self)
   }
 }
 

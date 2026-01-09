@@ -6,14 +6,16 @@ public final class Synchronized<Value>: Sendable {
 
   private let mut: Mut<Value>
 
+  public borrowing func withLock<Result>(
+    _ body: (inout sending Value) -> sending Result
+  ) -> sending Result {
+    mut.withLock(body)
+  }
+
   public borrowing func withLock<Result, E>(
     _ body: (inout sending Value) throws(E) -> sending Result
-  ) throws(E) -> sending Result where E: Error {
-    do {
-      return try mut.withLock(body)
-    } catch let error {
-      throw error
-    }
+  ) throws(E) -> sending Result where E: TypedThrowsError {
+    try mut.withLock(body)
   }
 
   @discardableResult

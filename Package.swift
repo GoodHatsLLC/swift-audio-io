@@ -91,6 +91,7 @@ let package = Package(
     .target(
       name: "SystemLog",
       dependencies: [
+        "Tools",
         .product(name: "AsyncAlgorithms", package: "swift-async-algorithms")
       ],
       swiftSettings: [

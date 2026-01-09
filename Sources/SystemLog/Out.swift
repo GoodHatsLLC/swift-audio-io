@@ -1,5 +1,6 @@
 import Foundation
 import os
+import Tools
 
 public enum Standard {
   /// A ``TextOutputStream`` to `stderr`
@@ -39,8 +40,23 @@ public enum Standard {
 }
 
 public final class File: TextOutputStream, Sendable {
-  init(url: URL) throws {
-    self.handle = try FileHandle(forUpdating: url)
+  public enum FileError: TypedThrowsError {
+    case openForUpdatingFailed(url: URL, error: ErrorContext)
+
+    public var description: String {
+      switch self {
+      case .openForUpdatingFailed(let url, let error):
+        "Failed to open file for updating (\(url.lastPathComponent)): \(error)"
+      }
+    }
+  }
+
+  public init(url: URL) throws(FileError) {
+    do {
+      self.handle = try FileHandle(forUpdating: url)
+    } catch {
+      throw .openForUpdatingFailed(url: url, error: ErrorContext(error))
+    }
   }
   let handle: FileHandle
   public func write(_ string: String) {

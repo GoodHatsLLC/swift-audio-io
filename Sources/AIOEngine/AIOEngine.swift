@@ -59,7 +59,26 @@
   @Observable
   public final class AIOEngine: Sendable {
     /// Errors that can occur during audio engine operations.
-    public enum AIOError: Error, LocalizedError {
+    public enum AIOError: TypedThrowsError, LocalizedError {
+      public enum AudioSessionOperation: String, Sendable, Equatable, CustomStringConvertible {
+        case setPreferredSampleRate
+        case setPreferredIOBufferDuration
+        case setPreferredInputNumberOfChannels
+        case setActive
+        case setPreferredInput
+        case overrideOutputAudioPort
+
+        public var description: String { rawValue }
+      }
+
+      public enum AudioFileOperation: String, Sendable, Equatable, CustomStringConvertible {
+        case openForReading
+        case openForWriting
+        case write
+
+        public var description: String { rawValue }
+      }
+
       /// The operation could not be completed because the engine is not currently recording.
       case notRecording
       /// The operation could not be completed because the engine is not currently playing audio.
@@ -84,6 +103,12 @@
       case invalidScrubTrack
       /// The specified time range is invalid for segment playback.
       case invalidTimeRange
+      /// The underlying `AVAudioEngine` failed to start.
+      case engineStartFailed(error: ErrorContext)
+      /// A system audio session operation failed.
+      case audioSessionFailed(operation: AudioSessionOperation, error: ErrorContext)
+      /// An audio file operation failed.
+      case audioFileFailed(operation: AudioFileOperation, url: URL, error: ErrorContext)
 
       public var errorDescription: String? {
         switch self {
@@ -104,7 +129,17 @@
           "A track must be playing to be scrubbed to a time"
         case .invalidTimeRange:
           "The specified time range is invalid"
+        case .engineStartFailed(let error):
+          "Audio engine failed to start: \(error)"
+        case .audioSessionFailed(let operation, let error):
+          "Audio session operation '\(operation)' failed: \(error)"
+        case .audioFileFailed(let operation, let url, let error):
+          "Audio file operation '\(operation)' failed for \(url.lastPathComponent): \(error)"
         }
+      }
+
+      public var description: String {
+        errorDescription ?? String(describing: self)
       }
 
       /// Returns `true` if this error might be transient and worth retrying.
@@ -311,7 +346,7 @@
       )
     }
 
-    @MainActor private var writerTask: Task<Void, Error>? {
+    @MainActor private var writerTask: Task<Void, Never>? {
       willSet {
         if writerTask != newValue {
           writerTask?.cancel()
@@ -319,7 +354,7 @@
       }
     }
 
-    @MainActor private var playbackTask: Task<Void, Error>? {
+    @MainActor private var playbackTask: Task<Void, Never>? {
       willSet {
         if playbackTask != newValue {
           playbackTask?.cancel()
@@ -507,8 +542,11 @@
     ///
     /// - Parameter configuration: The configuration to use for recording.
     /// - Throws: An `AIOError` if the recording configuration is invalid or if the engine fails to start.
-    public nonisolated func startRecording(configuration: RecordingConfiguration) async throws {
-      try await Task { @MainActor in
+    public nonisolated func startRecording(
+      configuration: RecordingConfiguration
+    ) async throws(AIOError) {
+      do {
+        try await MainActor.run {
         // Stop any active playback before recording
         if player.isPlaying {
           player.stop()
@@ -526,12 +564,21 @@
           throw AIOError.invalidRecordingConfiguration(
             details: "state after warm(configuration:) was invalid")
         }
-        try engine.start()
+        do {
+          try engine.start()
+        } catch {
+          throw AIOError.engineStartFailed(error: ErrorContext(error))
+        }
         let fileFormat = configuration.outputConfiguration.fileFormat.rawValue
         onRecordingStarted?(url, fileFormat)
         startFileWriteLoop(flushing: buffers, of: processingFormat, to: writeFile)
         self.isRecording = true
-      }.value
+        }
+      } catch let error as AIOError {
+        throw error
+      } catch {
+        throw .engineStartFailed(error: ErrorContext(error))
+      }
     }
 
     @MainActor private func startFileWriteLoop(
@@ -540,7 +587,7 @@
       to file: AVAudioFile
     ) {
       writerTask = Task.detached(priority: .userInitiated) {
-        try await AIOEngine.writerLoop(
+        await AIOEngine.writerLoop(
           file: file,
           format: processingFormat,
           audioBuffers: buffers
@@ -557,7 +604,7 @@
     /// - Parameter configuration: The configuration to use for recording.
     /// - Throws: An `AIOError` if the configuration is invalid or if the engine fails to warm up.
     @MainActor
-    public func warm(configuration: RecordingConfiguration) throws {
+    public func warm(configuration: RecordingConfiguration) throws(AIOError) {
       guard !isRecording && !isPlaying else {
         return
       }
@@ -588,7 +635,12 @@
           Self.generateRecordingFilename(extension: configuration.fileExtension),
           conformingTo: configuration.outputConfiguration.fileFormat.utType)
 
-        let file = try AVAudioFile(forWriting: url, settings: fileSettings)
+        let file: AVAudioFile
+        do {
+          file = try AVAudioFile(forWriting: url, settings: fileSettings)
+        } catch {
+          throw AIOError.audioFileFailed(operation: .openForWriting, url: url, error: ErrorContext(error))
+        }
 
         let inputFormat = engine.inputNode.inputFormat(forBus: 0)
 
@@ -680,13 +732,19 @@
           $0.initialInputFormat = inputFormat
           $0.lastInputFormat = inputFormat
         }
-      } catch {
+      } catch let error as AIOError {
         log.error(
           "Failed to warm engine: \(error, privacy: .public) (\((((error as? AVError)?.code as? Int) ?? (error as NSError).code as Int), privacy: .public))"
         )
         hardStop()
         onRecordingFailed?()
         throw error
+      } catch {
+        let mapped = AIOError.engineStartFailed(error: ErrorContext(error))
+        log.error("Failed to warm engine: \(mapped, privacy: .public)")
+        hardStop()
+        onRecordingFailed?()
+        throw mapped
       }
     }
 
@@ -717,12 +775,7 @@
       engine.stop()
       if let writerTask {
         writerTask.cancel()
-        do {
-          try await writerTask.value
-        } catch {
-          // If this happens, we still proceed with cleanup to keep the engine consistent.
-          log.error("writer task failed during stop: \(error, privacy: .public)")
-        }
+        await writerTask.value
       }
       cleanUp()
       isRecording = false
@@ -900,27 +953,23 @@
       file: AVAudioFile,
       format: AVAudioFormat,
       audioBuffers: [RingBuffer<Float>]
-    ) async throws {
+    ) async {
       let bufferSize = 1024  // Write in chunks
 
       while !Task.isCancelled {
-        do {
-          let framesRead = try flushChunk(
-            size: bufferSize,
-            from: audioBuffers,
-            in: format,
-            to: file
-          )
-          if framesRead == 0 {
-            if Task.isCancelled {
-              return
-            } else {
-              // await more audio
-              await Task.yield()
-            }
+        let framesRead = flushChunk(
+          size: bufferSize,
+          from: audioBuffers,
+          in: format,
+          to: file
+        )
+        if framesRead == 0 {
+          if Task.isCancelled {
+            return
+          } else {
+            // await more audio
+            await Task.yield()
           }
-        } catch {
-          log.error("error flushing chunk: \(error)")
         }
       }
     }
@@ -930,7 +979,7 @@
       from audioBuffers: [RingBuffer<Float>],
       in audioFormat: AVAudioFormat,
       to file: AVAudioFile
-    ) throws -> Int {
+    ) -> Int {
       let channelCount = Int(audioFormat.channelCount)
       let framesToRead = minimumAvailableFrames(
         channelCount: channelCount,
@@ -966,7 +1015,12 @@
       guard actualFrames > 0 else { return framesToRead }
       pcmBuffer.frameLength = AVAudioFrameCount(actualFrames)
 
-      try file.write(from: pcmBuffer)
+      do {
+        try file.write(from: pcmBuffer)
+      } catch {
+        log.error("error flushing chunk: \(error)")
+        return 0
+      }
       return actualFrames
 
     }
@@ -991,7 +1045,7 @@
     /// - Returns: The URL of the recorded file.
     /// - Throws: An `AIOError.notRecording` error if the engine is not currently recording.
     @MainActor
-    public func stopRecording() async throws -> URL {
+    public func stopRecording() async throws(AIOError) -> URL {
       guard let url = state.recordingURL, isRecording else { throw AIOError.notRecording }
       await gracefulStop()
       onRecordingCompleted?()
@@ -1014,7 +1068,7 @@
     /// - Returns: URL of the completed (previous) recording file
     /// - Throws: `AIOError.notRecording` if not currently recording
     @MainActor
-    public func rotateRecordingFile() async throws -> URL {
+    public func rotateRecordingFile() async throws(AIOError) -> URL {
       guard isRecording,
         let currentURL = state.recordingURL,
         let configuration = state.recordingConfiguration,
@@ -1034,18 +1088,19 @@
         Self.generateRecordingFilename(extension: configuration.fileExtension),
         conformingTo: configuration.outputConfiguration.fileFormat.utType
       )
-      let newFile = try AVAudioFile(forWriting: newURL, settings: fileSettings)
+      let newFile: AVAudioFile
+      do {
+        newFile = try AVAudioFile(forWriting: newURL, settings: fileSettings)
+      } catch {
+        throw AIOError.audioFileFailed(operation: .openForWriting, url: newURL, error: ErrorContext(error))
+      }
 
       // Cancel current writer task (it will flush remaining data to the old file)
       writerTask?.cancel()
 
       // Wait for the writer to observe cancellation so we don't close the file while it's still writing.
       if let writerTask {
-        do {
-          try await writerTask.value
-        } catch {
-          log.error("writer task failed during rotate: \(error, privacy: .public)")
-        }
+        await writerTask.value
       }
 
       // Close the old file
@@ -1079,7 +1134,7 @@
     /// - Returns: A `Playback` instance representing the current playback state.
     /// - Throws: An `AIOError.cannotPlayWhileRecording` error if the engine is currently recording.
     @MainActor
-    public func play(url: URL) throws -> Playback {
+    public func play(url: URL) throws(AIOError) -> Playback {
       // Prevent playback while recording
       guard !isRecording else {
         throw AIOError.cannotPlayWhileRecording
@@ -1097,7 +1152,12 @@
         engine.reset()
       }
 
-      let file = try AVAudioFile(forReading: url)
+      let file: AVAudioFile
+      do {
+        file = try AVAudioFile(forReading: url)
+      } catch {
+        throw AIOError.audioFileFailed(operation: .openForReading, url: url, error: ErrorContext(error))
+      }
       let playbackInstance = PlaybackInstance(id: .init(), file: file)
 
       // Connect the player node to the output node.
@@ -1116,7 +1176,11 @@
           ] _ in
           self?.cleanupPlaybackInstance(playbackInstance)
         }
-      try engine.start()
+      do {
+        try engine.start()
+      } catch {
+        throw AIOError.engineStartFailed(error: ErrorContext(error))
+      }
       let playback = getPlayback(for: playbackInstance)
       setPlayback(playback)
       player.play()
@@ -1142,7 +1206,7 @@
       startTime: TimeInterval,
       endTime: TimeInterval,
       onComplete: (@MainActor @Sendable () -> Void)? = nil
-    ) throws -> Playback {
+    ) throws(AIOError) -> Playback {
       guard !isRecording else {
         throw AIOError.cannotPlayWhileRecording
       }
@@ -1160,7 +1224,12 @@
         engine.reset()
       }
 
-      let file = try AVAudioFile(forReading: url)
+      let file: AVAudioFile
+      do {
+        file = try AVAudioFile(forReading: url)
+      } catch {
+        throw AIOError.audioFileFailed(operation: .openForReading, url: url, error: ErrorContext(error))
+      }
       let sampleRate = file.processingFormat.sampleRate
       let startFrame = AVAudioFramePosition(startTime * sampleRate)
       let duration = endTime - startTime
@@ -1194,7 +1263,11 @@
         }
       }
 
-      try engine.start()
+      do {
+        try engine.start()
+      } catch {
+        throw AIOError.engineStartFailed(error: ErrorContext(error))
+      }
 
       // Create playback state reflecting the segment (not full file)
       let segmentPlayback = Playback(
@@ -1255,12 +1328,12 @@
     }
 
     @MainActor
-    public func scrubPlay(to time: TimeInterval) throws -> Playback? {
+    public func scrubPlay(to time: TimeInterval) throws(AIOError) -> Playback? {
       if let initialInstance = state.playbackInstance {
         let playback = getPlayback(for: initialInstance)
         let file = initialInstance.file
         guard playback.duration > time, time >= 0 else {
-          throw AIOError.notRecording
+          throw AIOError.invalidScrubTime(details: time)
         }
         let framePosition = AVAudioFramePosition(time * file.processingFormat.sampleRate)
         let newInstance = PlaybackInstance(id: .init(), file: file)
@@ -1286,9 +1359,8 @@
 
     /// Stops the current playback.
     ///
-    /// - Throws: An `AIOError.notPlaying` error if no audio is currently playing.
     @MainActor
-    public func stopPlayback() throws {
+    public func stopPlayback() {
       if player.isPlaying {
         Task {
           await self.stopPlayback()
@@ -1354,36 +1426,60 @@
       }
     }
 
-    public func switchInput(to port: AVAudioSessionPortDescription) throws {
+    public func switchInput(to port: AVAudioSessionPortDescription) throws(AIOError) {
       let session = AVAudioSession.sharedInstance()
-      try session.setPreferredInput(port)
+      do {
+        try session.setPreferredInput(port)
+      } catch {
+        throw .audioSessionFailed(operation: .setPreferredInput, error: ErrorContext(error))
+      }
     }
 
-    public func switchOutput(to port: AVAudioSessionPortDescription) throws {
+    public func switchOutput(to port: AVAudioSessionPortDescription) throws(AIOError) {
       let session = AVAudioSession.sharedInstance()
-      try session.overrideOutputAudioPort(port.portType == .builtInSpeaker ? .speaker : .none)
+      do {
+        try session.overrideOutputAudioPort(port.portType == .builtInSpeaker ? .speaker : .none)
+      } catch {
+        throw .audioSessionFailed(operation: .overrideOutputAudioPort, error: ErrorContext(error))
+      }
     }
 
-    private func configureAudioSession(for configuration: RecordingConfiguration) throws {
+    private func configureAudioSession(for configuration: RecordingConfiguration) throws(AIOError) {
       let session = AVAudioSession.sharedInstance()
 
       // Set preferred sample rate
-      try session.setPreferredSampleRate(configuration.inputConfiguration.sampleRate.platform)
+      do {
+        try session.setPreferredSampleRate(configuration.inputConfiguration.sampleRate.platform)
+      } catch {
+        throw .audioSessionFailed(operation: .setPreferredSampleRate, error: ErrorContext(error))
+      }
 
       // Set preferred buffer duration for optimal performance
       let preferredDuration = calculatePreferredBufferDuration(
         sampleRate: configuration.inputConfiguration.sampleRate.platform
       )
-      try session.setPreferredIOBufferDuration(preferredDuration)
+      do {
+        try session.setPreferredIOBufferDuration(preferredDuration)
+      } catch {
+        throw .audioSessionFailed(operation: .setPreferredIOBufferDuration, error: ErrorContext(error))
+      }
 
       // Set preferred input channels if possible
       let desiredChannels = configuration.inputConfiguration.channels.platform
       let channelCount =
         desiredChannels > session.maximumInputNumberOfChannels
         ? AVAudioChannelCount(session.maximumInputNumberOfChannels) : desiredChannels
-      try session.setPreferredInputNumberOfChannels(Int(channelCount))
+      do {
+        try session.setPreferredInputNumberOfChannels(Int(channelCount))
+      } catch {
+        throw .audioSessionFailed(operation: .setPreferredInputNumberOfChannels, error: ErrorContext(error))
+      }
 
-      try session.setActive(true)
+      do {
+        try session.setActive(true)
+      } catch {
+        throw .audioSessionFailed(operation: .setActive, error: ErrorContext(error))
+      }
 
       // Verify actual settings
       log.info(
@@ -1564,7 +1660,7 @@
       newInputFormat: AVAudioFormat,
       processingFormat: AVAudioFormat,
       file: AVAudioFile
-    ) throws {
+    ) throws(AIOError) {
       // Remove old tap (defensive: remove even if state got out of sync).
       engine.inputNode.removeTap(onBus: state.installedTapBus ?? 0)
       state.installedTapBus = nil
@@ -1636,7 +1732,11 @@
       state.installedTapBus = tapConfiguration.bus
 
       // Restart engine
-      try engine.start()
+      do {
+        try engine.start()
+      } catch {
+        throw .engineStartFailed(error: ErrorContext(error))
+      }
 
       log.info("Reconfigured tap for new route: \(currentInputFormat, privacy: .public)")
     }

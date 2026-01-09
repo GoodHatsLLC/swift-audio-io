@@ -18,8 +18,19 @@ public actor TokenBucket {
   /// - Parameter body: The closure to invoke when a token is available.
   /// - Returns: Resulting value returned by `body`.
   public func withToken<ReturnType: Sendable>(
-    _ body: @Sendable () async throws -> ReturnType
-  ) async rethrows -> ReturnType {
+    _ body: @Sendable () async -> ReturnType
+  ) async -> ReturnType {
+    await self.getToken()
+    defer {
+      self.returnToken()
+    }
+
+    return await body()
+  }
+
+  public func withToken<ReturnType: Sendable, Failure>(
+    _ body: @Sendable () async throws(Failure) -> ReturnType
+  ) async throws(Failure) -> ReturnType where Failure: TypedThrowsError {
     await self.getToken()
     defer {
       self.returnToken()

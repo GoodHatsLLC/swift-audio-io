@@ -145,7 +145,9 @@ final class MulticastController<Element: Sendable>: Sendable {
 
 extension MulticastController {
   enum State {
-    struct InvalidTransition: Error {}
+    struct InvalidTransition: TypedThrowsError {
+      var description: String { "Invalid transition" }
+    }
     case available(Storage)
     case finished([Element])
 

@@ -3,6 +3,7 @@
   import AVFAudio
   import Foundation
   import os
+  import Tools
 
   private let log = OSLog(subsystem: "AIOEngine", category: "MultiBandLOD")
 
@@ -664,8 +665,13 @@
     public static func generateFromFile(
       url: URL,
       configuration: MultiBandLODConfiguration = .default
-    ) async throws -> MultiBandLODSnapshot {
-      let file = try AVFAudio.AVAudioFile(forReading: url)
+    ) async throws(LODGenerationError) -> MultiBandLODSnapshot {
+      let file: AVFAudio.AVAudioFile
+      do {
+        file = try AVFAudio.AVAudioFile(forReading: url)
+      } catch {
+        throw .audioFileOpenFailed(url: url, error: ErrorContext(error))
+      }
       let processingFormat = file.processingFormat
       let totalFrames = AVFAudio.AVAudioFrameCount(file.length)
 
@@ -710,7 +716,11 @@
 
       while framesRemaining > 0 {
         let framesToRead = min(bufferSize, framesRemaining)
-        try file.read(into: buffer, frameCount: framesToRead)
+        do {
+          try file.read(into: buffer, frameCount: framesToRead)
+        } catch {
+          throw .audioFileReadFailed(url: url, error: ErrorContext(error))
+        }
 
         guard buffer.frameLength > 0 else { break }
 
@@ -747,9 +757,11 @@
     }
 
     /// Errors that can occur during LOD generation.
-    public enum LODGenerationError: Error, LocalizedError {
+    public enum LODGenerationError: TypedThrowsError, LocalizedError {
       case bufferCreationFailed
       case invalidAudioFormat
+      case audioFileOpenFailed(url: URL, error: ErrorContext)
+      case audioFileReadFailed(url: URL, error: ErrorContext)
 
       public var errorDescription: String? {
         switch self {
@@ -757,7 +769,15 @@
           return "Failed to create audio buffer for processing"
         case .invalidAudioFormat:
           return "Audio file has an unsupported format"
+        case .audioFileOpenFailed(let url, let error):
+          return "Failed to open audio file \(url.lastPathComponent): \(error)"
+        case .audioFileReadFailed(let url, let error):
+          return "Failed to read audio file \(url.lastPathComponent): \(error)"
         }
+      }
+
+      public var description: String {
+        errorDescription ?? String(describing: self)
       }
     }
   }
