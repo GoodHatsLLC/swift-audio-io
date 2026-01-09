@@ -3,19 +3,43 @@ import Foundation
 /// Suspend until the current task context is cancelled, then execute the operation.
 public func withCancellationOperation<T: Sendable>(
   isolation: isolated (any Actor)? = #isolation,
-  operation: () async throws -> T
-) async rethrows -> T {
+  operation: () async -> T
+) async -> T {
   let didCancel = AwaitableBox<Void>()
-  return try await withTaskCancellationHandler(
+  return await withTaskCancellationHandler(
     operation: {
       _ = await didCancel()
-      return try await operation()
+      return await operation()
     },
     onCancel: {
       try? didCancel.yield(())
     },
     isolation: isolation
   )
+}
+
+/// Suspend until the current task context is cancelled, then execute the operation.
+public func withCancellationOperation<T: Sendable, Failure: TypedThrowsError>(
+  isolation: isolated (any Actor)? = #isolation,
+  operation: () async throws(Failure) -> T
+) async throws(Failure) -> T {
+  let didCancel = AwaitableBox<Void>()
+  do {
+    return try await withTaskCancellationHandler(
+      operation: {
+        _ = await didCancel()
+        return try await operation()
+      },
+      onCancel: {
+        try? didCancel.yield(())
+      },
+      isolation: isolation
+    )
+  } catch let error as Failure {
+    throw error
+  } catch {
+    preconditionFailure("Unexpected error type: \(error)")
+  }
 }
 
 /// An eventual value, whose availability can be awaited.
@@ -30,9 +54,13 @@ public final class AwaitableBox<Value: Sendable>: Identifiable, Hashable, Sendab
   // MARK: Public
 
   public typealias Failure = Never
-  public struct AlreadyYielded: Error {
+  public struct AlreadyYielded: TypedThrowsError, Hashable {
     public let id: UUID
-    public let value: Value
+    public let yieldedValueDescription: String
+
+    public var description: String {
+      "AwaitableBox<\(Value.self)> already yielded '\(yieldedValueDescription)'"
+    }
   }
 
   public let id: UUID = .init()
@@ -67,7 +95,7 @@ public final class AwaitableBox<Value: Sendable>: Identifiable, Hashable, Sendab
     let continuations = try continuations.withLock { state throws(AlreadyYielded) in
       switch state {
       case .yielded(let value):
-        throw AlreadyYielded(id: id, value: value)
+        throw AlreadyYielded(id: id, yieldedValueDescription: String(describing: value))
       case .awaiting(let array):
         state = .yielded(value)
         return array
@@ -89,14 +117,5 @@ public final class AwaitableBox<Value: Sendable>: Identifiable, Hashable, Sendab
 }
 
 extension AwaitableBox where Value == Void {
-  public func yield() throws { try yield(()) }
+  public func yield() throws(AlreadyYielded) { try yield(()) }
 }
-
-extension AwaitableBox.AlreadyYielded: Sendable, CustomStringConvertible {
-  public var description: String {
-    "Error awaiting \(AwaitableBox<Value>.self) which has already yielded '\(String(describing: value))'"
-  }
-}
-
-extension AwaitableBox.AlreadyYielded: Equatable where Value: Equatable {}
-extension AwaitableBox.AlreadyYielded: Hashable where Value: Hashable {}

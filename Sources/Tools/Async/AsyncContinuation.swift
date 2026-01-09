@@ -15,9 +15,13 @@ public struct AsyncContinuation<Value: Sendable>: Sendable, ~Copyable {
   // MARK: Public
 
   public typealias Failure = Never
-  public struct AlreadyYielded: Error {
+  public struct AlreadyYielded: TypedThrowsError, Hashable {
     public let id: UUID
-    public let value: Value
+    public let yieldedValueDescription: String
+
+    public var description: String {
+      "AsyncContinuation<\(Value.self)> already yielded '\(yieldedValueDescription)'"
+    }
   }
 
   public let id: UUID = .init()
@@ -52,7 +56,7 @@ public struct AsyncContinuation<Value: Sendable>: Sendable, ~Copyable {
     let continuations = try continuations.withLock { state throws(AlreadyYielded) in
       switch state {
       case .yielded(let value):
-        throw AlreadyYielded(id: id, value: value)
+        throw AlreadyYielded(id: id, yieldedValueDescription: String(describing: value))
       case .awaiting(let array):
         state = .yielded(value)
         return array
@@ -74,7 +78,7 @@ public struct AsyncContinuation<Value: Sendable>: Sendable, ~Copyable {
 }
 
 extension AsyncContinuation where Value == Void {
-  public func yield() throws { try yield(()) }
+  public func yield() throws(AlreadyYielded) { try yield(()) }
 }
 
 extension AsyncContinuation {
@@ -85,11 +89,8 @@ extension AsyncContinuation {
   }
 }
 
-extension AsyncContinuation.AlreadyYielded: Sendable {
+extension AsyncContinuation.AlreadyYielded {
   public var informativeDescription: String {
-    "The result already yielded as \(String(describing: value))"
+    description
   }
 }
-
-extension AsyncContinuation.AlreadyYielded: Equatable where Value: Equatable {}
-extension AsyncContinuation.AlreadyYielded: Hashable where Value: Hashable {}

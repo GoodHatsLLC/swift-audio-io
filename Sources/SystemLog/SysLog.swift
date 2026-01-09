@@ -3,6 +3,7 @@ import Foundation
 import Observation
 import SwiftUI
 import UniformTypeIdentifiers
+import Tools
 
 import class Foundation.Bundle
 import struct OSLog.Logger
@@ -83,7 +84,7 @@ public struct Reporter<E: Error> {
     line: Int = #line,
     column: Int = #column,
     @_inheritActorContext(always) _ operation: sending @isolated(any) () async throws(E) -> V
-  ) async throws(E) -> V {
+  ) async throws(E) -> V where E: TypedThrowsError {
     let sl = SourceLocation(file: file, function: function, line: line, column: column)
     do {
       return try await operation()
@@ -114,7 +115,7 @@ public struct Reporter<E: Error> {
     line: Int = #line,
     column: Int = #column,
     _ operation: () throws(E) -> V
-  ) throws(E) -> V {
+  ) throws(E) -> V where E: TypedThrowsError {
     let sl = SourceLocation(file: file, function: function, line: line, column: column)
     do {
       return try operation()
@@ -194,6 +195,67 @@ public struct Reporter<E: Error> {
       }
       catchBlock(error)
       return nil
+    }
+  }
+}
+
+public enum ReportedError: TypedThrowsError {
+  case cancelled
+  case error(ErrorContext)
+
+  public var description: String {
+    switch self {
+    case .cancelled:
+      "Operation cancelled"
+    case .error(let context):
+      context.description
+    }
+  }
+}
+
+extension Reporter where E == any Error {
+  @discardableResult
+  public func callAsFunction<V: Sendable>(
+    isolation: isolated (any Actor)? = #isolation,
+    file: String = #file,
+    function: String = #function,
+    line: Int = #line,
+    column: Int = #column,
+    @_inheritActorContext(always) _ operation: sending @isolated(any) () async throws(any Error) -> V
+  ) async throws(ReportedError) -> V {
+    let sl = SourceLocation(file: file, function: function, line: line, column: column)
+    do {
+      return try await operation()
+    } catch {
+      if error is CancellationError {
+        throw .cancelled
+      }
+      for receiver in receivers {
+        receiver(error, sl)
+      }
+      throw .error(ErrorContext(error))
+    }
+  }
+
+  @discardableResult
+  public func callAsFunction<V>(
+    file: String = #file,
+    function: String = #function,
+    line: Int = #line,
+    column: Int = #column,
+    _ operation: () throws(any Error) -> V
+  ) throws(ReportedError) -> V {
+    let sl = SourceLocation(file: file, function: function, line: line, column: column)
+    do {
+      return try operation()
+    } catch {
+      if error is CancellationError {
+        throw .cancelled
+      }
+      for receiver in receivers {
+        receiver(error, sl)
+      }
+      throw .error(ErrorContext(error))
     }
   }
 }
@@ -920,7 +982,7 @@ extension SystemLog.LogModel {
 }
 
 extension SystemLog.LogModel {
-  fileprivate enum LoggerError: Error, LocalizedError {
+  fileprivate enum LoggerError: TypedThrowsError, LocalizedError {
     case failedToFetch
     case failedToWriteFile
     case unsupportedFormatType
@@ -939,6 +1001,10 @@ extension SystemLog.LogModel {
           "Unsupported filed type selected - only .log, .plaintext, .commaSeparatedValue, or .json are allowed.",
           comment: "Unsupported filed type selected.")
       }
+    }
+
+    var description: String {
+      errorDescription ?? String(describing: self)
     }
   }
 }
@@ -974,7 +1040,7 @@ extension SystemLog.LogModel {
         self.logs.append(contentsOf: entries)
       }
     } catch {
-      if error is CancellationError {
+      if let streamError = error as? OSLogStream.StreamError, case .cancelled = streamError {
         return
       }
       self.error = error
@@ -1002,7 +1068,7 @@ extension SystemLog.LogModel {
     }
   }
   @MainActor
-  fileprivate func writeLogs(as format: UTType, to url: URL) async throws {
+  fileprivate func writeLogs(as format: UTType, to url: URL) async throws(LoggerError) {
     guard Self.allowedTypes.contains(format) else {
       logger.error("Unsupported export format: \(format, privacy: .public)")
       throw LoggerError.unsupportedFormatType

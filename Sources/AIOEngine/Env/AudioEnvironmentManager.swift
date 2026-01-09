@@ -16,6 +16,47 @@
   @MainActor
   @Observable
   public class AudioEnvironmentManager {
+    public enum ManagerError: TypedThrowsError {
+      public enum AudioSessionOperation: String, Sendable, Equatable, CustomStringConvertible {
+        case setCategory
+        case setAllowHapticsAndSystemSoundsDuringRecording
+        case setPrefersNoInterruptionsFromSystemAlerts
+        case setPrefersInterruptionOnRouteDisconnect
+        case setPreferredInputNumberOfChannels
+        case setPreferredInputOrientation
+        case setActive
+
+        public var description: String { rawValue }
+      }
+
+      case alreadyRunning
+      case notRunning
+      case audioEnvironment(AudioEnvironment.RequestError)
+      case audioInput(AudioInput.PreferenceError)
+      case audioSource(AudioSource.PreferenceError)
+      case audioSessionFailed(operation: AudioSessionOperation, error: ErrorContext)
+      case unexpected(ErrorContext)
+
+      public var description: String {
+        switch self {
+        case .alreadyRunning:
+          "AudioEnvironmentManager is already running"
+        case .notRunning:
+          "AudioEnvironmentManager is not running"
+        case .audioEnvironment(let error):
+          "Audio environment error: \(error)"
+        case .audioInput(let error):
+          "Audio input error: \(error)"
+        case .audioSource(let error):
+          "Audio source error: \(error)"
+        case .audioSessionFailed(let operation, let error):
+          "Audio session operation '\(operation)' failed: \(error)"
+        case .unexpected(let error):
+          "Unexpected error: \(error)"
+        }
+      }
+    }
+
     /// Prepares the shared audio session category/options as early as possible on app launch.
     ///
     /// This intentionally does **not** activate the audio session; activation should only occur when
@@ -35,7 +76,9 @@
     ///
     /// Activation (`setActive(true)`) is intentionally separated so the app can avoid claiming the
     /// microphone/audio session until explicitly requested.
-    public nonisolated static func configureAudioSessionCategory(_ session: AVAudioSession) throws {
+    public nonisolated static func configureAudioSessionCategory(
+      _ session: AVAudioSession
+    ) throws(ManagerError) {
       // Platform-specific options based on AVAudioSession API availability
       #if os(iOS)
         let sessionOptions: AVAudioSession.CategoryOptions = [
@@ -54,14 +97,42 @@
         let sessionOptions: AVAudioSession.CategoryOptions = []
       #endif
 
-      try session.setCategory(
-        .playAndRecord,
-        mode: .default,
-        options: sessionOptions
-      )
-      try session.setAllowHapticsAndSystemSoundsDuringRecording(true)
-      try session.setPrefersNoInterruptionsFromSystemAlerts(true)
-      try session.setPrefersInterruptionOnRouteDisconnect(false)
+      do {
+        try session.setCategory(
+          .playAndRecord,
+          mode: .default,
+          options: sessionOptions
+        )
+      } catch {
+        throw .audioSessionFailed(operation: .setCategory, error: ErrorContext(error))
+      }
+
+      do {
+        try session.setAllowHapticsAndSystemSoundsDuringRecording(true)
+      } catch {
+        throw .audioSessionFailed(
+          operation: .setAllowHapticsAndSystemSoundsDuringRecording,
+          error: ErrorContext(error)
+        )
+      }
+
+      do {
+        try session.setPrefersNoInterruptionsFromSystemAlerts(true)
+      } catch {
+        throw .audioSessionFailed(
+          operation: .setPrefersNoInterruptionsFromSystemAlerts,
+          error: ErrorContext(error)
+        )
+      }
+
+      do {
+        try session.setPrefersInterruptionOnRouteDisconnect(false)
+      } catch {
+        throw .audioSessionFailed(
+          operation: .setPrefersInterruptionOnRouteDisconnect,
+          error: ErrorContext(error)
+        )
+      }
     }
 
     /// Creates a new `AudioEnvironmentManager` instance.
@@ -99,12 +170,11 @@
     private let readinessSignal = AwaitableBox<Void>()
     /// If the `AudioEnvironmentManager` is running, suspends until `isReady` is `true`.
     ///
-    /// - Important: This call will throw a `CancellationError` if the `AudioEnvironmentManager` has not
-    /// been started with `run()`.
-    @MainActor public func readySignal() async throws {
+    /// - Important: This call throws if the `AudioEnvironmentManager` has not been started with `run()`.
+    @MainActor public func readySignal() async throws(ManagerError) {
       if !isRunning {
         assert(!isReady)
-        throw CancellationError()
+        throw .notRunning
       }
       await readinessSignal()
       assert(isReady)
@@ -345,9 +415,16 @@
     /// This method forces the audio session to use a single input channel and attempts to select a non-stereo polar pattern if available.
     ///
     /// - Throws: An error if the audio session cannot be configured for mono.
-    public func applyMono() throws {
+    public func applyMono() throws(ManagerError) {
       // Force mono input at the session level and clear orientation
-      try session.setPreferredInputNumberOfChannels(1)
+      do {
+        try session.setPreferredInputNumberOfChannels(1)
+      } catch {
+        throw .audioSessionFailed(
+          operation: .setPreferredInputNumberOfChannels,
+          error: ErrorContext(error)
+        )
+      }
       //    try session.setPreferredInputOrientation(.none)
 
       // Prefer to keep the current input, but switch to a non-stereo polar pattern/source
@@ -355,33 +432,87 @@
         let allSources: [AudioSource] = input.availableSources
         let current = env.source
 
-        @discardableResult
-        func applyNonStereoPattern(_ source: AudioSource) throws -> Bool {
-          // Pick any supported pattern that is not stereo
-          if let pattern = source.supportedPolarPatterns.first(where: { $0 != .stereo }) {
-            try source.set(preferredPolarPattern: pattern)
-            try input.set(preferredSource: source)
-            return true
-          }
-          return false
-        }
-
         var didApply = false
         // 1) Try to keep the current source but switch its pattern to non-stereo
-        if let current {
-          didApply = try applyNonStereoPattern(current)
+        if let current,
+          let pattern = current.supportedPolarPatterns.first(where: { $0 != .stereo })
+        {
+          if let error: AudioSource.PreferenceError = {
+            do {
+              try current.set(preferredPolarPattern: pattern)
+              return nil
+            } catch let error as AudioSource.PreferenceError {
+              return error
+            } catch {
+              preconditionFailure("Unexpected error type: \(error)")
+            }
+          }() {
+            throw .audioSource(error)
+          }
+
+          if let error: AudioInput.PreferenceError = {
+            do {
+              try input.set(preferredSource: current)
+              return nil
+            } catch let error as AudioInput.PreferenceError {
+              return error
+            } catch {
+              preconditionFailure("Unexpected error type: \(error)")
+            }
+          }() {
+            throw .audioInput(error)
+          }
+          didApply = true
         }
         // 2) If that fails, select a source that doesn't support stereo at all
         if !didApply,
           let monoCapable = allSources.first(where: { !$0.supportedPolarPatterns.contains(.stereo) }
           )
         {
-          try input.set(preferredSource: monoCapable)
+          if let error: AudioInput.PreferenceError = {
+            do {
+              try input.set(preferredSource: monoCapable)
+              return nil
+            } catch let error as AudioInput.PreferenceError {
+              return error
+            } catch {
+              preconditionFailure("Unexpected error type: \(error)")
+            }
+          }() {
+            throw .audioInput(error)
+          }
           didApply = true
         }
         // 3) As a last resort, pick the first source and force a non-stereo pattern if available
-        if !didApply, let fallback = allSources.first {
-          _ = try applyNonStereoPattern(fallback)
+        if !didApply,
+          let fallback = allSources.first,
+          let pattern = fallback.supportedPolarPatterns.first(where: { $0 != .stereo })
+        {
+          if let error: AudioSource.PreferenceError = {
+            do {
+              try fallback.set(preferredPolarPattern: pattern)
+              return nil
+            } catch let error as AudioSource.PreferenceError {
+              return error
+            } catch {
+              preconditionFailure("Unexpected error type: \(error)")
+            }
+          }() {
+            throw .audioSource(error)
+          }
+
+          if let error: AudioInput.PreferenceError = {
+            do {
+              try input.set(preferredSource: fallback)
+              return nil
+            } catch let error as AudioInput.PreferenceError {
+              return error
+            } catch {
+              preconditionFailure("Unexpected error type: \(error)")
+            }
+          }() {
+            throw .audioInput(error)
+          }
         }
       }
 
@@ -398,7 +529,7 @@
     /// This method attempts to select a stereo-capable audio source and polar pattern. If it fails, it falls back to a mono configuration.
     ///
     /// - Throws: An error if the audio session cannot be configured for stereo.
-    public func applyStereo() throws {
+    public func applyStereo() throws(ManagerError) {
       do {
         if let input = env.input {
           let allDataSources: [AudioSource] = input.availableSources
@@ -420,11 +551,41 @@
           }
 
           if let stereoSource {
-            try stereoSource.set(preferredPolarPattern: .stereo)
-            try input.set(preferredSource: stereoSource)
+            if let error: AudioSource.PreferenceError = {
+              do {
+                try stereoSource.set(preferredPolarPattern: .stereo)
+                return nil
+              } catch let error as AudioSource.PreferenceError {
+                return error
+              } catch {
+                preconditionFailure("Unexpected error type: \(error)")
+              }
+            }() {
+              throw ManagerError.audioSource(error)
+            }
+
+            if let error: AudioInput.PreferenceError = {
+              do {
+                try input.set(preferredSource: stereoSource)
+                return nil
+              } catch let error as AudioInput.PreferenceError {
+                return error
+              } catch {
+                preconditionFailure("Unexpected error type: \(error)")
+              }
+            }() {
+              throw ManagerError.audioInput(error)
+            }
             let currentOrientation = orientation
             if currentOrientation != .none {
-              try session.setPreferredInputOrientation(currentOrientation)
+              do {
+                try session.setPreferredInputOrientation(currentOrientation)
+              } catch {
+                throw ManagerError.audioSessionFailed(
+                  operation: .setPreferredInputOrientation,
+                  error: ErrorContext(error)
+                )
+              }
             }
           }
         }
@@ -435,9 +596,13 @@
         _availableInputs = env.availableInputs
         _selectedSource = env.source
         _availableSources = filterSources(env.availableSources, for: _selectedNumberOfChannels)
-      } catch {
+      } catch let error as ManagerError {
         try applyMono()
         throw error
+      } catch {
+        let mapped = ManagerError.unexpected(ErrorContext(error))
+        try applyMono()
+        throw mapped
       }
     }
 
@@ -448,12 +613,16 @@
     ///
     /// - Parameter active: Whether the audio session should be active.
     /// - Throws: An error if the audio session state cannot be changed.
-    public func setAudioSessionActive(_ active: Bool) throws {
+    public func setAudioSessionActive(_ active: Bool) throws(ManagerError) {
       guard isRunning else {
         log.warning("Cannot set audio session active state when manager is not running")
         return
       }
-      try env.session.setActive(active, options: .notifyOthersOnDeactivation)
+      do {
+        try env.session.setActive(active, options: .notifyOthersOnDeactivation)
+      } catch {
+        throw .audioSessionFailed(operation: .setActive, error: ErrorContext(error))
+      }
       isAudioSessionActive = active
       log.info(
         "🔊 Audio session manually set to \(active ? "active" : "inactive", privacy: .public)")
@@ -484,90 +653,116 @@
     /// It will suspend without returning until its task is cancelled. On cancellation, it performs teardown and returns.
     ///
     /// - Throws: An error if the manager is already running.
-		    public func run() async throws {
-		      guard !isRunning else {
-		        throw AIOError.unknown(.init(domain: "audioenvironmentmanager.alreadyrunning", code: -99))
-		      }
-		      log.info("🔊 AudioEnvironmentManager.run() started")
-	      isRunning = true
-	      defer { isRunning = false }
+    public func run() async throws(ManagerError) {
+      guard !isRunning else {
+        throw .alreadyRunning
+      }
+      log.info("🔊 AudioEnvironmentManager.run() started")
+
+      isRunning = true
+      defer { isRunning = false }
+
       /// Within this task group:
       /// - teardown symmetric with setup must always happen
       /// - it should be applied at the same level of nesting as its setup
       /// - the end effect once returning should be that `run()` is ready to be called
-	      await withThrowingTaskGroup(of: Void.self) { group in
+      await withThrowingTaskGroup(of: Void.self) { group in
+        func configureAudioSession() {
+          group.addTask {
+            do {
+              // Configure audio session category/options early, but do NOT activate.
+              // Activation should only occur when the app expresses intent to record or play audio.
+              try Self.configureAudioSessionCategory(self.env.session)
+              do {
+                try self.env.request(
+                  input: self.env.input
+                    ?? self.env.availableInputs.first(where: { $0.platform.portType == .builtInMic })
+                )
+              } catch let error as AudioEnvironment.RequestError {
+                throw ManagerError.audioEnvironment(error)
+              }
 
-		        func configureAudioSession() {
-		          group.addTask {
-		            do {
-		              // Configure audio session category/options early, but do NOT activate.
-		              // Activation should only occur when the app expresses intent to record or play audio.
-		              try Self.configureAudioSessionCategory(self.env.session)
-		              try self.env
-		                .request(
-		                  input: self.env.input
-		                    ?? self.env.availableInputs
-	                    .first(where: { $0.platform.portType == .builtInMic })
-	                )
-		              log.info(
-		                """
-		                🔊 AudioEnvironmentManager.run() configured AudioSession (inactive) with base settings:
-		                category: \(self.env.session.category.rawValue, privacy: .public)
-		                options: \(self.env.session.categoryOptions.description, privacy: .public)
-		                allowHapticsAndSystemSoundsDuringRecording: \(self.env.session.allowHapticsAndSystemSoundsDuringRecording, privacy: .public)
-		                prefersNoInterruptionsFromSystemAlerts: \(self.env.session.prefersNoInterruptionsFromSystemAlerts, privacy: .public)
-		                prefersInterruptionOnRouteDisconnect: \(self.env.session.prefersInterruptionOnRouteDisconnect, privacy: .public)
-		                """
-		              )
-		            } catch {
-	              log.error(
-	                """
-	                🔊 AudioEnvironmentManager.run() failed:
-	                category: \(self.env.session.category.rawValue, privacy: .public)
-	                options: \(self.env.session.categoryOptions.description, privacy: .public)
-	                allowHapticsAndSystemSoundsDuringRecording: \(self.env.session.allowHapticsAndSystemSoundsDuringRecording, privacy: .public)
-	                prefersNoInterruptionsFromSystemAlerts: \(self.env.session.prefersNoInterruptionsFromSystemAlerts, privacy: .public)
-	                prefersInterruptionOnRouteDisconnect: \(self.env.session.prefersInterruptionOnRouteDisconnect, privacy: .public)
-	                """
-	              )
-	              throw error
-	            }
-	          }
-	        }
+              log.info(
+                """
+                🔊 AudioEnvironmentManager.run() configured AudioSession (inactive) with base settings:
+                category: \(self.env.session.category.rawValue, privacy: .public)
+                options: \(self.env.session.categoryOptions.description, privacy: .public)
+                allowHapticsAndSystemSoundsDuringRecording: \(self.env.session.allowHapticsAndSystemSoundsDuringRecording, privacy: .public)
+                prefersNoInterruptionsFromSystemAlerts: \(self.env.session.prefersNoInterruptionsFromSystemAlerts, privacy: .public)
+                prefersInterruptionOnRouteDisconnect: \(self.env.session.prefersInterruptionOnRouteDisconnect, privacy: .public)
+                """
+              )
+            } catch let error as ManagerError {
+              log.error(
+                """
+                🔊 AudioEnvironmentManager.run() failed:
+                category: \(self.env.session.category.rawValue, privacy: .public)
+                options: \(self.env.session.categoryOptions.description, privacy: .public)
+                allowHapticsAndSystemSoundsDuringRecording: \(self.env.session.allowHapticsAndSystemSoundsDuringRecording, privacy: .public)
+                prefersNoInterruptionsFromSystemAlerts: \(self.env.session.prefersNoInterruptionsFromSystemAlerts, privacy: .public)
+                prefersInterruptionOnRouteDisconnect: \(self.env.session.prefersInterruptionOnRouteDisconnect, privacy: .public)
+                error: \(error, privacy: .public)
+                """
+              )
+              throw error
+            } catch {
+              let mapped = ManagerError.unexpected(ErrorContext(error))
+              log.error(
+                """
+                🔊 AudioEnvironmentManager.run() failed:
+                category: \(self.env.session.category.rawValue, privacy: .public)
+                options: \(self.env.session.categoryOptions.description, privacy: .public)
+                allowHapticsAndSystemSoundsDuringRecording: \(self.env.session.allowHapticsAndSystemSoundsDuringRecording, privacy: .public)
+                prefersNoInterruptionsFromSystemAlerts: \(self.env.session.prefersNoInterruptionsFromSystemAlerts, privacy: .public)
+                prefersInterruptionOnRouteDisconnect: \(self.env.session.prefersInterruptionOnRouteDisconnect, privacy: .public)
+                error: \(mapped, privacy: .public)
+                """
+              )
+              throw mapped
+            }
+          }
+        }
 
         // Wait for session configuration to complete before starting notifications
         var isConfigured = false
         while !isConfigured {
           do {
             configureAudioSession()
-            try await group.next()
+            _ = try await group.next()
             isConfigured = true
           } catch {
             if Task.isCancelled {
               return
             } else {
               log.error(
-                "Engine failed to configure audio session: \(error.localizedDescription, privacy: .public). retrying in 0.1s..."
+                "Engine failed to configure audio session: \(String(describing: error), privacy: .public). retrying in 0.1s..."
               )
               try? await Task.sleep(for: .seconds(0.1))
             }
           }
         }
-		        group.addTask { [weak self] in
-		          guard let self else { return }
-		          try? await subscribe()
-		        }
-		      }
-	      let wasActive = isAudioSessionActive
-	      try? await withCancellationOperation {
-	        if wasActive {
-	          try self.env.session.setActive(false, options: .notifyOthersOnDeactivation)
-	          await MainActor.run { self.isAudioSessionActive = false }
-	        }
-	      }
-	      let deactivationSuffix = wasActive ? ", deactivating AudioSession" : ""
-	      log.info("🔇AudioEnvironmentManager.run() finished\(deactivationSuffix)")
-	    }
+
+        group.addTask { [weak self] in
+          guard let self else { return }
+          await self.subscribe()
+        }
+      }
+
+      let wasActive = isAudioSessionActive
+      await withCancellationOperation {
+        if wasActive {
+          do {
+            try self.env.session.setActive(false, options: .notifyOthersOnDeactivation)
+          } catch {
+            log.error("Failed to deactivate AudioSession on cancellation: \(error, privacy: .public)")
+          }
+          await MainActor.run { self.isAudioSessionActive = false }
+        }
+      }
+
+      let deactivationSuffix = wasActive ? ", deactivating AudioSession" : ""
+      log.info("🔇AudioEnvironmentManager.run() finished\(deactivationSuffix)")
+    }
 	  }
 
   extension AudioEnvironmentManager {
@@ -673,14 +868,13 @@
       }
     }
 
-    private func subscribe() async throws {
-
-      try await withThrowingTaskGroup(of: Void.self) { group in
+    private func subscribe() async {
+      await withTaskGroup(of: Void.self) { group in
         let env = self.env
 
         group.addTask { [weak self] in
           for await notification in env.notifications.interruption {
-            try Task.checkCancellation()
+            if Task.isCancelled { return }
 
             switch notification.type {
             case .began:
@@ -696,14 +890,14 @@
         }
         group.addTask {
           for await notification in env.notifications.mediaServicesLost {
-            try Task.checkCancellation()
+            if Task.isCancelled { return }
             log.info(
               "mediaServicesLost notification: \(String(dump: notification), privacy: .public)")
           }
         }
         group.addTask {
           for await notification in env.notifications.mediaServicesReset {
-            try Task.checkCancellation()
+            if Task.isCancelled { return }
             log.info(
               "mediaServicesReset notification: \(String(dump: notification), privacy: .public)")
           }
@@ -719,7 +913,7 @@
             do {
               log.info(
                 "Route change notification: \(String(describing: notification), privacy: .public)")
-              try Task.checkCancellation()
+              if Task.isCancelled { return }
               guard let self else { return }
               let reasonMsg =
                 switch notification.reason {
@@ -786,7 +980,7 @@
           }
         }
 
-        try await group.waitForAll()
+        await group.waitForAll()
       }
     }
 

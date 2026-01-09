@@ -1,7 +1,19 @@
 #if canImport(AVFoundation)
   import AVFoundation
+  import Tools
 
   public struct AudioInput: Hashable, Sendable, Identifiable, CustomStringConvertible {
+    public enum PreferenceError: TypedThrowsError {
+      case setPreferredSourceFailed(inputID: String, error: ErrorContext)
+
+      public var description: String {
+        switch self {
+        case .setPreferredSourceFailed(let inputID, let error):
+          "Failed to set preferred source for input \(inputID): \(error)"
+        }
+      }
+    }
+
     public init(port: AVAudioSessionPortDescription) {
       self.port = port
     }
@@ -27,8 +39,12 @@
       (port.dataSources ?? []).map(AudioSource.init(avAudio:))
     }
 
-    public func set(preferredSource source: AudioSource?) throws {
-      try port.setPreferredDataSource(preferredSource?.avAudio)
+    public func set(preferredSource source: AudioSource?) throws(PreferenceError) {
+      do {
+        try port.setPreferredDataSource(preferredSource?.avAudio)
+      } catch {
+        throw .setPreferredSourceFailed(inputID: port.uid, error: ErrorContext(error))
+      }
     }
 
     public var preferredSource: AudioSource? {

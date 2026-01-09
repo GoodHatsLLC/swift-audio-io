@@ -1,15 +1,25 @@
 import AVFAudio
 import Foundation
+import Tools
 
-public enum AIOError: Error, Hashable, Sendable {
-  case unknown(NSError)
+public enum AIOError: TypedThrowsError, Hashable {
+  case unknown(ErrorContext)
   case audioSession(AudioSessionError)
+
+  public var description: String {
+    switch self {
+    case .unknown(let context):
+      "Unknown AIOError: \(context)"
+    case .audioSession(let error):
+      "Audio session error: \(error)"
+    }
+  }
 }
 
 extension AIOError {
 
   /// `AVAudioSession.ErrorCode`
-  public enum AudioSessionError: Int, Sendable {
+  public enum AudioSessionError: Int, TypedThrowsError {
     case none = 0
     case unknownDefaultError = -999
     case mediaServicesFailed = 1_836_282_486
@@ -27,6 +37,9 @@ extension AIOError {
     case expiredSession = 561_210_739
     case sessionNotActive = 1_768_841_571
 
+    public var description: String {
+      "\(rawValue)"
+    }
   }
 }
 

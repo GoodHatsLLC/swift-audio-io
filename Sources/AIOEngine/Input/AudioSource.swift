@@ -1,9 +1,21 @@
 #if canImport(AVFoundation)
   import AVFAudio
+  import Tools
 
   #if !os(macOS)
     public struct AudioSource: Hashable, Sendable, Identifiable, CustomStringConvertible, Comparable
     {
+      public enum PreferenceError: TypedThrowsError {
+        case setPreferredPolarPatternFailed(sourceID: String, pattern: String, error: ErrorContext)
+
+        public var description: String {
+          switch self {
+          case .setPreferredPolarPatternFailed(let sourceID, let pattern, let error):
+            "Failed to set preferred polar pattern '\(pattern)' for source \(sourceID): \(error)"
+          }
+        }
+      }
+
       public let avAudio: AVAudioSessionDataSourceDescription
       public var platform: AVAudioSessionDataSourceDescription { avAudio }
       public var id: String { avAudio.dataSourceID.stringValue }
@@ -21,8 +33,16 @@
             ?? "",
         ].joined(separator: " ")
       }
-      public func set(preferredPolarPattern: PolarPattern) throws {
-        try avAudio.setPreferredPolarPattern(preferredPolarPattern.avAudio)
+      public func set(preferredPolarPattern: PolarPattern) throws(PreferenceError) {
+        do {
+          try avAudio.setPreferredPolarPattern(preferredPolarPattern.avAudio)
+        } catch {
+          throw .setPreferredPolarPatternFailed(
+            sourceID: id,
+            pattern: preferredPolarPattern.avAudio.rawValue,
+            error: ErrorContext(error)
+          )
+        }
       }
       public static func < (lhs: AudioSource, rhs: AudioSource) -> Bool {
         lhs.name < rhs.name

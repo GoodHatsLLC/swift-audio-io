@@ -1,11 +1,34 @@
 #if canImport(AVFoundation)
   import AVFoundation
   import SystemLog
+  import Tools
 
   private let log = SystemLog.make()
 
   /// A struct that provides information about the audio environment and allows for its configuration.
   public struct AudioEnvironment: Sendable {
+    public enum RequestError: TypedThrowsError {
+      public enum Operation: String, Sendable, Equatable, CustomStringConvertible {
+        case setPreferredInput
+        case setPreferredSampleRate
+        case setPreferredDataSource
+
+        public var description: String { rawValue }
+      }
+
+      case noActiveAudioInputForDataSource
+      case operationFailed(operation: Operation, error: ErrorContext)
+
+      public var description: String {
+        switch self {
+        case .noActiveAudioInputForDataSource:
+          "No active audio input to set data source on"
+        case .operationFailed(let operation, let error):
+          "Audio environment operation '\(operation)' failed: \(error)"
+        }
+      }
+    }
+
     /// Creates a new `AudioEnvironment` instance.
     ///
     /// - Parameters:
@@ -34,8 +57,12 @@
     ///
     /// - Parameter input: The audio input to request.
     /// - Throws: An error if the input cannot be set.
-    public func request(input: AudioInput?) throws {
-      try session.setPreferredInput(input?.platform)
+    public func request(input: AudioInput?) throws(RequestError) {
+      do {
+        try session.setPreferredInput(input?.platform)
+      } catch {
+        throw .operationFailed(operation: .setPreferredInput, error: ErrorContext(error))
+      }
     }
 
     /// The available audio inputs.
@@ -62,26 +89,30 @@
     /// - Parameter sampleRate: The sample rate to request.
     /// - Returns: The actual sample rate after the request.
     /// - Throws: An error if the sample rate cannot be set.
-    public func request(sampleRate: SampleRate) throws {
-      try session.setPreferredSampleRate(sampleRate.platform)
+    public func request(sampleRate: SampleRate) throws(RequestError) {
+      do {
+        try session.setPreferredSampleRate(sampleRate.platform)
+      } catch {
+        throw .operationFailed(operation: .setPreferredSampleRate, error: ErrorContext(error))
+      }
     }
 
     /// Requests a specific audio source.
     ///
     /// - Parameter source: The audio source to request.
     /// - Throws: An error if the source cannot be set.
-    public func request(source: AudioSource?) throws {
+    public func request(source: AudioSource?) throws(RequestError) {
       // Always set the data source on the currently active input from the route.
       // This ensures we target the correct port in multi-input scenarios where
       // preferredInput might be nil (system defaults) or point to an inactive device.
       guard let activeInput = session.currentRoute.inputs.first else {
-        throw NSError(
-          domain: "AudioEnvironment",
-          code: -1,
-          userInfo: [NSLocalizedDescriptionKey: "No active audio input to set data source on"]
-        )
+        throw .noActiveAudioInputForDataSource
       }
-      try activeInput.setPreferredDataSource(source?.platform)
+      do {
+        try activeInput.setPreferredDataSource(source?.platform)
+      } catch {
+        throw .operationFailed(operation: .setPreferredDataSource, error: ErrorContext(error))
+      }
     }
 
     /// The available audio sources.
