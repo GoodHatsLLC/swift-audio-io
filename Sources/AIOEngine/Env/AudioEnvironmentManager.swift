@@ -81,13 +81,20 @@
     ) throws(ManagerError) {
       // Platform-specific options based on AVAudioSession API availability
       #if os(iOS)
-        let sessionOptions: AVAudioSession.CategoryOptions = [
-          .defaultToSpeaker,
-          .allowBluetoothA2DP,
-          .allowAirPlay,
-          .allowBluetoothHFP,
-          .overrideMutedMicrophoneInterruption,
-        ]
+        #if targetEnvironment(macCatalyst)
+          // Mac Catalyst supports `AVAudioSession`, but a subset of iOS-only session options may be
+          // rejected at runtime, which can prevent the category from being set and leave the input
+          // node with 0 channels.
+          let sessionOptions: AVAudioSession.CategoryOptions = []
+        #else
+          let sessionOptions: AVAudioSession.CategoryOptions = [
+            .defaultToSpeaker,
+            .allowBluetoothA2DP,
+            .allowAirPlay,
+            .allowBluetoothHFP,
+            .overrideMutedMicrophoneInterruption,
+          ]
+        #endif
       #elseif os(macOS)
         // macOS has more limited session options
         let sessionOptions: AVAudioSession.CategoryOptions = [
