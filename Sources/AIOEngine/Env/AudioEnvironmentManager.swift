@@ -768,9 +768,11 @@
       }
 
       let deactivationSuffix = wasActive ? ", deactivating AudioSession" : ""
-      log.info("🔇AudioEnvironmentManager.run() finished\(deactivationSuffix)")
+      log.info(
+        "🔇AudioEnvironmentManager.run() finished\(deactivationSuffix, privacy: .public)"
+      )
     }
-	  }
+		  }
 
   extension AudioEnvironmentManager {
 
@@ -812,7 +814,7 @@
         currentSources: filteredSources
       )
       let changeMsg = summary.description
-      log.info("\(reason): \(changeMsg, privacy: .public)")
+      log.info("\(reason, privacy: .public): \(changeMsg, privacy: .public)")
       return summary
     }
 
