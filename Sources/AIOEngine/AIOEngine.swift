@@ -648,19 +648,37 @@ public final class AIOEngine: Sendable {
 
       let inputFormat = engine.inputNode.outputFormat(forBus: 0)
 
-      // Validate input format before attempting to install tap
-      // installTap throws an uncatchable NSException if the format is invalid
+      // Validate input format before attempting to install tap.
+      // installTap throws an uncatchable NSException if the format is invalid.
       guard inputFormat.channelCount > 0 else {
+        let session = AVAudioSession.sharedInstance()
+        let hardwareFormat = engine.inputNode.inputFormat(forBus: 0)
+        let recordPermission = AVAudioApplication.shared.recordPermission
         log.warning(
-          "Input node has no channels: channelCount=\(inputFormat.channelCount, privacy: .public)"
+          """
+          Input node has no channels; audio input not ready.
+          recordPermission: \(String(describing: recordPermission), privacy: .public)
+          isInputAvailable: \(session.isInputAvailable, privacy: .public)
+          outputFormat(forBus: 0): \(inputFormat, privacy: .public)
+          inputFormat(forBus: 0): \(hardwareFormat, privacy: .public)
+          """
         )
         throw AIOError.audioSessionNotReady(
           details: "Input node has no channels (channelCount: 0)"
         )
       }
       guard inputFormat.sampleRate > 0 else {
+        let session = AVAudioSession.sharedInstance()
+        let hardwareFormat = engine.inputNode.inputFormat(forBus: 0)
+        let recordPermission = AVAudioApplication.shared.recordPermission
         log.warning(
-          "Input node has invalid sample rate: sampleRate=\(inputFormat.sampleRate, privacy: .public)"
+          """
+          Input node has invalid sample rate; audio input not ready.
+          recordPermission: \(String(describing: recordPermission), privacy: .public)
+          isInputAvailable: \(session.isInputAvailable, privacy: .public)
+          outputFormat(forBus: 0): \(inputFormat, privacy: .public)
+          inputFormat(forBus: 0): \(hardwareFormat, privacy: .public)
+          """
         )
         throw AIOError.audioSessionNotReady(
           details: "Input node has invalid sample rate (sampleRate: 0)"
@@ -1676,14 +1694,38 @@ public final class AIOEngine: Sendable {
     // This is critical because the engine state can change after stop()
     let currentInputFormat = engine.inputNode.outputFormat(forBus: 0)
 
-    // Validate the format before attempting to install tap
-    // installTap throws an uncatchable NSException if the format is invalid
+    // Validate the format before attempting to install tap.
+    // installTap throws an uncatchable NSException if the format is invalid.
     guard currentInputFormat.channelCount > 0 else {
+      let session = AVAudioSession.sharedInstance()
+      let hardwareFormat = engine.inputNode.inputFormat(forBus: 0)
+      let recordPermission = AVAudioApplication.shared.recordPermission
+      log.warning(
+        """
+        Input node has no channels after route change; cannot reconfigure tap.
+        recordPermission: \(String(describing: recordPermission), privacy: .public)
+        isInputAvailable: \(session.isInputAvailable, privacy: .public)
+        outputFormat(forBus: 0): \(currentInputFormat, privacy: .public)
+        inputFormat(forBus: 0): \(hardwareFormat, privacy: .public)
+        """
+      )
       throw AIOError.invalidRecordingConfiguration(
         details: "Input node has no channels after route change (channelCount: 0)")
     }
 
     guard currentInputFormat.sampleRate > 0 else {
+      let session = AVAudioSession.sharedInstance()
+      let hardwareFormat = engine.inputNode.inputFormat(forBus: 0)
+      let recordPermission = AVAudioApplication.shared.recordPermission
+      log.warning(
+        """
+        Input node has invalid sample rate after route change; cannot reconfigure tap.
+        recordPermission: \(String(describing: recordPermission), privacy: .public)
+        isInputAvailable: \(session.isInputAvailable, privacy: .public)
+        outputFormat(forBus: 0): \(currentInputFormat, privacy: .public)
+        inputFormat(forBus: 0): \(hardwareFormat, privacy: .public)
+        """
+      )
       throw AIOError.invalidRecordingConfiguration(
         details: "Input node has invalid sample rate after route change (sampleRate: 0)")
     }
