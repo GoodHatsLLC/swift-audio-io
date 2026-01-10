@@ -862,14 +862,14 @@ public final class AIOEngine: Sendable {
       log.info(
         """
             No cached converter available for buffer. One will be created.
-            input buffer: \(buffer.format)
-            cached input converter: \(cachedConverterInputFormat)
-            cached output converter: \(cachedConverterOutputFormat)
-            processingFormat: \(processingFormat)
+            input buffer: \(buffer.format, privacy: .public)
+            cached input converter: \(cachedConverterInputFormat, privacy: .public)
+            cached output converter: \(cachedConverterOutputFormat, privacy: .public)
+            processingFormat: \(processingFormat, privacy: .public)
         """)
       guard let newConverter = AVAudioConverter(from: buffer.format, to: processingFormat) else {
         let error = AIOError.formatConversionFailed
-        log.error("Failed to create audio converter: \(error)")
+        log.error("Failed to create audio converter: \(error, privacy: .public)")
         errorSubject.send(error)
         return
       }
@@ -925,7 +925,9 @@ public final class AIOEngine: Sendable {
     // Enqueue to ring buffers
     let channelCount = Int(convertedBuffer.format.channelCount)
     guard channelCount <= audioBuffers.count else {
-      log.error("Channel count mismatch: \(channelCount) vs \(audioBuffers.count)")
+      log.error(
+        "Channel count mismatch: \(channelCount, privacy: .public) vs \(audioBuffers.count, privacy: .public)"
+      )
       return
     }
 
@@ -1040,7 +1042,7 @@ public final class AIOEngine: Sendable {
     do {
       try file.write(from: pcmBuffer)
     } catch {
-      log.error("error flushing chunk: \(error)")
+      log.error("error flushing chunk: \(error, privacy: .public)")
       return 0
     }
     return actualFrames
