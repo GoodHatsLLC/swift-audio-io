@@ -919,7 +919,6 @@
         }
         group.addTask { [weak self] in
           for await notification in env.notifications.routeChange {
-            do {
               log.info(
                 "Route change notification: \(String(describing: notification), privacy: .public)")
               if Task.isCancelled { return }
@@ -945,9 +944,6 @@
                 session: env.session
               )
               await self.onRouteChange?(event)
-            } catch {
-              log.error("Route change notification handling error: \(error, privacy: .public)")
-            }
           }
         }
         group.addTask { [weak self] in
