@@ -33,7 +33,7 @@
       case 2:
         return "Stereo"
       default:
-        return "Spacial"
+        return "Spatial"
       }
     }
   }
