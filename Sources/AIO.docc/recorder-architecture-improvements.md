@@ -318,11 +318,11 @@ struct WaveformView: View {
 
 ### 1.5 Search Debouncing & Optimization
 
-**Problem**: `SearchViewModel` triggers EmbeddingDB vector search on every keystroke, causing input lag with 1000+ tracks.
+**Problem**: `LibraryViewModel` triggers EmbeddingDB vector search on every keystroke, causing input lag with 1000+ tracks.
 
-**Current Code** (`SearchViewModel.swift`):
+**Current Code** (`LibraryViewModel.swift`):
 ```swift
-public class SearchViewModel {
+public class LibraryViewModel {
   var searchText: String {
     didSet {
       // ❌ Triggers search on every character
@@ -344,7 +344,7 @@ public class SearchViewModel {
 import AsyncAlgorithms
 
 @Observable
-public class SearchViewModel {
+public class LibraryViewModel {
   var searchText: String = ""
   private var searchTask: Task<Void, Never>?
 
@@ -522,7 +522,7 @@ public struct RecorderView: View {
   @State private var showAudioConfigPanel: Bool = false
   @State private var showDebug: Bool = false
   @State private var navigation: Navigation?
-  @State private var searchViewModel: SearchViewModel
+  @State private var libraryViewModel: LibraryViewModel
   @State var navigationPath: NavigationPath = .init()
   @State private var expandedTrack: Track?
   @State private var isWarmingEngine: Bool = false
@@ -557,7 +557,7 @@ final class RecorderViewModel {
   var showAudioConfigPanel = false
   var showDebug = false
   var navigation: RecorderView.Navigation?
-  var searchViewModel: SearchViewModel
+  var libraryViewModel: LibraryViewModel
   var expandedTrack: Track?
 
   // Engine State
@@ -567,7 +567,7 @@ final class RecorderViewModel {
   init(coordinator: RecorderCoordinator, errorManager: ErrorManager) {
     self.coordinator = coordinator
     self.errorManager = errorManager
-    self.searchViewModel = SearchViewModel(
+    self.libraryViewModel = LibraryViewModel(
       dbManager: coordinator.dbManager,
       embeddingDB: coordinator.embeddingDB
     )
@@ -1026,7 +1026,7 @@ final class RecorderRouter {
     case .debug:
       DebugView()
     case .search:
-      SearchView()
+      LibraryView()
     }
   }
 }
@@ -1131,8 +1131,8 @@ AppTarget/
 │   │   ├── MiniPlayer.swift (UI)
 │   │   └── PlaybackControls.swift
 │   ├── Search/
-│   │   ├── SearchView.swift
-│   │   ├── SearchViewModel.swift
+│   │   ├── LibraryView.swift
+│   │   ├── LibraryViewModel.swift
 │   │   └── SearchBar.swift
 │   └── Settings/
 │       ├── ConfigurationView.swift
