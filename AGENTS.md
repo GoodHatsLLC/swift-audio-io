@@ -82,13 +82,23 @@ The package has comprehensive test coverage:
 
 ## Building & Testing
 
-**IMPORTANT**: All builds and tests must target iOS simulator or iOS devices. The package uses iOS-specific APIs (AVAudioSession) that aren't available on macOS.
+Preferred: use XcodeBuildMCP for builds/tests (workspace + simulator aware). Use raw `xcodebuild` only as a backup when MCP isn’t available.
 
-### From Package Directory (iOS Simulator)
+If you’re iterating on parts of the package that can run directly on the host (no iOS-only APIs), prefer SwiftPM via `xcrun` for fast feedback.
+
+### Preferred (XcodeBuildMCP)
 ```bash
-cd Packages/AIO
-# Build and test for iOS simulator
-xcodebuild test -scheme AIOEngine -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -derivedDataPath ../../.DerivedData
+/test-aio
+```
+
+### Host SwiftPM (When Compatible)
+```bash
+xcrun swift test --package-path Packages/AIO
+```
+
+### Backup (iOS Simulator via raw Xcode CLI)
+```bash
+xcodebuild test -workspace Recorder.xcworkspace -scheme AIOTests -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -derivedDataPath ./.DerivedData
 ```
 
 ### Using Claude Code

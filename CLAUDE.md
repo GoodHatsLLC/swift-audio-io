@@ -66,9 +66,17 @@ Schemes:
 - `ToolsTests`
 - `AudioVisualizationTests`
 
-Example (iOS Simulator):
+Preferred (XcodeBuildMCP):
 ```bash
-cd Packages/AIO
-xcodebuild test -scheme AIOTests -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
+/test-aio
 ```
 
+If the package and its tests can run directly on the host (no iOS-only APIs), prefer SwiftPM via `xcrun`:
+```bash
+xcrun swift test --package-path Packages/AIO
+```
+
+Backup (iOS Simulator via raw Xcode CLI):
+```bash
+xcodebuild test -workspace Recorder.xcworkspace -scheme AIOTests -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
+```
