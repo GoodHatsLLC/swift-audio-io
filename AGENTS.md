@@ -1,7 +1,9 @@
 # AIO Package - Audio I/O Engine
 
 **Location**: `Packages/AIO/`
-**Last Updated**: 2025-12-29
+**Last Updated**: 2026-01-11
+
+This file consolidates the previous `CLAUDE.md` content for this directory. `CLAUDE.md` remains as a symlink for backwards compatibility.
 
 ## Purpose
 
