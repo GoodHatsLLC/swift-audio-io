@@ -8,7 +8,9 @@ The project includes several scripts in the `bin/` directory to simplify the dev
 
 ### Building the Project
 
-To build all targets (the `AIOEngine` package and the demo application), run the following command:
+Preferred: use XcodeBuildMCP for workspace/simulator builds (see `DETAILS_BUILD_MCP.md` at repo root).
+
+Backup: build all targets (the `AIOEngine` package and the demo application) with the repo scripts:
 
 ```bash
 ./bin/build.sh
@@ -17,12 +19,17 @@ To build all targets (the `AIOEngine` package and the demo application), run the
 To build the package only, you can use the standard Swift build command:
 
 ```bash
-swift build
+xcrun swift build
 ```
 
 ### Running Tests
 
-To run the full test suite, use the following command. This requires a booted iOS simulator.
+Preferred: use XcodeBuildMCP (from repo root):
+```bash
+/test-aio
+```
+
+Backup: run the full workspace test suite with the repo script (requires a booted iOS simulator):
 
 ```bash
 ./bin/test.sh
@@ -31,14 +38,14 @@ To run the full test suite, use the following command. This requires a booted iO
 To run a specific test suite, you can use the `--filter` option:
 
 ```bash
-swift test --filter AIOEngineTests
-swift test --filter AudioVisualizationTests
+xcrun swift test --filter AIOEngineTests
+xcrun swift test --filter AudioVisualizationTests
 ```
 
 To enable code coverage, use the `--enable-code-coverage` option:
 
 ```bash
-swift test --enable-code-coverage
+xcrun swift test --enable-code-coverage
 ```
 
 ### Running on Linux
@@ -51,11 +58,16 @@ NO_PLATFORMS=1 swift build
 
 ### Running the Demo Application
 
-To run the demo application in the iOS simulator, use the following command:
+Preferred: use XcodeBuildMCP (from repo root):
+```bash
+/run
+```
+
+Backup: run the demo application in the iOS simulator with raw Xcode CLI:
 
 ```bash
-xcodebuild -workspace Recorder.xcworkspace -scheme "Recorder‽" \
-  -destination 'platform=iOS Simulator,name=iPhone 15 Pro'
+xcodebuild -workspace Recorder.xcworkspace -scheme "Recorder" \
+  -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
 ```
 
 If you need to prepare the iOS simulator, you can use the following script:
@@ -64,7 +76,7 @@ If you need to prepare the iOS simulator, you can use the following script:
 ./bin/simulator.sh
 ```
 
-Alternatively, you can open `Recorder.xcworkspace` in Xcode and run the "Recorder‽" scheme.
+Alternatively, you can open `Recorder.xcworkspace` in Xcode and run the `Recorder` scheme.
 
 ## Code Quality
 

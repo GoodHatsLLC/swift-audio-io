@@ -1038,6 +1038,8 @@ final class CrossPlatformPerformanceTests: XCTestCase {
 
 ### A. Build Script Updates
 
+Preferred: use XcodeBuildMCP for workspace builds/tests (simulator/device/Catalyst aware). The scripts below are illustrative and use `xcrun swift …` for SwiftPM packages and raw `xcodebuild` as a backup.
+
 #### **bin/build-mac.sh** (New File)
 ```bash
 #!/bin/bash
@@ -1046,22 +1048,23 @@ set -e
 echo "Building for macOS..."
 
 # Build AIO package
-swift build \
-  --package-path ./AIO \
+xcrun swift build \
+  --package-path Packages/AIO \
   --configuration release \
   --arch arm64 --arch x86_64
 
 # Build AppLibrary package
-swift build \
-  --package-path ./AppLibrary \
+xcrun swift build \
+  --package-path Packages/AppLibrary \
   --configuration release \
   --arch arm64 --arch x86_64
 
-# Build macOS app (if workspace exists)
+# Backup: build Mac Catalyst app (Xcode CLI)
 if [ -f "Recorder.xcworkspace" ]; then
   xcodebuild \
     -workspace Recorder.xcworkspace \
-    -scheme Recorder-macOS \
+    -scheme Recorder \
+    -destination 'generic/platform=macOS,variant=Mac Catalyst' \
     -configuration Release \
     -derivedDataPath ./build \
     build
@@ -1078,14 +1081,14 @@ set -e
 echo "Running macOS tests..."
 
 # Run AIO tests
-swift test \
-  --package-path ./AIO \
+xcrun swift test \
+  --package-path Packages/AIO \
   --filter AIOTests \
   --enable-code-coverage
 
 # Run AppLibrary tests (if they exist)
-swift test \
-  --package-path ./AppLibrary \
+xcrun swift test \
+  --package-path Packages/AppLibrary \
   --enable-code-coverage
 
 echo "✅ macOS tests complete"
