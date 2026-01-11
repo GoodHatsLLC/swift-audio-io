@@ -260,6 +260,9 @@ public final class AIOEngine: Sendable {
   }
   /// The current playback state, or `nil` if no audio is playing.
   @MainActor public private(set) var playback: Playback?
+  /// Called when the playback item or playback state changes (play/pause/stop), excluding time ticks.
+  @MainActor public var onPlaybackStateChanged: (@Sendable @MainActor (Playback?) -> Void)?
+  @MainActor private var lastPlaybackStateSignature: PlaybackStateSignature?
   /// A Boolean value that indicates whether the engine is currently playing back audio.
   @MainActor public var isPlayback: Bool {
     playback != nil
@@ -298,15 +301,38 @@ public final class AIOEngine: Sendable {
   }
 
   @MainActor
-  private func setPlayback(_ new: Playback?) {
-    guard let playbackInstance = state.playbackInstance else {
-      playback = nil
-      return
+  private struct PlaybackStateSignature: Equatable {
+    let id: UUID?
+    let file: URL?
+    let isPlaying: Bool
+
+    init(playback: Playback?) {
+      self.id = playback?.id
+      self.file = playback?.file
+      self.isPlaying = playback?.isPlaying ?? false
     }
-    if new?.id == playbackInstance.id {
-      playback = new
+  }
+
+  @MainActor
+  private func setPlayback(_ new: Playback?) {
+    let previousSignature = PlaybackStateSignature(playback: playback)
+
+    let updated: Playback?
+    if let playbackInstance = state.playbackInstance, new?.id == playbackInstance.id {
+      updated = new
     } else if new == nil {
-      playback = nil
+      updated = nil
+    } else {
+      // Ignore stale updates for a previous playback instance.
+      updated = playback
+    }
+
+    playback = updated
+
+    let newSignature = PlaybackStateSignature(playback: playback)
+    if previousSignature != newSignature, lastPlaybackStateSignature != newSignature {
+      lastPlaybackStateSignature = newSignature
+      onPlaybackStateChanged?(playback)
     }
   }
 
