@@ -63,6 +63,25 @@
       }
     }
 
+    private func makeLinearPCMFormat(
+      bitDepth: Int,
+      isFloat: Bool,
+      isBigEndian: Bool,
+      isInterleaved: Bool
+    ) -> AVAudioFormat? {
+      let settings: [String: Any] = [
+        AVFormatIDKey: kAudioFormatLinearPCM,
+        AVSampleRateKey: inputConfiguration.sampleRate.rawValue,
+        AVNumberOfChannelsKey: inputConfiguration.channels.platform,
+        AVLinearPCMBitDepthKey: bitDepth,
+        AVLinearPCMIsFloatKey: isFloat,
+        AVLinearPCMIsBigEndianKey: isBigEndian,
+        AVLinearPCMIsNonInterleaved: !isInterleaved,
+      ]
+
+      return AVAudioFormat(settings: settings)
+    }
+
     /// Output format for file writing
     var fileFormat: AVAudioFormat? {
       switch outputConfiguration.fileFormat {
@@ -133,12 +152,24 @@
         return format
 
       case .wav, .caf:
-        let format = AVAudioFormat(
-          commonFormat: commonFormat,
-          sampleRate: inputConfiguration.sampleRate.rawValue,
-          channels: inputConfiguration.channels.platform,
-          interleaved: outputConfiguration.fileFormat.requiresInterleaved
-        )
+        let format: AVAudioFormat?
+        if outputConfiguration.fileFormat == .wav, outputConfiguration.bitDepth == .pcmInt24 {
+          // WAV 24-bit should be truly packed 24-bit PCM, not 32-bit container samples.
+          // Use explicit Linear PCM settings to avoid the .pcmFormatInt32 fallback.
+          format = makeLinearPCMFormat(
+            bitDepth: 24,
+            isFloat: false,
+            isBigEndian: false,
+            isInterleaved: true
+          )
+        } else {
+          format = AVAudioFormat(
+            commonFormat: commonFormat,
+            sampleRate: inputConfiguration.sampleRate.rawValue,
+            channels: inputConfiguration.channels.platform,
+            interleaved: outputConfiguration.fileFormat.requiresInterleaved
+          )
+        }
 
         // Validate PCM format constraints
         guard let validFormat = format else {
@@ -156,6 +187,28 @@
           sampleRate >= 8000  // 8kHz min
         else {
           log.error("unreasonable sample rate: \(sampleRate, privacy: .public)")
+          return nil
+        }
+
+        log.info("using valid format: \(validFormat, privacy: .public)")
+        return validFormat
+
+      case .aiff:
+        let (bitDepth, isFloat): (Int, Bool) = switch outputConfiguration.bitDepth {
+        case .pcmInt16: (16, false)
+        case .pcmInt24: (24, false)
+        case .pcmFloat32: (32, true)
+        }
+
+        let format = makeLinearPCMFormat(
+          bitDepth: bitDepth,
+          isFloat: isFloat,
+          isBigEndian: true,
+          isInterleaved: true
+        )
+
+        guard let validFormat = format else {
+          log.error("invalid aiff format: \(format, privacy: .public)")
           return nil
         }
 
