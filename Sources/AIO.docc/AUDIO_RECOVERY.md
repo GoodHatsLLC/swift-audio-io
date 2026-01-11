@@ -104,6 +104,29 @@ case .adts, .aac:
 
 **Minimum viable recording:** 1 second of audio
 
+### WAV / AIFF - 🔶 Best-Effort Recoverable
+
+**Why it’s only best-effort:**
+- WAV/AIFF are chunk-based container formats that can be left with incorrect size fields after a crash.
+- The underlying audio data can still be intact, but readers may reject the file if the header sizes are inconsistent.
+
+**Implementation:**
+- The recovery flow attempts to open via `AVAudioFile(forReading:)`.
+- If open fails, RecoveryService performs a lightweight header-size repair and retries:
+  - WAV: RIFF chunk size + `data` chunk size (little-endian)
+  - AIFF: FORM chunk size + `SSND` chunk size (big-endian)
+
+### CAF (Core Audio Format) - 🔶 Best-Effort Recoverable
+
+**Implementation:**
+- CAF is attempted via `AVAudioFile(forReading:)` (no header repair yet).
+
+### FLAC / MP3 / M4A - 🔶 Best-Effort Import (When Readable)
+
+**Notes:**
+- These formats are attempted when encountered in the temp directory or `active_recordings`.
+- If the container wasn’t finalized correctly (especially M4A), `AVAudioFile` may not be able to open it.
+
 ## Extending to Other Formats
 
 ### Format Recovery Requirements
@@ -240,7 +263,7 @@ private func canRecoverFormat(_ format: String) -> Bool {
   case "adts", "aac":
     return true
 
-  case "your_format":  // Add your format here
+  case "caf", "wav", "aif", "aiff", "m4a", "flac", "mp3":
     return true
 
   default:
@@ -333,11 +356,12 @@ private func recoverRecording(_ recording: ActiveRecording) async {
 | Format | Recoverability | Reason | Implementation Effort |
 |--------|---------------|--------|---------------------|
 | ADTS/AAC | ✅ Yes | Streaming format | Already implemented |
-| CAF | 🔶 Partial | Chunk-based, may need header repair | Medium |
-| WAV | 🔶 Partial | Chunk-based, may need header repair | Medium |
-| M4A | ❌ No | Requires finalization | High (not recommended) |
-| FLAC | 🔶 Potential | Frame-based, test needed | Low-Medium |
-| MP3 | 🔶 Potential | Frame-based | Medium |
+| WAV | 🔶 Best-effort | Chunk-based; header size repair | Medium |
+| AIFF | 🔶 Best-effort | Chunk-based; header size repair | Medium |
+| CAF | 🔶 Best-effort | Chunk-based; open-only for now | Low-Medium |
+| FLAC | 🔶 Best-effort | Frame-based; open-only | Low |
+| MP3 | 🔶 Best-effort | Frame-based; open-only | Low |
+| M4A | 🔶 Best-effort | Works if finalized; otherwise fails | Low |
 
 ## Configuration
 
