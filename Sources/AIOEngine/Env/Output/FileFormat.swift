@@ -5,6 +5,7 @@ public enum FileFormat: String, CaseIterable, CustomStringConvertible, Sendable,
 {
   case caf = "caf"
   case wav = "wav"
+  case aiff = "aiff"
   case aac = "m4a"
   case adts = "aac"
   case flac = "flac"
@@ -22,7 +23,7 @@ public enum FileFormat: String, CaseIterable, CustomStringConvertible, Sendable,
 
   public var requiresInterleaved: Bool {
     switch self {
-    case .aac, .adts: return true
+    case .aac, .adts, .aiff: return true
     case .wav, .caf, .flac: return false
     }
   }
@@ -32,6 +33,7 @@ public enum FileFormat: String, CaseIterable, CustomStringConvertible, Sendable,
     case .aac, .adts: .mpeg4Audio
     case .caf: .audio
     case .wav: .wav
+    case .aiff: UTType(filenameExtension: "aiff") ?? .audio
     case .flac: UTType(mimeType: "audio/flac", conformingTo: .audio)!
     }
   }
@@ -44,7 +46,7 @@ public enum FileFormat: String, CaseIterable, CustomStringConvertible, Sendable,
     case .flac:
       // FLAC supports 16-bit and 24-bit PCM
       [BitDepth.pcmInt16, BitDepth.pcmInt24]
-    case .wav, .caf:
+    case .wav, .caf, .aiff:
       // PCM formats support all bit depths
       BitDepth.allCases
     }
@@ -53,7 +55,7 @@ public enum FileFormat: String, CaseIterable, CustomStringConvertible, Sendable,
   public var requiresQuality: Bool {
     switch self {
     case .aac, .adts: return true
-    case .wav, .caf, .flac: return false
+    case .wav, .caf, .flac, .aiff: return false
     }
   }
 }
