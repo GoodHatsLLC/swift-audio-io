@@ -31,10 +31,13 @@ public enum FileFormat: String, CaseIterable, CustomStringConvertible, Sendable,
   public var utType: UTType {
     switch self {
     case .aac, .adts: .mpeg4Audio
-    case .caf: .audio
+    case .caf: UTType(filenameExtension: "caf") ?? .audio
     case .wav: .wav
-    case .aiff: UTType(filenameExtension: "aiff") ?? .audio
-    case .flac: UTType(mimeType: "audio/flac", conformingTo: .audio)!
+    case .aiff: .aiff
+    case .flac:
+      UTType(filenameExtension: "flac")
+        ?? UTType(mimeType: "audio/flac", conformingTo: .audio)
+        ?? .audio
     }
   }
 

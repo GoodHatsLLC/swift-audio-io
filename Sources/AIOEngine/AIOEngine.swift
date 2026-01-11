@@ -650,7 +650,7 @@ public final class AIOEngine: Sendable {
     log.info("engine requires warming")
     do {
 
-      guard let fileSettings = configuration.fileFormat?.settings else {
+      guard let fileSettings = configuration.fileSettings else {
         throw AIOError.invalidRecordingConfiguration(
           details: "(file format settings)"
         )
@@ -1129,7 +1129,7 @@ public final class AIOEngine: Sendable {
     }
 
     // Get file settings from configuration
-    guard let fileSettings = configuration.fileFormat?.settings else {
+    guard let fileSettings = configuration.fileSettings else {
       throw AIOError.invalidRecordingConfiguration(details: "file format settings")
     }
 

@@ -69,7 +69,23 @@
       isBigEndian: Bool,
       isInterleaved: Bool
     ) -> AVAudioFormat? {
-      let settings: [String: Any] = [
+      AVAudioFormat(
+        settings: makeLinearPCMSettings(
+          bitDepth: bitDepth,
+          isFloat: isFloat,
+          isBigEndian: isBigEndian,
+          isInterleaved: isInterleaved
+        )
+      )
+    }
+
+    private func makeLinearPCMSettings(
+      bitDepth: Int,
+      isFloat: Bool,
+      isBigEndian: Bool,
+      isInterleaved: Bool
+    ) -> [String: Any] {
+      [
         AVFormatIDKey: kAudioFormatLinearPCM,
         AVSampleRateKey: inputConfiguration.sampleRate.rawValue,
         AVNumberOfChannelsKey: inputConfiguration.channels.platform,
@@ -78,8 +94,66 @@
         AVLinearPCMIsBigEndianKey: isBigEndian,
         AVLinearPCMIsNonInterleaved: !isInterleaved,
       ]
+    }
 
-      return AVAudioFormat(settings: settings)
+    /// Settings dictionary used to create the output `AVAudioFile`.
+    ///
+    /// This intentionally returns the original settings (not `AVAudioFormat.settings`), since
+    /// `AVAudioFormat` may normalize/strip encoder-specific keys that must be preserved
+    /// (example: `AVEncoderBitDepthHintKey`).
+    var fileSettings: [String: Any]? {
+      switch outputConfiguration.fileFormat {
+      case .aac, .adts:
+        let settings: [String: Any] = [
+          AVFormatIDKey: kAudioFormatMPEG4AAC,
+          AVSampleRateKey: inputConfiguration.sampleRate.rawValue,
+          AVNumberOfChannelsKey: inputConfiguration.channels.platform,
+          AVEncoderAudioQualityKey: outputConfiguration.quality.platform,
+        ]
+        guard AVAudioFormat(settings: settings) != nil else { return nil }
+        return settings
+
+      case .flac:
+        let encoderBitDepthHint: Int = switch outputConfiguration.bitDepth {
+        case .pcmInt16: 16
+        case .pcmInt24: 24
+        case .pcmFloat32: 16
+        }
+
+        let settings: [String: Any] = [
+          AVFormatIDKey: kAudioFormatFLAC,
+          AVSampleRateKey: inputConfiguration.sampleRate.rawValue,
+          AVNumberOfChannelsKey: inputConfiguration.channels.platform,
+          AVEncoderBitDepthHintKey: encoderBitDepthHint,
+        ]
+        guard AVAudioFormat(settings: settings) != nil else { return nil }
+        return settings
+
+      case .wav, .caf:
+        if outputConfiguration.bitDepth == .pcmInt24 {
+          return makeLinearPCMSettings(
+            bitDepth: 24,
+            isFloat: false,
+            isBigEndian: false,
+            isInterleaved: outputConfiguration.fileFormat == .wav ? true : false
+          )
+        }
+        return fileFormat?.settings
+
+      case .aiff:
+        let (bitDepth, isFloat): (Int, Bool) = switch outputConfiguration.bitDepth {
+        case .pcmInt16: (16, false)
+        case .pcmInt24: (24, false)
+        case .pcmFloat32: (32, true)
+        }
+
+        return makeLinearPCMSettings(
+          bitDepth: bitDepth,
+          isFloat: isFloat,
+          isBigEndian: true,
+          isInterleaved: true
+        )
+      }
     }
 
     /// Output format for file writing
@@ -125,7 +199,7 @@
           AVFormatIDKey: kAudioFormatFLAC,
           AVSampleRateKey: inputConfiguration.sampleRate.rawValue,
           AVNumberOfChannelsKey: inputConfiguration.channels.platform,
-          AVEncoderAudioQualityKey: outputConfiguration.quality.platform,
+          AVEncoderBitDepthHintKey: fileSettings?[AVEncoderBitDepthHintKey] ?? 16,
         ]
 
         // Validate FLAC format settings before creating
@@ -153,14 +227,14 @@
 
       case .wav, .caf:
         let format: AVAudioFormat?
-        if outputConfiguration.fileFormat == .wav, outputConfiguration.bitDepth == .pcmInt24 {
-          // WAV 24-bit should be truly packed 24-bit PCM, not 32-bit container samples.
-          // Use explicit Linear PCM settings to avoid the .pcmFormatInt32 fallback.
+        if outputConfiguration.bitDepth == .pcmInt24 {
+          // 24-bit PCM should be truly packed 24-bit container samples, not 32-bit container
+          // samples created via the .pcmFormatInt32 fallback.
           format = makeLinearPCMFormat(
             bitDepth: 24,
             isFloat: false,
             isBigEndian: false,
-            isInterleaved: true
+            isInterleaved: outputConfiguration.fileFormat == .wav ? true : false
           )
         } else {
           format = AVAudioFormat(
