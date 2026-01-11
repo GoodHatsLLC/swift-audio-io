@@ -1160,7 +1160,7 @@ extension SystemLog.LogModel {
 
           Divider()
 
-          Button("Export Logs...") {
+          Button("Export Logs…") {
             SystemLog.openWindow()
           }
         }
