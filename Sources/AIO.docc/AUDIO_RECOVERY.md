@@ -112,7 +112,7 @@ case .adts, .aac:
 
 **Implementation:**
 - The recovery flow attempts to open via `AVAudioFile(forReading:)`.
-- If open fails, RecoveryService performs a lightweight header-size repair and retries:
+- If open fails, RecoveryService performs a lightweight header-size repair (via `AudioFileRecoveryKit`) and retries:
   - WAV: RIFF chunk size + `data` chunk size (little-endian)
   - AIFF: FORM chunk size + `SSND` chunk size (big-endian)
 
