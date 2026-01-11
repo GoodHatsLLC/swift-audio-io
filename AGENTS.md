@@ -89,9 +89,7 @@ Preferred: use XcodeBuildMCP for builds/tests (workspace + simulator aware). Use
 If you’re iterating on parts of the package that can run directly on the host (no iOS-only APIs), prefer SwiftPM via `xcrun` for fast feedback.
 
 ### Preferred (XcodeBuildMCP)
-```bash
-/test-aio
-```
+See `DETAILS_BUILD_MCP.md`. Use scheme `AIOTests` (or `ToolsTests`, `AudioVisualizationTests`) and run `mcp__XcodeBuildMCP__test_sim`.
 
 ### Host SwiftPM (When Compatible)
 ```bash
@@ -103,11 +101,8 @@ xcrun swift test --package-path Packages/AIO
 xcodebuild test -workspace Recorder.xcworkspace -scheme AIOTests -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -derivedDataPath ./.DerivedData
 ```
 
-### Using Claude Code
-```bash
-/test-aio        # Run all AIO tests on iOS simulator
-/test            # Run all tests including AIO
-```
+### Claude Code Slash Commands (Optional)
+If you’re using Claude Code in this repo, see `.claude/AGENTS.md` for the full slash-command list (including `/test-aio`).
 
 ### Test Framework
 Tests use **Swift Testing** framework (`@Test` macros, `@Suite`), not XCTest.
