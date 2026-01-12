@@ -357,12 +357,6 @@
         resolvedChannels = .init(platform: AVAudioChannelCount(sessionChannels))
       } else {
         resolvedChannels = _selectedNumberOfChannels
-        log.info(
-          """
-          ⚠️ inputConfiguration requested before session reported channels. \
-          Falling back to cached selection: \(resolvedChannels, privacy: .public)
-          """
-        )
       }
 
       return .init(
