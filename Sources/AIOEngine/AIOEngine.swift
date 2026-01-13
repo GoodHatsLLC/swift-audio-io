@@ -342,15 +342,6 @@ public final class AIOEngine: Sendable {
     return getPlayback(for: playbackInstance)
   }
 
-  /// Returns the current playback state by querying the underlying player clock.
-  ///
-  /// Unlike `playback` (which is intended for coarse observation updates), this performs a
-  /// direct time query and is suitable for high-rate UI presentation while visible.
-  @MainActor
-  public func queryPlayback() -> Playback? {
-    getPlayback()
-  }
-
   private func getPlayback(for instance: PlaybackInstance) -> Playback {
     let startOffset =
       Double(instance.startFrame) / instance.file.processingFormat.sampleRate
