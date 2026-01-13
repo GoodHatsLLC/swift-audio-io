@@ -341,7 +341,19 @@ public final class AIOEngine: Sendable {
     return getPlayback(for: playbackInstance)
   }
 
+  /// Returns the current playback state by querying the underlying player clock.
+  ///
+  /// Unlike `playback` (which is intended for coarse observation updates), this performs a
+  /// direct time query and is suitable for high-rate UI presentation while visible.
+  @MainActor
+  public func queryPlayback() -> Playback? {
+    getPlayback()
+  }
+
   private func getPlayback(for instance: PlaybackInstance) -> Playback {
+    let startOffset =
+      Double(instance.file.framePosition) / instance.file.processingFormat.sampleRate
+
     guard let nodeTime = player.lastRenderTime,
       let playerTime = player.playerTime(forNodeTime: nodeTime)
     else {
@@ -349,15 +361,13 @@ public final class AIOEngine: Sendable {
         id: instance.id,
         file: instance.file.url,
         isPlaying: player.isPlaying,
-        time: 0,
+        time: startOffset,
         duration: Double(instance.file.length) / instance.file.processingFormat.sampleRate
       )
     }
 
     let sampleRate = playerTime.sampleRate
     let timeInPlayer = Double(playerTime.sampleTime) / sampleRate
-    let startOffset =
-      Double(instance.file.framePosition) / instance.file.processingFormat.sampleRate
     let currentTime = timeInPlayer + startOffset
 
     let duration = Double(instance.file.length) / instance.file.processingFormat.sampleRate
@@ -1296,6 +1306,10 @@ public final class AIOEngine: Sendable {
       throw AIOError.invalidTimeRange
     }
 
+    // Keep the `AVAudioFile` frame position aligned to the segment start so our playback clock
+    // (and progress) remain in the file's absolute timeline.
+    file.framePosition = startFrame
+
     let playbackInstance = PlaybackInstance(id: .init(), file: file)
 
     engine.connect(player, to: engine.outputNode, format: file.processingFormat)
@@ -1323,19 +1337,12 @@ public final class AIOEngine: Sendable {
       throw AIOError.engineStartFailed(error: ErrorContext(error))
     }
 
-    // Create playback state reflecting the segment (not full file)
-    let segmentPlayback = Playback(
-      id: playbackInstance.id,
-      file: url,
-      isPlaying: true,
-      time: startTime,
-      duration: endTime  // Use endTime as duration for progress calculation
-    )
-    setPlayback(segmentPlayback)
+    let playback = getPlayback(for: playbackInstance)
+    setPlayback(playback)
     player.play()
     resetPlaybackTimer(to: playbackInstance)
 
-    return segmentPlayback
+    return playback
   }
 
   @MainActor func resetPlaybackTimer(to instance: PlaybackInstance) {
