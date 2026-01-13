@@ -2,8 +2,8 @@ import AsyncAlgorithms
 import Foundation
 import Observation
 import SwiftUI
-import UniformTypeIdentifiers
 import Tools
+import UniformTypeIdentifiers
 
 import class Foundation.Bundle
 import struct OSLog.Logger
@@ -221,7 +221,8 @@ extension Reporter where E == any Error {
     function: String = #function,
     line: Int = #line,
     column: Int = #column,
-    @_inheritActorContext(always) _ operation: sending @isolated(any) () async throws(any Error) -> V
+    @_inheritActorContext(always) _ operation:
+      sending @isolated(any) () async throws(any Error) -> V
   ) async throws(ReportedError) -> V {
     let sl = SourceLocation(file: file, function: function, line: line, column: column)
     do {

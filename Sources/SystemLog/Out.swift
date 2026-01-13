@@ -1,6 +1,6 @@
 import Foundation
-import os
 import Tools
+import os
 
 public enum Standard {
   /// A ``TextOutputStream`` to `stderr`

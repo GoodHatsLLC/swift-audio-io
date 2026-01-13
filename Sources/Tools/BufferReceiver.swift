@@ -23,8 +23,8 @@ public protocol BufferReceiver<T>: AnyObject, Sendable {
   nonisolated func endBufferTask()
 }
 
-public extension BufferReceiver {
-  nonisolated func processBuffer(_ data: UnsafeBufferPointer<T>, timing: BufferTiming) {
+extension BufferReceiver {
+  public nonisolated func processBuffer(_ data: UnsafeBufferPointer<T>, timing: BufferTiming) {
     processBuffer(data)
   }
 }

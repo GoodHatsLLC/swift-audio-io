@@ -1,9 +1,9 @@
 #if canImport(AVFoundation)
-	  import AVFoundation
-	  import Tools
+  import AVFoundation
+  import Tools
 
-	  public struct VerboseError: AudioError {
-	    public init(error: any Error) {
+  public struct VerboseError: AudioError {
+    public init(error: any Error) {
       let nserror = error as NSError
       let code = nserror.code
 
@@ -269,7 +269,7 @@
 
       self.description = String(describing: error)
 
-	    }
-	    public let description: String
-	  }
-	#endif
+    }
+    public let description: String
+  }
+#endif

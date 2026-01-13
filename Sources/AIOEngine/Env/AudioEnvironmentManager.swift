@@ -212,8 +212,7 @@
     }
 
     /// A callback that is invoked when the audio route changes.
-    public var onRouteChange:
-      (@Sendable @MainActor (AudioRouteChangeEvent) async -> Void)?
+    public var onRouteChange: (@Sendable @MainActor (AudioRouteChangeEvent) async -> Void)?
 
     /// A callback that is invoked when an audio interruption occurs.
     public var onInterruption:
@@ -714,7 +713,8 @@
               do {
                 try self.env.request(
                   input: self.env.input
-                    ?? self.env.availableInputs.first(where: { $0.platform.portType == .builtInMic })
+                    ?? self.env.availableInputs.first(where: { $0.platform.portType == .builtInMic }
+                    )
                 )
               } catch let error as AudioEnvironment.RequestError {
                 throw ManagerError.audioEnvironment(error)
@@ -796,7 +796,8 @@
           do {
             try self.env.session.setActive(false, options: .notifyOthersOnDeactivation)
           } catch {
-            log.error("Failed to deactivate AudioSession on cancellation: \(error, privacy: .public)")
+            log.error(
+              "Failed to deactivate AudioSession on cancellation: \(error, privacy: .public)")
           }
           await MainActor.run { self.isAudioSessionActive = false }
         }
@@ -807,7 +808,7 @@
         "🔇AudioEnvironmentManager.run() finished\(deactivationSuffix, privacy: .public)"
       )
     }
-		  }
+  }
 
   extension AudioEnvironmentManager {
 
@@ -954,41 +955,42 @@
         }
         group.addTask { [weak self] in
           for await notification in env.notifications.routeChange {
-              log.info(
-                "Route change notification: \(String(describing: notification), privacy: .public)")
-              if Task.isCancelled { return }
-              guard let self else { return }
-              let reasonMsg =
-                switch notification.reason {
-                case .oldDeviceUnavailable: "oldDeviceUnavailable"
-                case .categoryChange: "categoryChange"
-                case .newDeviceAvailable: "newDeviceAvailable"
-                case .noSuitableRouteForCategory: "noSuitableRouteForCategory"
-                case .override: "override"
-                case .routeConfigurationChange: "routeConfigurationChange"
-                case .wakeFromSleep: "wakeFromSleep"
-                case .unknown: "unknown"
-                @unknown default: "unknowndefault"
-                }
-              await self.updateAudioInputs(reason: "routeChange notification: .\(reasonMsg)")
-              await MainActor.run { [weak self] in
-                guard let self else { return }
-                if !self.isAudioSessionActive,
-                  notification.reason == .newDeviceAvailable || notification.reason == .oldDeviceUnavailable
-                {
-                  self.restorePreferredInputAndConfigurationIfPossible(
-                    reason: "routeChange notification: .\(reasonMsg)"
-                  )
-                }
+            log.info(
+              "Route change notification: \(String(describing: notification), privacy: .public)")
+            if Task.isCancelled { return }
+            guard let self else { return }
+            let reasonMsg =
+              switch notification.reason {
+              case .oldDeviceUnavailable: "oldDeviceUnavailable"
+              case .categoryChange: "categoryChange"
+              case .newDeviceAvailable: "newDeviceAvailable"
+              case .noSuitableRouteForCategory: "noSuitableRouteForCategory"
+              case .override: "override"
+              case .routeConfigurationChange: "routeConfigurationChange"
+              case .wakeFromSleep: "wakeFromSleep"
+              case .unknown: "unknown"
+              @unknown default: "unknowndefault"
               }
+            await self.updateAudioInputs(reason: "routeChange notification: .\(reasonMsg)")
+            await MainActor.run { [weak self] in
+              guard let self else { return }
+              if !self.isAudioSessionActive,
+                notification.reason == .newDeviceAvailable
+                  || notification.reason == .oldDeviceUnavailable
+              {
+                self.restorePreferredInputAndConfigurationIfPossible(
+                  reason: "routeChange notification: .\(reasonMsg)"
+                )
+              }
+            }
 
-              // Forward route change to audio engine
-              let event = AudioRouteChangeEvent(
-                reason: notification.reason,
-                previousRoute: notification.previous,
-                session: env.session
-              )
-              await self.onRouteChange?(event)
+            // Forward route change to audio engine
+            let event = AudioRouteChangeEvent(
+              reason: notification.reason,
+              previousRoute: notification.previous,
+              session: env.session
+            )
+            await self.onRouteChange?(event)
           }
         }
         group.addTask { [weak self] in
@@ -1131,7 +1133,8 @@
       from defaults: UserDefaults
     ) -> [String: PersistedInputPreferences] {
       guard let data = defaults.data(forKey: StorageKey.inputPrefsById) else { return [:] }
-      return (try? JSONDecoder().decode([String: PersistedInputPreferences].self, from: data)) ?? [:]
+      return (try? JSONDecoder().decode([String: PersistedInputPreferences].self, from: data))
+        ?? [:]
     }
 
     private func preferredStereoCandidates(from stereoSources: [AudioSource]) -> [AudioSource] {
@@ -1153,7 +1156,8 @@
         ordered.append(current)
       }
 
-      let remaining = stereoSources
+      let remaining =
+        stereoSources
         .filter { !ordered.contains($0) }
         .sorted { lhs, rhs in
           let l = stereoPreferenceRank(lhs)

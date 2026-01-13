@@ -27,4 +27,3 @@ public struct ErrorContext: Sendable, Equatable, Hashable, CustomStringConvertib
     "\(domain)(\(code)): \(message)"
   }
 }
-

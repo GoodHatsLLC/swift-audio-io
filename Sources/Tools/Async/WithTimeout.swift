@@ -59,7 +59,8 @@ public func withTimeout<Return: Sendable>(
       do {
         try await Task.sleep(for: duration)
         return .rhs(
-          .timedOut(Timeout(fromLocation: location, afterDuration: duration, type: "\(Return.self)"))
+          .timedOut(
+            Timeout(fromLocation: location, afterDuration: duration, type: "\(Return.self)"))
         )
       } catch {
         return .rhs(.cancelled)

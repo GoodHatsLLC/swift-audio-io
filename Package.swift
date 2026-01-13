@@ -92,7 +92,7 @@ let package = Package(
       name: "SystemLog",
       dependencies: [
         "Tools",
-        .product(name: "AsyncAlgorithms", package: "swift-async-algorithms")
+        .product(name: "AsyncAlgorithms", package: "swift-async-algorithms"),
       ],
       swiftSettings: [
         .swiftLanguageMode(.v6),
