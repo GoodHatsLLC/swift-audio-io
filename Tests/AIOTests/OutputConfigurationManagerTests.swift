@@ -1,4 +1,5 @@
 #if canImport(AVFoundation)
+  import Foundation
   import Testing
 
   @testable import AIOEngine
@@ -6,12 +7,24 @@
   @Suite
   struct OutputConfigurationManagerTests {
 
+    @MainActor
+    private func makeIsolatedDefaults() throws -> UserDefaults {
+      let suiteName = "aio.tests.output-config.\(UUID().uuidString)"
+      let defaults = try #require(UserDefaults(suiteName: suiteName))
+      defaults.removePersistentDomain(forName: suiteName)
+      return defaults
+    }
+
     @Test
     @MainActor
     func defaultConfigurationIsADTSHigh() throws {
       let env = AudioEnvironment()
       let errors = MockErrorManager()
-      let manager = OutputConfigurationManager(env: env, errorManager: errors)
+      let manager = OutputConfigurationManager(
+        env: env,
+        errorManager: errors,
+        defaults: try makeIsolatedDefaults()
+      )
 
       #expect(manager.outputFormat == .adts)
       #expect(manager.bitDepth == .pcmFloat32)
@@ -28,7 +41,11 @@
     func switchingToFlacAlignsBitDepthAndForcesMaximumQuality() throws {
       let env = AudioEnvironment()
       let errors = MockErrorManager()
-      let manager = OutputConfigurationManager(env: env, errorManager: errors)
+      let manager = OutputConfigurationManager(
+        env: env,
+        errorManager: errors,
+        defaults: try makeIsolatedDefaults()
+      )
 
       // Start from a bit depth FLAC does not support.
       manager.bitDepth = .pcmFloat32
@@ -52,7 +69,11 @@
     func switchingToWavKeepsBitDepthAndForcesMaximumQuality() throws {
       let env = AudioEnvironment()
       let errors = MockErrorManager()
-      let manager = OutputConfigurationManager(env: env, errorManager: errors)
+      let manager = OutputConfigurationManager(
+        env: env,
+        errorManager: errors,
+        defaults: try makeIsolatedDefaults()
+      )
 
       manager.bitDepth = .pcmInt24
       manager.outputFormat = .wav
@@ -69,6 +90,29 @@
       #expect(config.bitDepth == .pcmInt24)
       #expect(config.quality == .maximum)
     }
+
+    @Test
+    @MainActor
+    func remembersPreviousOutputConfigurationAcrossInstances() throws {
+      let defaults = try makeIsolatedDefaults()
+
+      let env = AudioEnvironment()
+      let errors = MockErrorManager()
+
+      do {
+        let manager = OutputConfigurationManager(env: env, errorManager: errors, defaults: defaults)
+        manager.outputFormat = .wav
+        manager.bitDepth = .pcmInt24
+        manager.encodingQuality = .maximum
+        _ = try #require(manager.outputConfiguration)
+      }
+
+      do {
+        let manager = OutputConfigurationManager(env: env, errorManager: errors, defaults: defaults)
+        #expect(manager.outputFormat == .wav)
+        #expect(manager.bitDepth == .pcmInt24)
+        #expect(manager.encodingQuality == .maximum)
+      }
+    }
   }
 #endif
-

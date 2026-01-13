@@ -2,6 +2,7 @@
   import Tools
   import AVFAudio
   import Combine
+  import Foundation
   import SystemLog
 
   private let log = SystemLog.make()
@@ -149,10 +150,12 @@
     ///   - errorManager: The error manager to use for reporting errors.
     public init(
       env: AudioEnvironment,
-      errorManager: any ErrorManaging
+      errorManager: any ErrorManaging,
+      defaults: UserDefaults = .standard
     ) {
       self.env = env
       self.errorManager = errorManager
+      self.defaults = defaults
       _input = env.input
       _availableInputs = env.availableInputs
       _selectedSource = env.input?.selectedSource
@@ -160,11 +163,32 @@
       _availableSources = env.input?.availableSources ?? []
       _orientation = .none
       _selectedNumberOfChannels = (env.input?.channelCount) ?? .mono
+      self.persistedInputPreferencesById = Self.loadInputPreferences(from: defaults)
     }
     private let env: AudioEnvironment
     /// The underlying `AVAudioSession`.
     public var session: AVAudioSession { env.session }
     private let errorManager: any ErrorManaging
+    private let defaults: UserDefaults
+
+    private struct PersistedInputPreferences: Codable, Sendable {
+      var sampleRateHz: Double?
+      var channelCount: Int?
+      var sourceId: String?
+    }
+
+    private enum StorageKey {
+      static let preferredInputId = "aio.audio_env.preferred_input_id.v1"
+      static let inputPrefsById = "aio.audio_env.input_prefs_by_id.v1"
+    }
+
+    private var persistedInputPreferencesById: [String: PersistedInputPreferences] = [:]
+    private var isRestoringFromDefaults: Bool = false
+
+    public var shouldAutoSelectStereoWhenAvailable: Bool {
+      let inputId = env.input?.id ?? "_default"
+      return persistedInputPreferencesById[inputId] == nil
+    }
 
     /// A Boolean value that indicates whether this `AudioEnvironmentManager` is fully primed and subscribed.
     public private(set) var isReady: Bool = false {
@@ -242,7 +266,7 @@
         errorManager.report {
           try env.request(sampleRate: newValue)
           _selectedSampleRate = newValue
-          Task {
+          Task { @MainActor in
             let actual = env.sampleRate
             if actual == newValue {
               log.info("􁐚 Sample rate set to requested value: \(newValue, privacy: .public)")
@@ -256,6 +280,7 @@
                 )
               _selectedSampleRate = actual
             }
+            persistCurrentInputPreferencesIfNeeded()
           }
         } catch: { error in
           let actual = env.sampleRate
@@ -267,6 +292,7 @@
               Rate is \(actual, privacy: .public).
               """
             )
+          persistCurrentInputPreferencesIfNeeded()
         }
       }
     }
@@ -302,6 +328,8 @@
             }
           }
           _availableSources = env.input?.availableSources ?? validSources
+          defaults.set(env.input?.id, forKey: StorageKey.preferredInputId)
+          persistCurrentInputPreferencesIfNeeded()
         } catch {
           errorManager.enqueue(error)
         }
@@ -326,6 +354,7 @@
           _availableInputs = env.availableInputs
           _selectedSource = env.source
           _availableSources = env.availableSources
+          persistCurrentInputPreferencesIfNeeded()
         } catch {
           _input = env.input
           _selectedSampleRate = env.sampleRate
@@ -334,6 +363,7 @@
           _selectedSource = env.source
           _availableSources = env.input?.availableSources ?? []
           errorManager.enqueue(error)
+          persistCurrentInputPreferencesIfNeeded()
         }
       }
     }
@@ -523,6 +553,7 @@
       _availableInputs = env.availableInputs
       _selectedSource = env.source
       _availableSources = filterSources(env.availableSources, for: _selectedNumberOfChannels)
+      persistCurrentInputPreferencesIfNeeded()
     }
 
     /// Applies a stereo audio configuration.
@@ -540,54 +571,59 @@
             $0.supportedPolarPatterns.contains(.stereo)
           }
 
-          let stereoSource: AudioSource?
-          if let currentSource = selectedSource,
-            stereoCapableSources.contains(currentSource)
-          {
-            // Keep current source if it supports stereo
-            stereoSource = currentSource
-          } else {
-            // Otherwise pick the first stereo-capable source
-            stereoSource = stereoCapableSources.first
+          let candidates = preferredStereoCandidates(from: stereoCapableSources)
+          var lastError: (any Error)?
+
+          for stereoSource in candidates {
+            do {
+              if let error: AudioSource.PreferenceError = {
+                do {
+                  try stereoSource.set(preferredPolarPattern: .stereo)
+                  return nil
+                } catch let error as AudioSource.PreferenceError {
+                  return error
+                } catch {
+                  preconditionFailure("Unexpected error type: \(error)")
+                }
+              }() {
+                throw ManagerError.audioSource(error)
+              }
+
+              if let error: AudioInput.PreferenceError = {
+                do {
+                  try input.set(preferredSource: stereoSource)
+                  return nil
+                } catch let error as AudioInput.PreferenceError {
+                  return error
+                } catch {
+                  preconditionFailure("Unexpected error type: \(error)")
+                }
+              }() {
+                throw ManagerError.audioInput(error)
+              }
+
+              let currentOrientation = orientation
+              if currentOrientation != .none {
+                do {
+                  try session.setPreferredInputOrientation(currentOrientation)
+                } catch {
+                  throw ManagerError.audioSessionFailed(
+                    operation: .setPreferredInputOrientation,
+                    error: ErrorContext(error)
+                  )
+                }
+              }
+
+              lastError = nil
+              break
+            } catch {
+              lastError = error
+              continue
+            }
           }
 
-          if let stereoSource {
-            if let error: AudioSource.PreferenceError = {
-              do {
-                try stereoSource.set(preferredPolarPattern: .stereo)
-                return nil
-              } catch let error as AudioSource.PreferenceError {
-                return error
-              } catch {
-                preconditionFailure("Unexpected error type: \(error)")
-              }
-            }() {
-              throw ManagerError.audioSource(error)
-            }
-
-            if let error: AudioInput.PreferenceError = {
-              do {
-                try input.set(preferredSource: stereoSource)
-                return nil
-              } catch let error as AudioInput.PreferenceError {
-                return error
-              } catch {
-                preconditionFailure("Unexpected error type: \(error)")
-              }
-            }() {
-              throw ManagerError.audioInput(error)
-            }
-            let currentOrientation = orientation
-            if currentOrientation != .none {
-              do {
-                try session.setPreferredInputOrientation(currentOrientation)
-              } catch {
-                throw ManagerError.audioSessionFailed(
-                  operation: .setPreferredInputOrientation,
-                  error: ErrorContext(error)
-                )
-              }
-            }
+          if let lastError {
+            throw lastError
           }
         }
 
@@ -597,6 +633,7 @@
         _availableInputs = env.availableInputs
         _selectedSource = env.source
         _availableSources = filterSources(env.availableSources, for: _selectedNumberOfChannels)
+        persistCurrentInputPreferencesIfNeeded()
       } catch let error as ManagerError {
         try applyMono()
         throw error
@@ -681,6 +718,10 @@
                 )
               } catch let error as AudioEnvironment.RequestError {
                 throw ManagerError.audioEnvironment(error)
+              }
+
+              await MainActor.run {
+                self.restorePreferredInputAndConfigurationIfPossible(reason: "run() startup")
               }
 
               log.info(
@@ -930,6 +971,16 @@
                 @unknown default: "unknowndefault"
                 }
               await self.updateAudioInputs(reason: "routeChange notification: .\(reasonMsg)")
+              await MainActor.run { [weak self] in
+                guard let self else { return }
+                if !self.isAudioSessionActive,
+                  notification.reason == .newDeviceAvailable || notification.reason == .oldDeviceUnavailable
+                {
+                  self.restorePreferredInputAndConfigurationIfPossible(
+                    reason: "routeChange notification: .\(reasonMsg)"
+                  )
+                }
+              }
 
               // Forward route change to audio engine
               let event = AudioRouteChangeEvent(
@@ -983,5 +1034,149 @@
       }
     }
 
+  }
+
+  extension AudioEnvironmentManager {
+    @MainActor
+    private func restorePreferredInputAndConfigurationIfPossible(reason: String) {
+      guard !isRestoringFromDefaults else { return }
+      isRestoringFromDefaults = true
+      defer { isRestoringFromDefaults = false }
+
+      persistedInputPreferencesById = Self.loadInputPreferences(from: defaults)
+
+      if !isAudioSessionActive,
+        let preferredInputId = defaults.string(forKey: StorageKey.preferredInputId),
+        let preferredInput = env.availableInputs.first(where: { $0.id == preferredInputId }),
+        env.input?.id != preferredInputId
+      {
+        do {
+          try env.request(input: preferredInput)
+        } catch {
+          errorManager.enqueue(error)
+        }
+      }
+
+      // Refresh cached mirrors before applying per-input preferences.
+      _input = env.input
+      _selectedSampleRate = env.sampleRate
+      _selectedNumberOfChannels = (env.input?.channelCount) ?? .mono
+      _availableInputs = env.availableInputs
+      _selectedSource = env.source
+      _availableSources = filterSources(env.availableSources, for: _selectedNumberOfChannels)
+
+      let inputId = env.input?.id ?? "_default"
+      if let prefs = persistedInputPreferencesById[inputId] {
+        if let sampleRateHz = prefs.sampleRateHz {
+          self.sampleRate = SampleRate(rawValue: sampleRateHz)
+        }
+
+        if let channelCount = prefs.channelCount {
+          do {
+            if channelCount > 1 {
+              try applyStereo()
+            } else {
+              try applyMono()
+            }
+          } catch {
+            errorManager.enqueue(error)
+          }
+        }
+
+        if let sourceId = prefs.sourceId {
+          let desired = _availableSources.first(where: { $0.id == sourceId })
+          if desired != nil {
+            selectedSource = desired
+          } else if inputHasStereoSource, shouldAutoSelectStereoWhenAvailable == false {
+            // Best-effort fallback: choose another stereo-capable source when the remembered one
+            // is no longer available.
+            do {
+              try applyStereo()
+            } catch {
+              errorManager.enqueue(error)
+            }
+          }
+        }
+      } else {
+        // First-run default: prefer stereo if available.
+        if inputHasStereoSource {
+          do {
+            try applyStereo()
+          } catch {
+            errorManager.enqueue(error)
+          }
+        }
+      }
+
+      log.info("Restored audio environment preferences (\(reason, privacy: .public))")
+    }
+
+    private func persistCurrentInputPreferencesIfNeeded() {
+      guard !isRestoringFromDefaults else { return }
+
+      let inputId = env.input?.id ?? "_default"
+      defaults.set(inputId, forKey: StorageKey.preferredInputId)
+      let prefs = PersistedInputPreferences(
+        sampleRateHz: env.sampleRate.rawValue,
+        channelCount: isConfiguredForStereo ? 2 : 1,
+        sourceId: env.source?.id
+      )
+
+      persistedInputPreferencesById[inputId] = prefs
+      guard let data = try? JSONEncoder().encode(persistedInputPreferencesById) else { return }
+      defaults.set(data, forKey: StorageKey.inputPrefsById)
+    }
+
+    private static func loadInputPreferences(
+      from defaults: UserDefaults
+    ) -> [String: PersistedInputPreferences] {
+      guard let data = defaults.data(forKey: StorageKey.inputPrefsById) else { return [:] }
+      return (try? JSONDecoder().decode([String: PersistedInputPreferences].self, from: data)) ?? [:]
+    }
+
+    private func preferredStereoCandidates(from stereoSources: [AudioSource]) -> [AudioSource] {
+      guard !stereoSources.isEmpty else { return [] }
+
+      let inputId = env.input?.id ?? "_default"
+      let preferredSourceId = persistedInputPreferencesById[inputId]?.sourceId
+
+      var ordered: [AudioSource] = []
+      ordered.reserveCapacity(stereoSources.count)
+
+      if let preferredSourceId,
+        let preferred = stereoSources.first(where: { $0.id == preferredSourceId })
+      {
+        ordered.append(preferred)
+      }
+
+      if let current = selectedSource, stereoSources.contains(current), !ordered.contains(current) {
+        ordered.append(current)
+      }
+
+      let remaining = stereoSources
+        .filter { !ordered.contains($0) }
+        .sorted { lhs, rhs in
+          let l = stereoPreferenceRank(lhs)
+          let r = stereoPreferenceRank(rhs)
+          if l != r { return l < r }
+          return lhs.name < rhs.name
+        }
+      ordered.append(contentsOf: remaining)
+      return ordered
+    }
+
+    private func stereoPreferenceRank(_ source: AudioSource) -> Int {
+      // Best-effort heuristic to pick a stable "good default" stereo mic when we can't restore
+      // the exact prior data source. Tuned for built-in mic data sources.
+      guard let raw = source.avAudio.location?.rawValue.lowercased() else { return 9 }
+
+      // Common values observed in the wild include "lower"/"upper"/"front"/"back".
+      // Prefer the typical "bottom" mic locations first for a stable default.
+      if raw.contains("bottom") || raw.contains("lower") { return 0 }
+      if raw.contains("front") { return 1 }
+      if raw.contains("back") { return 2 }
+      if raw.contains("top") || raw.contains("upper") { return 3 }
+      return 9
+    }
   }
 #endif
