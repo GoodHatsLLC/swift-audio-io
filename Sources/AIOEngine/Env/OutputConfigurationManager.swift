@@ -188,7 +188,8 @@ public final class OutputConfigurationManager {
 
   private func readConfig(forInputId inputId: String) -> PersistedOutputConfiguration? {
     guard let data = defaults.data(forKey: StorageKey.configByInputId) else { return nil }
-    guard let dict = try? JSONDecoder().decode([String: PersistedOutputConfiguration].self, from: data)
+    guard
+      let dict = try? JSONDecoder().decode([String: PersistedOutputConfiguration].self, from: data)
     else { return nil }
     return dict[inputId]
   }
@@ -196,7 +197,9 @@ public final class OutputConfigurationManager {
   private func writeConfig(_ config: PersistedOutputConfiguration, forInputId inputId: String) {
     let existingData = defaults.data(forKey: StorageKey.configByInputId)
     var dict: [String: PersistedOutputConfiguration] =
-      (existingData.flatMap { try? JSONDecoder().decode([String: PersistedOutputConfiguration].self, from: $0) })
+      (existingData.flatMap {
+        try? JSONDecoder().decode([String: PersistedOutputConfiguration].self, from: $0)
+      })
       ?? [:]
 
     dict[inputId] = config

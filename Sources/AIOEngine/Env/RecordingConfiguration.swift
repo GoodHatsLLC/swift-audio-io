@@ -114,11 +114,12 @@
         return settings
 
       case .flac:
-        let encoderBitDepthHint: Int = switch outputConfiguration.bitDepth {
-        case .pcmInt16: 16
-        case .pcmInt24: 24
-        case .pcmFloat32: 16
-        }
+        let encoderBitDepthHint: Int =
+          switch outputConfiguration.bitDepth {
+          case .pcmInt16: 16
+          case .pcmInt24: 24
+          case .pcmFloat32: 16
+          }
 
         let settings: [String: Any] = [
           AVFormatIDKey: kAudioFormatFLAC,
@@ -141,11 +142,12 @@
         return fileFormat?.settings
 
       case .aiff:
-        let (bitDepth, isFloat): (Int, Bool) = switch outputConfiguration.bitDepth {
-        case .pcmInt16: (16, false)
-        case .pcmInt24: (24, false)
-        case .pcmFloat32: (32, true)
-        }
+        let (bitDepth, isFloat): (Int, Bool) =
+          switch outputConfiguration.bitDepth {
+          case .pcmInt16: (16, false)
+          case .pcmInt24: (24, false)
+          case .pcmFloat32: (32, true)
+          }
 
         return makeLinearPCMSettings(
           bitDepth: bitDepth,
@@ -268,11 +270,12 @@
         return validFormat
 
       case .aiff:
-        let (bitDepth, isFloat): (Int, Bool) = switch outputConfiguration.bitDepth {
-        case .pcmInt16: (16, false)
-        case .pcmInt24: (24, false)
-        case .pcmFloat32: (32, true)
-        }
+        let (bitDepth, isFloat): (Int, Bool) =
+          switch outputConfiguration.bitDepth {
+          case .pcmInt16: (16, false)
+          case .pcmInt24: (24, false)
+          case .pcmFloat32: (32, true)
+          }
 
         let format = makeLinearPCMFormat(
           bitDepth: bitDepth,

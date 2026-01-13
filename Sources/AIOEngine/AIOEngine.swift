@@ -1,10 +1,10 @@
 @preconcurrency import AVFoundation
-import Atomics
-import Tools
 import AsyncAlgorithms
+import Atomics
 import Dispatch
 import Foundation
 import SystemLog
+import Tools
 
 /// The core audio recording and playback engine.
 ///
@@ -572,32 +572,32 @@ public final class AIOEngine: Sendable {
   ) async throws(AIOError) {
     do {
       try await MainActor.run {
-      // Stop any active playback before recording
-      if player.isPlaying {
-        player.stop()
-        placeState(\.playbackInstance, nil)
-        playback = nil
-      }
-      try warm(configuration: configuration)
+        // Stop any active playback before recording
+        if player.isPlaying {
+          player.stop()
+          placeState(\.playbackInstance, nil)
+          playback = nil
+        }
+        try warm(configuration: configuration)
 
-      let (buffers, writefile) = state { ($0.audioBuffers, $0.file) }
-      guard let buffers = buffers,
-        let processingFormat = configuration.processingFormat,
-        let writeFile = writefile,
-        let url = writefile?.url
-      else {
-        throw AIOError.invalidRecordingConfiguration(
-          details: "state after warm(configuration:) was invalid")
-      }
-      do {
-        try engine.start()
-      } catch {
-        throw AIOError.engineStartFailed(error: ErrorContext(error))
-      }
-      let fileFormat = configuration.outputConfiguration.fileFormat.rawValue
-      onRecordingStarted?(url, fileFormat)
-      startFileWriteLoop(flushing: buffers, of: processingFormat, to: writeFile)
-      self.isRecording = true
+        let (buffers, writefile) = state { ($0.audioBuffers, $0.file) }
+        guard let buffers = buffers,
+          let processingFormat = configuration.processingFormat,
+          let writeFile = writefile,
+          let url = writefile?.url
+        else {
+          throw AIOError.invalidRecordingConfiguration(
+            details: "state after warm(configuration:) was invalid")
+        }
+        do {
+          try engine.start()
+        } catch {
+          throw AIOError.engineStartFailed(error: ErrorContext(error))
+        }
+        let fileFormat = configuration.outputConfiguration.fileFormat.rawValue
+        onRecordingStarted?(url, fileFormat)
+        startFileWriteLoop(flushing: buffers, of: processingFormat, to: writeFile)
+        self.isRecording = true
       }
     } catch let error as AIOError {
       throw error
@@ -669,7 +669,8 @@ public final class AIOEngine: Sendable {
       do {
         file = try AVAudioFile(forWriting: url, settings: fileSettings)
       } catch {
-        throw AIOError.audioFileFailed(operation: .openForWriting, url: url, error: ErrorContext(error))
+        throw AIOError.audioFileFailed(
+          operation: .openForWriting, url: url, error: ErrorContext(error))
       }
 
       let inputFormat = engine.inputNode.outputFormat(forBus: 0)
@@ -1142,7 +1143,8 @@ public final class AIOEngine: Sendable {
     do {
       newFile = try AVAudioFile(forWriting: newURL, settings: fileSettings)
     } catch {
-      throw AIOError.audioFileFailed(operation: .openForWriting, url: newURL, error: ErrorContext(error))
+      throw AIOError.audioFileFailed(
+        operation: .openForWriting, url: newURL, error: ErrorContext(error))
     }
 
     // Cancel current writer task (it will flush remaining data to the old file)
@@ -1206,7 +1208,8 @@ public final class AIOEngine: Sendable {
     do {
       file = try AVAudioFile(forReading: url)
     } catch {
-      throw AIOError.audioFileFailed(operation: .openForReading, url: url, error: ErrorContext(error))
+      throw AIOError.audioFileFailed(
+        operation: .openForReading, url: url, error: ErrorContext(error))
     }
     let playbackInstance = PlaybackInstance(id: .init(), file: file)
 
@@ -1278,7 +1281,8 @@ public final class AIOEngine: Sendable {
     do {
       file = try AVAudioFile(forReading: url)
     } catch {
-      throw AIOError.audioFileFailed(operation: .openForReading, url: url, error: ErrorContext(error))
+      throw AIOError.audioFileFailed(
+        operation: .openForReading, url: url, error: ErrorContext(error))
     }
     let sampleRate = file.processingFormat.sampleRate
     let startFrame = AVAudioFramePosition(startTime * sampleRate)
@@ -1511,7 +1515,8 @@ public final class AIOEngine: Sendable {
     do {
       try session.setPreferredIOBufferDuration(preferredDuration)
     } catch {
-      throw .audioSessionFailed(operation: .setPreferredIOBufferDuration, error: ErrorContext(error))
+      throw .audioSessionFailed(
+        operation: .setPreferredIOBufferDuration, error: ErrorContext(error))
     }
 
     // Set preferred input channels if possible
@@ -1522,7 +1527,8 @@ public final class AIOEngine: Sendable {
     do {
       try session.setPreferredInputNumberOfChannels(Int(channelCount))
     } catch {
-      throw .audioSessionFailed(operation: .setPreferredInputNumberOfChannels, error: ErrorContext(error))
+      throw .audioSessionFailed(
+        operation: .setPreferredInputNumberOfChannels, error: ErrorContext(error))
     }
 
     do {
