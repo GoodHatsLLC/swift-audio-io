@@ -1198,8 +1198,8 @@ public final class AIOEngine: Sendable {
   /// - Returns: A `Playback` instance representing the current playback state.
   /// - Throws: An `AIOError.cannotPlayWhileRecording` error if the engine is currently recording.
   @MainActor
-  public func play(url: URL) throws(AIOError) -> Playback {
-    try play(url: url, playbackPollingInterval: nil)
+  public func play(url: URL) async throws(AIOError) -> Playback {
+    try await play(url: url, playbackPollingInterval: nil)
   }
 
   /// Plays an audio file from the specified URL.
@@ -1212,22 +1212,26 @@ public final class AIOEngine: Sendable {
   /// - Returns: A `Playback` instance representing the current playback state.
   /// - Throws: An `AIOError.cannotPlayWhileRecording` error if the engine is currently recording.
   @MainActor
-  public func play(url: URL, playbackPollingInterval: Duration?) throws(AIOError) -> Playback {
+  public func play(url: URL, playbackPollingInterval: Duration?) async throws(AIOError) -> Playback {
     // Prevent playback while recording
     guard !isRecording else {
       throw AIOError.cannotPlayWhileRecording
     }
 
     if getPlayback() != nil {
-      player.stop()
-      engine.stop()
-      engine.reset()
+      await Task { @Background in
+        player.stop()
+        engine.stop()
+        engine.reset()
+      }.value
       state.playbackInstance = nil
       setPlayback(nil)
     } else {
-      engine.stop()
-      player.stop()
-      engine.reset()
+      await Task { @Background in
+        engine.stop()
+        player.stop()
+        engine.reset()
+      }.value
     }
 
     let file: AVAudioFile
@@ -1255,7 +1259,6 @@ public final class AIOEngine: Sendable {
       to: engine.outputNode,
       format: file.processingFormat)
     state.playbackInstance = playbackInstance
-    let player = player
     player
       .scheduleFile(file, at: nil, completionCallbackType: .dataPlayedBack) {
         [
@@ -1295,16 +1298,18 @@ public final class AIOEngine: Sendable {
     endTime: TimeInterval,
     onComplete: (@MainActor @Sendable () -> Void)? = nil,
     playbackPollingInterval: Duration? = nil
-  ) throws(AIOError) -> Playback {
+  ) async throws(AIOError) -> Playback {
     guard !isRecording else {
       throw AIOError.cannotPlayWhileRecording
     }
 
     // Stop any existing playback
     if getPlayback() != nil {
-      player.stop()
-      engine.stop()
-      engine.reset()
+      await Task { @Background in
+        player.stop()
+        engine.stop()
+        engine.reset()
+      }.value
       state.playbackInstance = nil
       setPlayback(nil)
     } else {
@@ -1346,31 +1351,38 @@ public final class AIOEngine: Sendable {
     engine.connect(player, to: engine.outputNode, format: file.processingFormat)
     state.playbackInstance = playbackInstance
 
-    let player = player
-    player.scheduleSegment(
-      file,
-      startingFrame: startFrame,
-      frameCount: frameCount,
-      at: nil,
-      completionCallbackType: .dataPlayedBack
-    ) { [weak self, playbackInstance] _ in
-      self?.cleanupPlaybackInstance(playbackInstance)
-      if let onComplete {
-        Task { @MainActor in
-          onComplete()
+    await Task { @Background in
+      player.scheduleSegment(
+        file,
+        startingFrame: startFrame,
+        frameCount: frameCount,
+        at: nil,
+        completionCallbackType: .dataPlayedBack
+      ) { [weak self, playbackInstance] _ in
+        self?.cleanupPlaybackInstance(playbackInstance)
+        if let onComplete {
+          Task { @MainActor in
+            onComplete()
+          }
         }
       }
-    }
+    }.value
 
-    do {
-      try engine.start()
-    } catch {
-      throw AIOError.engineStartFailed(error: ErrorContext(error))
-    }
+    _ = await Task { @Background in
+      Result(catching: { () throws(AIOError) -> Void in
+        do {
+          try engine.start()
+        } catch {
+          throw AIOError.engineStartFailed(error: ErrorContext(error))
+        }
+      })
+    }.value
 
     let playback = getPlayback(for: playbackInstance)
     setPlayback(playback)
-    player.play()
+    _ = await Task { @Background in
+      player.play()
+    }.value
     resetPlaybackTimer(to: playbackInstance)
 
     return playback
@@ -1415,11 +1427,6 @@ public final class AIOEngine: Sendable {
     player.play()
   }
 
-  @concurrent
-  private nonisolated func stopPlayback() async {
-    player.stop()
-  }
-
   @MainActor
   public func scrubPlay(to time: TimeInterval) throws(AIOError) -> Playback? {
     if let initialInstance = state.playbackInstance {
@@ -1457,12 +1464,11 @@ public final class AIOEngine: Sendable {
 
   /// Stops the current playback.
   ///
-  @MainActor
-  public func stopPlayback() {
+  public func stopPlayback() async {
     if player.isPlaying {
-      Task {
-        await self.stopPlayback()
-      }
+      await Task { @Background in
+        player.stop()
+      }.value
     }
     let finishedFile: AVAudioFile? = state.withLock { state in
       if let foundInstance = state.playbackInstance {
@@ -1473,9 +1479,11 @@ public final class AIOEngine: Sendable {
       }
     }
     finishedFile?.close()
-    playbackTask = nil
-    placeState(\.playbackInstance, nil)
-    playback = nil
+    await Task { @MainActor in
+      playbackTask = nil
+      placeState(\.playbackInstance, nil)
+      playback = nil
+    }.value
   }
 
   /// Pauses the current playback without stopping it.

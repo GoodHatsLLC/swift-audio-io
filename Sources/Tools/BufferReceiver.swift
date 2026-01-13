@@ -65,7 +65,7 @@ public struct BufferTiming: Sendable, Equatable {
 }
 
 /// A protocol for objects that can emit buffers of audio data to receivers.
-public protocol BufferEmitter<T>: AnyObject, Sendable {
+public protocol BufferEmitter<T>: AnyObject {
   associatedtype T
   /// Attaches a buffer receiver to the emitter.
   ///
