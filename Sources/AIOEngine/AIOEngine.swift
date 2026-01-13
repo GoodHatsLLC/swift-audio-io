@@ -260,6 +260,15 @@ public final class AIOEngine: Sendable {
   }
   /// The current playback state, or `nil` if no audio is playing.
   @MainActor public private(set) var playback: Playback?
+  /// The default interval used to refresh `playback.time` while playback is active.
+  ///
+  /// This is intentionally coarse by default to avoid excessive observation churn in UI.
+  ///
+  /// Per-playback overrides can be provided via `play(url:playbackPollingInterval:)`
+  /// and `playSegment(..., playbackPollingInterval:)`.
+  ///
+  /// Values `<= .zero` are treated as `.seconds(0.5)`.
+  @MainActor public var defaultPlaybackPollingInterval: Duration = .seconds(0.5)
   /// Called when the playback item or playback state changes (play/pause/stop), excluding time ticks.
   @MainActor public var onPlaybackStateChanged: (@Sendable @MainActor (Playback?) -> Void)?
   @MainActor private var lastPlaybackStateSignature: PlaybackStateSignature?
@@ -276,6 +285,7 @@ public final class AIOEngine: Sendable {
     let id: UUID
     let file: AVAudioFile
     let startFrame: AVAudioFramePosition
+    let pollingInterval: Duration
   }
   /// A struct representing the current playback state.
   public struct Playback: Sendable, Hashable, Identifiable, Codable {
@@ -1189,6 +1199,20 @@ public final class AIOEngine: Sendable {
   /// - Throws: An `AIOError.cannotPlayWhileRecording` error if the engine is currently recording.
   @MainActor
   public func play(url: URL) throws(AIOError) -> Playback {
+    try play(url: url, playbackPollingInterval: nil)
+  }
+
+  /// Plays an audio file from the specified URL.
+  ///
+  /// This method stops any current playback or recording before starting the new playback.
+  ///
+  /// - Parameters:
+  ///   - url: The URL of the audio file to play.
+  ///   - playbackPollingInterval: Optional override for how often `playback.time` is refreshed.
+  /// - Returns: A `Playback` instance representing the current playback state.
+  /// - Throws: An `AIOError.cannotPlayWhileRecording` error if the engine is currently recording.
+  @MainActor
+  public func play(url: URL, playbackPollingInterval: Duration?) throws(AIOError) -> Playback {
     // Prevent playback while recording
     guard !isRecording else {
       throw AIOError.cannotPlayWhileRecording
@@ -1213,7 +1237,16 @@ public final class AIOEngine: Sendable {
       throw AIOError.audioFileFailed(
         operation: .openForReading, url: url, error: ErrorContext(error))
     }
-    let playbackInstance = PlaybackInstance(id: .init(), file: file, startFrame: file.framePosition)
+    let interval =
+      (playbackPollingInterval ?? defaultPlaybackPollingInterval) > .zero
+      ? (playbackPollingInterval ?? defaultPlaybackPollingInterval)
+      : .seconds(0.5)
+    let playbackInstance = PlaybackInstance(
+      id: .init(),
+      file: file,
+      startFrame: file.framePosition,
+      pollingInterval: interval
+    )
 
     // Connect the player node to the output node.
     // Note: player is already attached in init(), we only need to connect it.
@@ -1260,7 +1293,8 @@ public final class AIOEngine: Sendable {
     url: URL,
     startTime: TimeInterval,
     endTime: TimeInterval,
-    onComplete: (@MainActor @Sendable () -> Void)? = nil
+    onComplete: (@MainActor @Sendable () -> Void)? = nil,
+    playbackPollingInterval: Duration? = nil
   ) throws(AIOError) -> Playback {
     guard !isRecording else {
       throw AIOError.cannotPlayWhileRecording
@@ -1298,7 +1332,16 @@ public final class AIOEngine: Sendable {
       throw AIOError.invalidTimeRange
     }
 
-    let playbackInstance = PlaybackInstance(id: .init(), file: file, startFrame: startFrame)
+    let interval =
+      (playbackPollingInterval ?? defaultPlaybackPollingInterval) > .zero
+      ? (playbackPollingInterval ?? defaultPlaybackPollingInterval)
+      : .seconds(0.5)
+    let playbackInstance = PlaybackInstance(
+      id: .init(),
+      file: file,
+      startFrame: startFrame,
+      pollingInterval: interval
+    )
 
     engine.connect(player, to: engine.outputNode, format: file.processingFormat)
     state.playbackInstance = playbackInstance
@@ -1335,7 +1378,8 @@ public final class AIOEngine: Sendable {
 
   @MainActor func resetPlaybackTimer(to instance: PlaybackInstance) {
     playbackTask = Task { @MainActor in
-      for await _ in AsyncTimerSequence(interval: .seconds(0.5), clock: .suspending) {
+      let interval = instance.pollingInterval
+      for await _ in AsyncTimerSequence(interval: interval, clock: .suspending) {
         if Task.isCancelled { return }
         let p = getPlayback()
         if p?.id == instance.id {
@@ -1385,7 +1429,12 @@ public final class AIOEngine: Sendable {
         throw AIOError.invalidScrubTime(details: time)
       }
       let framePosition = AVAudioFramePosition(time * file.processingFormat.sampleRate)
-      let newInstance = PlaybackInstance(id: .init(), file: file, startFrame: framePosition)
+      let newInstance = PlaybackInstance(
+        id: .init(),
+        file: file,
+        startFrame: framePosition,
+        pollingInterval: initialInstance.pollingInterval
+      )
       state.playbackInstance = newInstance
       Task {
         await scrub(framePosition: framePosition, file: file, newInstance: newInstance)
