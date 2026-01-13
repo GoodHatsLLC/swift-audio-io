@@ -275,6 +275,7 @@ public final class AIOEngine: Sendable {
   struct PlaybackInstance: Identifiable {
     let id: UUID
     let file: AVAudioFile
+    let startFrame: AVAudioFramePosition
   }
   /// A struct representing the current playback state.
   public struct Playback: Sendable, Hashable, Identifiable, Codable {
@@ -352,7 +353,7 @@ public final class AIOEngine: Sendable {
 
   private func getPlayback(for instance: PlaybackInstance) -> Playback {
     let startOffset =
-      Double(instance.file.framePosition) / instance.file.processingFormat.sampleRate
+      Double(instance.startFrame) / instance.file.processingFormat.sampleRate
 
     guard let nodeTime = player.lastRenderTime,
       let playerTime = player.playerTime(forNodeTime: nodeTime)
@@ -1221,7 +1222,7 @@ public final class AIOEngine: Sendable {
       throw AIOError.audioFileFailed(
         operation: .openForReading, url: url, error: ErrorContext(error))
     }
-    let playbackInstance = PlaybackInstance(id: .init(), file: file)
+    let playbackInstance = PlaybackInstance(id: .init(), file: file, startFrame: file.framePosition)
 
     // Connect the player node to the output node.
     // Note: player is already attached in init(), we only need to connect it.
@@ -1306,11 +1307,7 @@ public final class AIOEngine: Sendable {
       throw AIOError.invalidTimeRange
     }
 
-    // Keep the `AVAudioFile` frame position aligned to the segment start so our playback clock
-    // (and progress) remain in the file's absolute timeline.
-    file.framePosition = startFrame
-
-    let playbackInstance = PlaybackInstance(id: .init(), file: file)
+    let playbackInstance = PlaybackInstance(id: .init(), file: file, startFrame: startFrame)
 
     engine.connect(player, to: engine.outputNode, format: file.processingFormat)
     state.playbackInstance = playbackInstance
@@ -1397,7 +1394,7 @@ public final class AIOEngine: Sendable {
         throw AIOError.invalidScrubTime(details: time)
       }
       let framePosition = AVAudioFramePosition(time * file.processingFormat.sampleRate)
-      let newInstance = PlaybackInstance(id: .init(), file: file)
+      let newInstance = PlaybackInstance(id: .init(), file: file, startFrame: framePosition)
       state.playbackInstance = newInstance
       Task {
         await scrub(framePosition: framePosition, file: file, newInstance: newInstance)
