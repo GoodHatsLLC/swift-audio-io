@@ -1410,7 +1410,8 @@ public final class AIOEngine: Sendable {
   private nonisolated func scrub(
     framePosition: AVAudioFramePosition,
     file: AVAudioFile,
-    newInstance: PlaybackInstance
+    newInstance: PlaybackInstance,
+    play: Bool
   ) async {
     player.stop()
     file.framePosition = framePosition
@@ -1425,11 +1426,13 @@ public final class AIOEngine: Sendable {
           self?.cleanupPlaybackInstance(newInstance)
         }
       )
-    player.play()
+    if play {
+      player.play()
+    }
   }
 
   @MainActor
-  public func scrubPlay(to time: TimeInterval) throws(AIOError) -> Playback? {
+  public func scrub(to time: TimeInterval, play: Bool) throws(AIOError) -> Playback? {
     if let initialInstance = state.playbackInstance {
       let playback = getPlayback(for: initialInstance)
       let file = initialInstance.file
@@ -1445,13 +1448,13 @@ public final class AIOEngine: Sendable {
       )
       state.playbackInstance = newInstance
       Task {
-        await scrub(framePosition: framePosition, file: file, newInstance: newInstance)
+        await scrub(framePosition: framePosition, file: file, newInstance: newInstance, play: play)
       }
 
       let newPlayback = Playback(
         id: newInstance.id,
         file: file.url,
-        isPlaying: true,
+        isPlaying: play,
         time: time,
         duration: playback.duration
       )
@@ -1461,6 +1464,11 @@ public final class AIOEngine: Sendable {
     } else {
       return nil
     }
+  }
+
+  @MainActor
+  public func scrubPlay(to time: TimeInterval) throws(AIOError) -> Playback? {
+    try scrub(to: time, play: true)
   }
 
   /// Stops the current playback.
