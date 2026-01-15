@@ -1212,7 +1212,8 @@ public final class AIOEngine: Sendable {
   /// - Returns: A `Playback` instance representing the current playback state.
   /// - Throws: An `AIOError.cannotPlayWhileRecording` error if the engine is currently recording.
   @MainActor
-  public func play(url: URL, playbackPollingInterval: Duration?) async throws(AIOError) -> Playback {
+  public func play(url: URL, playbackPollingInterval: Duration?) async throws(AIOError) -> Playback
+  {
     // Prevent playback while recording
     guard !isRecording else {
       throw AIOError.cannotPlayWhileRecording
