@@ -209,7 +209,7 @@ public final class AIOEngine: Sendable {
   /// A callback that is invoked when a recording fails.
   @MainActor public var onRecordingFailed: (@Sendable @MainActor () -> Void)?
 
-  private nonisolated let engine = AVAudioEngine()
+  private let engine = AVAudioEngine()
   private nonisolated let player = AVAudioPlayerNode()
 
   private let recordingSampleTimeAtomic = ManagedAtomic<Int64>(0)
