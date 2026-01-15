@@ -211,6 +211,7 @@ public final class AIOEngine: Sendable {
 
   private let engine = AVAudioEngine()
   private nonisolated let player = AVAudioPlayerNode()
+  private let playerControlQueue = DispatchQueue(label: "AIOEngine.player-control", qos: .default)
 
   private let recordingSampleTimeAtomic = ManagedAtomic<Int64>(0)
 
@@ -1399,6 +1400,15 @@ public final class AIOEngine: Sendable {
     }
   }
 
+  private nonisolated func withPlayerControlQueue(_ work: @escaping @Sendable () -> Void) async {
+    await withCheckedContinuation { continuation in
+      playerControlQueue.async {
+        work()
+        continuation.resume()
+      }
+    }
+  }
+
   @concurrent
   private nonisolated func scrub(
     framePosition: AVAudioFramePosition,
@@ -1407,23 +1417,24 @@ public final class AIOEngine: Sendable {
     play: Bool
   ) async {
     if Task.isCancelled { return }
-    player.stop()
-    if Task.isCancelled { return }
-    file.framePosition = framePosition
-    player
-      .scheduleSegment(
-        file,
-        startingFrame: framePosition,
-        frameCount: AVAudioFrameCount(file.length) - AVAudioFrameCount(framePosition),
-        at: nil,
-        completionCallbackType: .dataPlayedBack,
-        completionHandler: { [weak self, newInstance] _ in
-          self?.cleanupPlaybackInstance(newInstance)
-        }
-      )
-    if play {
-      if Task.isCancelled { return }
-      player.play()
+    await withPlayerControlQueue { [weak self] in
+      guard let self else { return }
+      self.player.stop()
+      file.framePosition = framePosition
+      self.player
+        .scheduleSegment(
+          file,
+          startingFrame: framePosition,
+          frameCount: AVAudioFrameCount(file.length) - AVAudioFrameCount(framePosition),
+          at: nil,
+          completionCallbackType: .dataPlayedBack,
+          completionHandler: { [weak self, newInstance] _ in
+            self?.cleanupPlaybackInstance(newInstance)
+          }
+        )
+      if play {
+        self.player.play()
+      }
     }
   }
 
@@ -1447,7 +1458,7 @@ public final class AIOEngine: Sendable {
         pollingInterval: initialInstance.pollingInterval
       )
       state.playbackInstance = newInstance
-      scrubTask = Task { [weak self] in
+      scrubTask = Task(priority: .utility) { [weak self] in
         guard let self else { return }
         await self.scrub(
           framePosition: framePosition,
