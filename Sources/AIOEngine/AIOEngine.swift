@@ -1428,7 +1428,11 @@ public final class AIOEngine: Sendable {
   }
 
   @MainActor
-  public func scrub(to time: TimeInterval, play: Bool) throws(AIOError) -> Playback? {
+  public func scrub(
+    to time: TimeInterval,
+    play: Bool,
+    updatePlaybackTimer: Bool = true
+  ) throws(AIOError) -> Playback? {
     if let initialInstance = state.playbackInstance {
       let playback = getPlayback(for: initialInstance)
       let file = initialInstance.file
@@ -1461,7 +1465,11 @@ public final class AIOEngine: Sendable {
         duration: playback.duration
       )
       defer { setPlayback(newPlayback) }
-      resetPlaybackTimer(to: newInstance)
+      if updatePlaybackTimer {
+        resetPlaybackTimer(to: newInstance)
+      } else {
+        playbackTask = nil
+      }
       return newPlayback
     } else {
       return nil
@@ -1502,6 +1510,7 @@ public final class AIOEngine: Sendable {
   public func pausePlayback() {
     guard isPlayback else { return }
     player.pause()
+    scrubTask = nil
     // Update the playback state to reflect paused status
     if let instance = state.playbackInstance {
       setPlayback(getPlayback(for: instance))
