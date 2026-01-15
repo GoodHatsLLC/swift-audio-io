@@ -398,6 +398,13 @@ public final class AIOEngine: Sendable {
       }
     }
   }
+  @MainActor private var scrubTask: Task<Void, Never>? {
+    willSet {
+      if scrubTask != newValue {
+        scrubTask?.cancel()
+      }
+    }
+  }
 
   struct Cache {
     var cachedTapConverter: AVAudioConverter?
@@ -1399,7 +1406,9 @@ public final class AIOEngine: Sendable {
     newInstance: PlaybackInstance,
     play: Bool
   ) async {
+    if Task.isCancelled { return }
     player.stop()
+    if Task.isCancelled { return }
     file.framePosition = framePosition
     player
       .scheduleSegment(
@@ -1413,6 +1422,7 @@ public final class AIOEngine: Sendable {
         }
       )
     if play {
+      if Task.isCancelled { return }
       player.play()
     }
   }
@@ -1433,8 +1443,14 @@ public final class AIOEngine: Sendable {
         pollingInterval: initialInstance.pollingInterval
       )
       state.playbackInstance = newInstance
-      Task {
-        await scrub(framePosition: framePosition, file: file, newInstance: newInstance, play: play)
+      scrubTask = Task { [weak self] in
+        guard let self else { return }
+        await self.scrub(
+          framePosition: framePosition,
+          file: file,
+          newInstance: newInstance,
+          play: play
+        )
       }
 
       let newPlayback = Playback(
@@ -1473,6 +1489,7 @@ public final class AIOEngine: Sendable {
     }
     finishedFile?.close()
       playbackTask = nil
+      scrubTask = nil
       placeState(\.playbackInstance, nil)
       playback = nil
   }
