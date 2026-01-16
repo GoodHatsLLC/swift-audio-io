@@ -56,4 +56,30 @@ public struct AudioSessionConfiguration: Sendable, Hashable {
     )
   }
 }
+
+extension AudioSessionConfiguration {
+  public static func == (
+    lhs: AudioSessionConfiguration,
+    rhs: AudioSessionConfiguration
+  ) -> Bool {
+    lhs.category == rhs.category
+      && lhs.mode == rhs.mode
+      && lhs.options.rawValue == rhs.options.rawValue
+      && lhs.allowsHapticsAndSystemSoundsDuringRecording
+        == rhs.allowsHapticsAndSystemSoundsDuringRecording
+      && lhs.prefersNoInterruptionsFromSystemAlerts
+        == rhs.prefersNoInterruptionsFromSystemAlerts
+      && lhs.prefersInterruptionOnRouteDisconnect
+        == rhs.prefersInterruptionOnRouteDisconnect
+  }
+
+  public func hash(into hasher: inout Hasher) {
+    hasher.combine(category)
+    hasher.combine(mode)
+    hasher.combine(options.rawValue)
+    hasher.combine(allowsHapticsAndSystemSoundsDuringRecording)
+    hasher.combine(prefersNoInterruptionsFromSystemAlerts)
+    hasher.combine(prefersInterruptionOnRouteDisconnect)
+  }
+}
 #endif
