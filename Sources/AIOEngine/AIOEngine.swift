@@ -253,6 +253,10 @@ public final class AIOEngine: Sendable {
   /// Preferred audio session category/mode/options for this engine.
   @MainActor public var sessionConfiguration: AudioSessionConfiguration = .recorderDefault
 
+  @MainActor private var lastRecordingConfiguration: RecordingConfiguration?
+  @MainActor private var pendingRecordingRestart: RecordingConfiguration?
+  @MainActor private var pendingPlaybackResume: PlaybackResume?
+
   /// Called when the engine fails to reconcile the desired recording state
   /// with the actual state after the configured timeout.
   ///
@@ -293,6 +297,14 @@ public final class AIOEngine: Sendable {
     let id: UUID
     let file: AVAudioFile
     let startFrame: AVAudioFramePosition
+    let pollingInterval: Duration
+  }
+
+  private struct PlaybackResume: Sendable {
+    let fileURL: URL
+    let time: TimeInterval
+    let duration: TimeInterval
+    let wasPlaying: Bool
     let pollingInterval: Duration
   }
   /// A struct representing the current playback state.
@@ -477,6 +489,7 @@ public final class AIOEngine: Sendable {
         wantsRecording = false
         return
       }
+      lastRecordingConfiguration = configuration
       reconciliationTask = Task { @MainActor [weak self] in
         await self?.reconcileRecordingState(desiredState: true, configuration: configuration)
       }
@@ -505,6 +518,7 @@ public final class AIOEngine: Sendable {
   ) async -> Bool {
     wantsRecording = true
     reconciliationTask = nil
+    lastRecordingConfiguration = configuration
     await reconcileRecordingState(desiredState: true, configuration: configuration)
     return isRecording
   }
@@ -611,6 +625,7 @@ public final class AIOEngine: Sendable {
           placeState(\.playbackInstance, nil)
           playback = nil
         }
+        lastRecordingConfiguration = configuration
         try warm(configuration: configuration)
 
         let (buffers, writefile) = state { ($0.audioBuffers, $0.file) }
@@ -1856,6 +1871,96 @@ public final class AIOEngine: Sendable {
       log.info("Audio interruption ended")
     @unknown default:
       break
+    }
+  }
+
+  @MainActor
+  public func handleMediaServicesLost() async {
+    log.warning("Media services lost; tearing down engine state")
+    let shouldRestartRecording = isRecording || wantsRecording
+    let configuration = state.recordingConfiguration ?? lastRecordingConfiguration
+
+    pendingPlaybackResume = capturePlaybackResumeState()
+    if pendingPlaybackResume != nil {
+      await stopPlayback()
+    }
+
+    if shouldRestartRecording {
+      pendingRecordingRestart = configuration
+      await handleUnrecoverableInterruption(reason: "Media services lost")
+    } else {
+      pendingRecordingRestart = nil
+    }
+
+    await resetEngineForMediaServices()
+  }
+
+  @MainActor
+  public func handleMediaServicesReset() async {
+    log.warning("Media services reset; rebuilding engine state")
+    await resetEngineForMediaServices()
+
+    if let configuration = pendingRecordingRestart {
+      pendingRecordingRestart = nil
+      pendingPlaybackResume = nil
+      setDesiredRecordingState(true, configuration: configuration)
+      return
+    }
+
+    if let resume = pendingPlaybackResume {
+      pendingPlaybackResume = nil
+      await restartPlayback(from: resume)
+    }
+  }
+
+  @MainActor
+  private func capturePlaybackResumeState() -> PlaybackResume? {
+    guard let instance = state.playbackInstance else { return nil }
+    let playback = getPlayback(for: instance)
+    let time = playback.time
+      ?? (Double(instance.startFrame) / instance.file.processingFormat.sampleRate)
+
+    return PlaybackResume(
+      fileURL: instance.file.url,
+      time: time,
+      duration: playback.duration,
+      wasPlaying: playback.isPlaying,
+      pollingInterval: instance.pollingInterval
+    )
+  }
+
+  @MainActor
+  private func restartPlayback(from resume: PlaybackResume) async {
+    let duration = resume.duration
+    let clampedTime = min(max(0, resume.time), max(0, duration - 0.001))
+    guard duration > clampedTime else { return }
+
+    do {
+      _ = try await playSegment(
+        url: resume.fileURL,
+        startTime: clampedTime,
+        endTime: duration,
+        onComplete: nil,
+        playbackPollingInterval: resume.pollingInterval
+      )
+      if resume.wasPlaying == false {
+        pausePlayback()
+      }
+    } catch {
+      log.error("Failed to resume playback after media services reset: \(error, privacy: .public)")
+    }
+  }
+
+  @MainActor
+  private func resetEngineForMediaServices() async {
+    await withPlayerControlQueue { [weak self] in
+      guard let self else { return }
+      self.player.stop()
+      self.engine.stop()
+      self.engine.reset()
+      if self.engine.attachedNodes.contains(self.player) == false {
+        self.engine.attach(self.player)
+      }
     }
   }
 

@@ -207,6 +207,10 @@
         @Sendable @MainActor (AVAudioSession.InterruptionType, AVAudioSession.InterruptionOptions?)
           async -> Void
       )?
+    /// A callback that is invoked when media services are lost.
+    public var onMediaServicesLost: (@Sendable @MainActor () async -> Void)?
+    /// A callback that is invoked when media services are reset.
+    public var onMediaServicesReset: (@Sendable @MainActor () async -> Void)?
 
     /// A Boolean value that indicates whether the manager is currently running.
     public private(set) var isRunning: Bool = false
@@ -923,18 +927,16 @@
             }
           }
         }
-        group.addTask {
-          for await notification in env.notifications.mediaServicesLost {
+        group.addTask { [weak self] in
+          for await _ in env.notifications.mediaServicesLost {
             if Task.isCancelled { return }
-            log.info(
-              "mediaServicesLost notification: \(String(dump: notification), privacy: .public)")
+            await self?.handleMediaServicesLost()
           }
         }
-        group.addTask {
-          for await notification in env.notifications.mediaServicesReset {
+        group.addTask { [weak self] in
+          for await _ in env.notifications.mediaServicesReset {
             if Task.isCancelled { return }
-            log.info(
-              "mediaServicesReset notification: \(String(dump: notification), privacy: .public)")
+            await self?.handleMediaServicesReset()
           }
         }
         group.addTask { [weak self] in
@@ -1026,6 +1028,33 @@
       }
     }
 
+  }
+
+  extension AudioEnvironmentManager {
+    @MainActor
+    private func handleMediaServicesLost() async {
+      log.warning("mediaServicesLost notification: audio services unavailable")
+      isAudioSessionActive = false
+      await onMediaServicesLost?()
+    }
+
+    @MainActor
+    private func handleMediaServicesReset() async {
+      log.warning("mediaServicesReset notification: rebuilding audio session configuration")
+      isAudioSessionActive = false
+      do {
+        try Self.configureAudioSessionCategory(
+          env.session,
+          configuration: sessionConfiguration
+        )
+      } catch {
+        errorManager.enqueue(error)
+      }
+      restorePreferredInputAndConfigurationIfPossible(
+        reason: "mediaServicesReset notification"
+      )
+      await onMediaServicesReset?()
+    }
   }
 
   extension AudioEnvironmentManager {
