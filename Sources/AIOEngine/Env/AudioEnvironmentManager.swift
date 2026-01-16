@@ -65,7 +65,10 @@
     @MainActor
     public static func prepareAudioSessionCategoryForAppLaunch() {
       do {
-        try configureAudioSessionCategory(AVAudioSession.sharedInstance())
+        try configureAudioSessionCategory(
+          AVAudioSession.sharedInstance(),
+          configuration: .recorderDefault
+        )
       } catch {
         log.error(
           "Failed to prepare audio session category on launch: \(error.localizedDescription, privacy: .public)"
@@ -78,45 +81,23 @@
     /// Activation (`setActive(true)`) is intentionally separated so the app can avoid claiming the
     /// microphone/audio session until explicitly requested.
     public nonisolated static func configureAudioSessionCategory(
-      _ session: AVAudioSession
+      _ session: AVAudioSession,
+      configuration: AudioSessionConfiguration
     ) throws(ManagerError) {
-      // Platform-specific options based on AVAudioSession API availability
-      #if os(iOS)
-        #if targetEnvironment(macCatalyst)
-          // Mac Catalyst supports `AVAudioSession`, but a subset of iOS-only session options may be
-          // rejected at runtime, which can prevent the category from being set and leave the input
-          // node with 0 channels.
-          let sessionOptions: AVAudioSession.CategoryOptions = []
-        #else
-          let sessionOptions: AVAudioSession.CategoryOptions = [
-            .defaultToSpeaker,
-            .allowBluetoothA2DP,
-            .allowAirPlay,
-            .allowBluetoothHFP,
-            .overrideMutedMicrophoneInterruption,
-          ]
-        #endif
-      #elseif os(macOS)
-        // macOS has more limited session options
-        let sessionOptions: AVAudioSession.CategoryOptions = [
-          .allowBluetooth
-        ]
-      #else
-        let sessionOptions: AVAudioSession.CategoryOptions = []
-      #endif
-
       do {
         try session.setCategory(
-          .playAndRecord,
-          mode: .default,
-          options: sessionOptions
+          configuration.category,
+          mode: configuration.mode,
+          options: configuration.options
         )
       } catch {
         throw .audioSessionFailed(operation: .setCategory, error: ErrorContext(error))
       }
 
       do {
-        try session.setAllowHapticsAndSystemSoundsDuringRecording(true)
+        try session.setAllowHapticsAndSystemSoundsDuringRecording(
+          configuration.allowsHapticsAndSystemSoundsDuringRecording
+        )
       } catch {
         throw .audioSessionFailed(
           operation: .setAllowHapticsAndSystemSoundsDuringRecording,
@@ -125,7 +106,9 @@
       }
 
       do {
-        try session.setPrefersNoInterruptionsFromSystemAlerts(true)
+        try session.setPrefersNoInterruptionsFromSystemAlerts(
+          configuration.prefersNoInterruptionsFromSystemAlerts
+        )
       } catch {
         throw .audioSessionFailed(
           operation: .setPrefersNoInterruptionsFromSystemAlerts,
@@ -134,7 +117,9 @@
       }
 
       do {
-        try session.setPrefersInterruptionOnRouteDisconnect(false)
+        try session.setPrefersInterruptionOnRouteDisconnect(
+          configuration.prefersInterruptionOnRouteDisconnect
+        )
       } catch {
         throw .audioSessionFailed(
           operation: .setPrefersInterruptionOnRouteDisconnect,
@@ -168,6 +153,8 @@
     private let env: AudioEnvironment
     /// The underlying `AVAudioSession`.
     public var session: AVAudioSession { env.session }
+    /// The preferred category/mode/options for this environment.
+    public var sessionConfiguration: AudioSessionConfiguration = .recorderDefault
     private let errorManager: any ErrorManaging
     private let defaults: UserDefaults
 
@@ -709,7 +696,10 @@
             do {
               // Configure audio session category/options early, but do NOT activate.
               // Activation should only occur when the app expresses intent to record or play audio.
-              try Self.configureAudioSessionCategory(self.env.session)
+              try Self.configureAudioSessionCategory(
+                self.env.session,
+                configuration: self.sessionConfiguration
+              )
               do {
                 try self.env.request(
                   input: self.env.input
