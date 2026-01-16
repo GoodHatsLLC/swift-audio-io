@@ -211,7 +211,10 @@ public final class AIOEngine: Sendable {
 
   private let engine = AVAudioEngine()
   private nonisolated let player = AVAudioPlayerNode()
-  private let playerControlQueue = DispatchQueue(label: "AIOEngine.player-control", qos: .default)
+  private let playerControlQueue = DispatchQueue(
+    label: "AIOEngine.player-control",
+    qos: .userInitiated
+  )
 
   private let recordingSampleTimeAtomic = ManagedAtomic<Int64>(0)
 
@@ -591,10 +594,16 @@ public final class AIOEngine: Sendable {
     configuration: RecordingConfiguration
   ) async throws(AIOError) {
     do {
+      let shouldClearPlayback = await withPlayerControlQueue { [weak self] in
+        guard let self else { return false }
+        return self.player.isPlaying
+      }
+      if shouldClearPlayback {
+        await stopPlayerIfNeeded()
+      }
       try await MainActor.run {
         // Stop any active playback before recording
-        if player.isPlaying {
-          player.stop()
+        if shouldClearPlayback {
           placeState(\.playbackInstance, nil)
           playback = nil
         }
@@ -825,8 +834,9 @@ public final class AIOEngine: Sendable {
     if engine.isRunning {
       engine.stop()
     }
-    if player.isPlaying {
-      player.stop()
+    playerControlQueue.async { [weak self] in
+      guard let self, self.player.isPlaying else { return }
+      self.player.stop()
     }
     // On iOS 26.x, explicit `disconnectNodeOutput(_:)` has been observed to occasionally
     // raise an uncatchable NSException after background transitions; prefer `reset()`.
@@ -1206,8 +1216,8 @@ public final class AIOEngine: Sendable {
   /// - Returns: A `Playback` instance representing the current playback state.
   /// - Throws: An `AIOError.cannotPlayWhileRecording` error if the engine is currently recording.
   @MainActor
-  public func play(url: URL) throws(AIOError) -> Playback {
-    try play(url: url, playbackPollingInterval: nil)
+  public func play(url: URL) async throws(AIOError) -> Playback {
+    try await play(url: url, playbackPollingInterval: nil)
   }
 
   /// Plays an audio file from the specified URL.
@@ -1220,7 +1230,7 @@ public final class AIOEngine: Sendable {
   /// - Returns: A `Playback` instance representing the current playback state.
   /// - Throws: An `AIOError.cannotPlayWhileRecording` error if the engine is currently recording.
   @MainActor
-  public func play(url: URL, playbackPollingInterval: Duration?) throws(AIOError) -> Playback
+  public func play(url: URL, playbackPollingInterval: Duration?) async throws(AIOError) -> Playback
   {
     // Prevent playback while recording
     guard !isRecording else {
@@ -1228,15 +1238,15 @@ public final class AIOEngine: Sendable {
     }
 
     if getPlayback() != nil {
-        player.stop()
-        engine.stop()
-        engine.reset()
+      await stopPlayerIfNeeded()
+      engine.stop()
+      engine.reset()
       state.playbackInstance = nil
       setPlayback(nil)
     } else {
-        engine.stop()
-        player.stop()
-        engine.reset()
+      engine.stop()
+      await stopPlayerIfNeeded()
+      engine.reset()
     }
 
     let file: AVAudioFile
@@ -1264,14 +1274,17 @@ public final class AIOEngine: Sendable {
       to: engine.outputNode,
       format: file.processingFormat)
     state.playbackInstance = playbackInstance
-    player
-      .scheduleFile(file, at: nil, completionCallbackType: .dataPlayedBack) {
-        [
-          weak self,
-          playbackInstance
-        ] _ in
-        self?.cleanupPlaybackInstance(playbackInstance)
-      }
+    await withPlayerControlQueue { [weak self] in
+      guard let self else { return }
+      self.player
+        .scheduleFile(file, at: nil, completionCallbackType: .dataPlayedBack) {
+          [
+            weak self,
+            playbackInstance
+          ] _ in
+          self?.cleanupPlaybackInstance(playbackInstance)
+        }
+    }
     do {
       try engine.start()
     } catch {
@@ -1279,7 +1292,9 @@ public final class AIOEngine: Sendable {
     }
     let playback = getPlayback(for: playbackInstance)
     setPlayback(playback)
-    player.play()
+    await withPlayerControlQueue { [weak self] in
+      self?.player.play()
+    }
     resetPlaybackTimer(to: playbackInstance)
     return playback
   }
@@ -1303,21 +1318,21 @@ public final class AIOEngine: Sendable {
     endTime: TimeInterval,
     onComplete: (@MainActor @Sendable () -> Void)? = nil,
     playbackPollingInterval: Duration? = nil
-  ) throws(AIOError) -> Playback {
+  ) async throws(AIOError) -> Playback {
     guard !isRecording else {
       throw AIOError.cannotPlayWhileRecording
     }
 
     // Stop any existing playback
     if getPlayback() != nil {
-        player.stop()
-        engine.stop()
-        engine.reset()
+      await stopPlayerIfNeeded()
+      engine.stop()
+      engine.reset()
       state.playbackInstance = nil
       setPlayback(nil)
     } else {
       engine.stop()
-      player.stop()
+      await stopPlayerIfNeeded()
       engine.reset()
     }
 
@@ -1354,7 +1369,9 @@ public final class AIOEngine: Sendable {
     engine.connect(player, to: engine.outputNode, format: file.processingFormat)
     state.playbackInstance = playbackInstance
 
-      player.scheduleSegment(
+    await withPlayerControlQueue { [weak self] in
+      guard let self else { return }
+      self.player.scheduleSegment(
         file,
         startingFrame: startFrame,
         frameCount: frameCount,
@@ -1367,17 +1384,20 @@ public final class AIOEngine: Sendable {
             onComplete()
           }
         }
+      }
     }
 
-        do {
-          try engine.start()
-        } catch {
-          throw AIOError.engineStartFailed(error: ErrorContext(error))
-        }
+    do {
+      try engine.start()
+    } catch {
+      throw AIOError.engineStartFailed(error: ErrorContext(error))
+    }
 
     let playback = getPlayback(for: playbackInstance)
     setPlayback(playback)
-      player.play()
+    await withPlayerControlQueue { [weak self] in
+      self?.player.play()
+    }
     resetPlaybackTimer(to: playbackInstance)
 
     return playback
@@ -1400,12 +1420,19 @@ public final class AIOEngine: Sendable {
     }
   }
 
-  private nonisolated func withPlayerControlQueue(_ work: @escaping @Sendable () -> Void) async {
+  private nonisolated func withPlayerControlQueue<T>(_ work: @escaping @Sendable () -> T) async -> T {
     await withCheckedContinuation { continuation in
       playerControlQueue.async {
-        work()
-        continuation.resume()
+        let result = work()
+        continuation.resume(returning: result)
       }
+    }
+  }
+
+  private nonisolated func stopPlayerIfNeeded() async {
+    await withPlayerControlQueue { [weak self] in
+      guard let self, self.player.isPlaying else { return }
+      self.player.stop()
     }
   }
 
@@ -1494,10 +1521,8 @@ public final class AIOEngine: Sendable {
 
   /// Stops the current playback.
   @MainActor
-  public func stopPlayback() {
-    if player.isPlaying {
-        player.stop()
-    }
+  public func stopPlayback() async {
+    await stopPlayerIfNeeded()
     let finishedFile: AVAudioFile? = state.withLock { state in
       if let foundInstance = state.playbackInstance {
         state.playbackInstance = nil
@@ -1507,10 +1532,10 @@ public final class AIOEngine: Sendable {
       }
     }
     finishedFile?.close()
-      playbackTask = nil
-      scrubTask = nil
-      placeState(\.playbackInstance, nil)
-      playback = nil
+    playbackTask = nil
+    scrubTask = nil
+    placeState(\.playbackInstance, nil)
+    playback = nil
   }
 
   /// Pauses the current playback without stopping it.
@@ -1520,7 +1545,9 @@ public final class AIOEngine: Sendable {
   @MainActor
   public func pausePlayback() {
     guard isPlayback else { return }
-    player.pause()
+    playerControlQueue.async { [weak self] in
+      self?.player.pause()
+    }
     scrubTask = nil
     // Update the playback state to reflect paused status
     if let instance = state.playbackInstance {
@@ -1534,7 +1561,9 @@ public final class AIOEngine: Sendable {
   @MainActor
   public func resumePlayback() {
     guard isPlayback, !player.isPlaying else { return }
-    player.play()
+    playerControlQueue.async { [weak self] in
+      self?.player.play()
+    }
     // Update the playback state to reflect playing status
     if let instance = state.playbackInstance {
       setPlayback(getPlayback(for: instance))
