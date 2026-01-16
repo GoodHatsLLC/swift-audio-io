@@ -211,10 +211,7 @@ public final class AIOEngine: Sendable {
 
   private let engine = AVAudioEngine()
   private nonisolated let player = AVAudioPlayerNode()
-  private let playerControlQueue = DispatchQueue(
-    label: "AIOEngine.player-control",
-    qos: .userInitiated
-  )
+  private let playerControlQueue = DispatchQueue(label: "AIOEngine.player-control", qos: .default)
 
   private let recordingSampleTimeAtomic = ManagedAtomic<Int64>(0)
 
