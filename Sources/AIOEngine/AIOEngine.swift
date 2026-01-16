@@ -1680,6 +1680,7 @@ public final class AIOEngine: Sendable {
     }
   }
 
+  @MainActor
   private func configureAudioSession(for configuration: RecordingConfiguration) throws(AIOError) {
     let session = AVAudioSession.sharedInstance()
 
