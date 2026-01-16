@@ -215,7 +215,7 @@ public final class AIOEngine: Sendable {
 
   private let engine = AVAudioEngine()
   private nonisolated let player = AVAudioPlayerNode()
-  private let playerControlQueue = DispatchQueue(label: "AIOEngine.player-control", qos: .default)
+  private let engineControlQueue = DispatchQueue(label: "AIOEngine.engine-control", qos: .default)
 
   private let recordingSampleTimeAtomic = ManagedAtomic<Int64>(0)
 
@@ -447,7 +447,9 @@ public final class AIOEngine: Sendable {
 
   /// Creates a new instance of the audio engine.
   public init() {
-    engine.attach(player)
+    runOnEngineControlQueue { [engine, player] in
+      engine.attach(player)
+    }
   }
 
   /// Creates a new instance of the audio engine with custom reconciliation configuration.
@@ -455,7 +457,9 @@ public final class AIOEngine: Sendable {
   /// - Parameter reconciliationConfiguration: Configuration for state reconciliation.
   @MainActor public init(reconciliationConfiguration: ReconciliationConfiguration) {
     self.reconciliationConfiguration = reconciliationConfiguration
-    engine.attach(player)
+    runOnEngineControlQueue { [engine, player] in
+      engine.attach(player)
+    }
   }
 
   // MARK: - Recording State Management
@@ -612,7 +616,7 @@ public final class AIOEngine: Sendable {
     configuration: RecordingConfiguration
   ) async throws(AIOError) {
     do {
-      let shouldClearPlayback = await withPlayerControlQueue { [weak self] in
+      let shouldClearPlayback = await withEngineControlQueue { [weak self] in
         guard let self else { return false }
         return self.player.isPlaying
       }
@@ -637,9 +641,11 @@ public final class AIOEngine: Sendable {
           throw AIOError.invalidRecordingConfiguration(
             details: "state after warm(configuration:) was invalid")
         }
-        do {
-          try engine.start()
-        } catch {
+        let startResult = runOnEngineControlQueueResult { [weak self] in
+          guard let self else { return }
+          try self.engine.start()
+        }
+        if case .failure(let error) = startResult {
           throw AIOError.engineStartFailed(error: ErrorContext(error))
         }
         let fileFormat = configuration.outputConfiguration.fileFormat.rawValue
@@ -682,7 +688,7 @@ public final class AIOEngine: Sendable {
       return
     }
     log.info("warming with config: \(configuration, privacy: .public)")
-    let initialInput = engine.inputNode.outputFormat(forBus: 0)
+    let initialInput = runOnEngineControlQueue { engine.inputNode.outputFormat(forBus: 0) }
     log.info("input format: \(initialInput, privacy: .public)")
     if let recordingConfiguration = state.recordingConfiguration {
       if configuration == recordingConfiguration {
@@ -721,13 +727,13 @@ public final class AIOEngine: Sendable {
           operation: .openForWriting, url: url, error: ErrorContext(error))
       }
 
-      let inputFormat = engine.inputNode.outputFormat(forBus: 0)
+      let inputFormat = runOnEngineControlQueue { engine.inputNode.outputFormat(forBus: 0) }
 
       // Validate input format before attempting to install tap.
       // installTap throws an uncatchable NSException if the format is invalid.
       guard inputFormat.channelCount > 0 else {
         let session = AVAudioSession.sharedInstance()
-        let hardwareFormat = engine.inputNode.inputFormat(forBus: 0)
+        let hardwareFormat = runOnEngineControlQueue { engine.inputNode.inputFormat(forBus: 0) }
         let recordPermission = AVAudioApplication.shared.recordPermission
         log.warning(
           """
@@ -744,7 +750,7 @@ public final class AIOEngine: Sendable {
       }
       guard inputFormat.sampleRate > 0 else {
         let session = AVAudioSession.sharedInstance()
-        let hardwareFormat = engine.inputNode.inputFormat(forBus: 0)
+        let hardwareFormat = runOnEngineControlQueue { engine.inputNode.inputFormat(forBus: 0) }
         let recordPermission = AVAudioApplication.shared.recordPermission
         log.warning(
           """
@@ -799,26 +805,30 @@ public final class AIOEngine: Sendable {
         throw AIOError.invalidRecordingConfiguration(details: "Tap bufferSize is 0")
       }
       // Defensive: ensure we never double-install a tap if state got out of sync.
-      engine.inputNode.removeTap(onBus: tapConfiguration.bus)
+      runOnEngineControlQueue {
+        engine.inputNode.removeTap(onBus: tapConfiguration.bus)
+      }
       recordingSampleTimeAtomic.store(0, ordering: .relaxed)
       // Install tap
-      engine.inputNode.installTap(
-        onBus: tapConfiguration.bus,
-        bufferSize: tapConfiguration.bufferSize,
-        format: tapConfiguration.inputAVAudioFormat
-      ) {
-        @Sendable [bufferReceivers]
-        buffer,
-        time in
-        self.processAudio(
-          buffer: buffer,
-          time: time,
-          to: processingFormat,
-          enqueueingTo: audioBuffers,
-          bufferReceivers: bufferReceivers
-        )
+      runOnEngineControlQueue {
+        engine.inputNode.installTap(
+          onBus: tapConfiguration.bus,
+          bufferSize: tapConfiguration.bufferSize,
+          format: tapConfiguration.inputAVAudioFormat
+        ) {
+          @Sendable [bufferReceivers]
+          buffer,
+          time in
+          self.processAudio(
+            buffer: buffer,
+            time: time,
+            to: processingFormat,
+            enqueueingTo: audioBuffers,
+            bufferReceivers: bufferReceivers
+          )
+        }
+        engine.prepare()
       }
-      engine.prepare()
 
       state {
         $0.file = file
@@ -847,19 +857,21 @@ public final class AIOEngine: Sendable {
 
   @MainActor private func hardStop() {
     let tapBus = state.consume(\.installedTapBus)
-    if let tapBus {
-      engine.inputNode.removeTap(onBus: tapBus)
+    runOnEngineControlQueue { [weak self] in
+      guard let self else { return }
+      if let tapBus {
+        self.engine.inputNode.removeTap(onBus: tapBus)
+      }
+      if self.engine.isRunning {
+        self.engine.stop()
+      }
+      if self.player.isPlaying {
+        self.player.stop()
+      }
+      // On iOS 26.x, explicit `disconnectNodeOutput(_:)` has been observed to occasionally
+      // raise an uncatchable NSException after background transitions; prefer `reset()`.
+      self.engine.reset()
     }
-    if engine.isRunning {
-      engine.stop()
-    }
-    playerControlQueue.async { [weak self] in
-      guard let self, self.player.isPlaying else { return }
-      self.player.stop()
-    }
-    // On iOS 26.x, explicit `disconnectNodeOutput(_:)` has been observed to occasionally
-    // raise an uncatchable NSException after background transitions; prefer `reset()`.
-    engine.reset()
     writerTask = nil
     cleanUp()
   }
@@ -867,10 +879,13 @@ public final class AIOEngine: Sendable {
   @MainActor
   private func gracefulStop() async {
     let tapBus = state.consume(\.installedTapBus)
-    if let tapBus = tapBus {
-      engine.inputNode.removeTap(onBus: tapBus)
+    await withEngineControlQueue { [weak self] in
+      guard let self else { return }
+      if let tapBus = tapBus {
+        self.engine.inputNode.removeTap(onBus: tapBus)
+      }
+      self.engine.stop()
     }
-    engine.stop()
     if let writerTask {
       writerTask.cancel()
       await writerTask.value
@@ -1259,15 +1274,11 @@ public final class AIOEngine: Sendable {
     try configureAudioSessionForPlayback()
 
     if getPlayback() != nil {
-      await stopPlayerIfNeeded()
-      engine.stop()
-      engine.reset()
+      await stopAndResetEngine()
       state.playbackInstance = nil
       setPlayback(nil)
     } else {
-      engine.stop()
-      await stopPlayerIfNeeded()
-      engine.reset()
+      await stopAndResetEngine()
     }
 
     let file: AVAudioFile
@@ -1289,7 +1300,7 @@ public final class AIOEngine: Sendable {
     )
 
     state.playbackInstance = playbackInstance
-    await withPlayerControlQueue { [weak self] in
+    await withEngineControlQueue { [weak self] in
       guard let self else { return }
       // Connect the player node to the output node.
       // Note: player is already attached in init(), we only need to connect it.
@@ -1307,14 +1318,16 @@ public final class AIOEngine: Sendable {
           self?.cleanupPlaybackInstance(playbackInstance)
         }
     }
-    do {
-      try engine.start()
-    } catch {
+    let startResult = await withEngineControlQueueResult { [weak self] in
+      guard let self else { return }
+      try self.engine.start()
+    }
+    if case .failure(let error) = startResult {
       throw AIOError.engineStartFailed(error: ErrorContext(error))
     }
     let playback = getPlayback(for: playbackInstance)
     setPlayback(playback)
-    await withPlayerControlQueue { [weak self] in
+    await withEngineControlQueue { [weak self] in
       self?.player.play()
     }
     resetPlaybackTimer(to: playbackInstance)
@@ -1349,15 +1362,11 @@ public final class AIOEngine: Sendable {
 
     // Stop any existing playback
     if getPlayback() != nil {
-      await stopPlayerIfNeeded()
-      engine.stop()
-      engine.reset()
+      await stopAndResetEngine()
       state.playbackInstance = nil
       setPlayback(nil)
     } else {
-      engine.stop()
-      await stopPlayerIfNeeded()
-      engine.reset()
+      await stopAndResetEngine()
     }
 
     let file: AVAudioFile
@@ -1392,7 +1401,7 @@ public final class AIOEngine: Sendable {
 
     state.playbackInstance = playbackInstance
 
-    await withPlayerControlQueue { [weak self] in
+    await withEngineControlQueue { [weak self] in
       guard let self else { return }
       self.engine.connect(
         self.player,
@@ -1415,15 +1424,17 @@ public final class AIOEngine: Sendable {
       }
     }
 
-    do {
-      try engine.start()
-    } catch {
+    let startResult = await withEngineControlQueueResult { [weak self] in
+      guard let self else { return }
+      try self.engine.start()
+    }
+    if case .failure(let error) = startResult {
       throw AIOError.engineStartFailed(error: ErrorContext(error))
     }
 
     let playback = getPlayback(for: playbackInstance)
     setPlayback(playback)
-    await withPlayerControlQueue { [weak self] in
+    await withEngineControlQueue { [weak self] in
       self?.player.play()
     }
     resetPlaybackTimer(to: playbackInstance)
@@ -1448,19 +1459,53 @@ public final class AIOEngine: Sendable {
     }
   }
 
-  private nonisolated func withPlayerControlQueue<T>(_ work: @escaping @Sendable () -> T) async -> T {
+  private nonisolated func runOnEngineControlQueue<T>(_ work: () -> T) -> T {
+    engineControlQueue.sync(execute: work)
+  }
+
+  private nonisolated func runOnEngineControlQueueResult<T>(
+    _ work: () throws -> T
+  ) -> Result<T, Error> {
+    engineControlQueue.sync {
+      Result { try work() }
+    }
+  }
+
+  private nonisolated func withEngineControlQueue<T>(
+    _ work: @escaping @Sendable () -> T
+  ) async -> T {
     await withCheckedContinuation { continuation in
-      playerControlQueue.async {
+      engineControlQueue.async {
         let result = work()
         continuation.resume(returning: result)
       }
     }
   }
 
+  private nonisolated func withEngineControlQueueResult<T>(
+    _ work: @escaping @Sendable () throws -> T
+  ) async -> Result<T, Error> {
+    await withCheckedContinuation { continuation in
+      engineControlQueue.async {
+        let result = Result { try work() }
+        continuation.resume(returning: result)
+      }
+    }
+  }
+
   private nonisolated func stopPlayerIfNeeded() async {
-    await withPlayerControlQueue { [weak self] in
+    await withEngineControlQueue { [weak self] in
       guard let self, self.player.isPlaying else { return }
       self.player.stop()
+    }
+  }
+
+  private nonisolated func stopAndResetEngine() async {
+    await withEngineControlQueue { [weak self] in
+      guard let self else { return }
+      self.player.stop()
+      self.engine.stop()
+      self.engine.reset()
     }
   }
 
@@ -1472,7 +1517,7 @@ public final class AIOEngine: Sendable {
     play: Bool
   ) async {
     if Task.isCancelled { return }
-    await withPlayerControlQueue { [weak self] in
+    await withEngineControlQueue { [weak self] in
       guard let self else { return }
       self.player.stop()
       file.framePosition = framePosition
@@ -1573,7 +1618,7 @@ public final class AIOEngine: Sendable {
   @MainActor
   public func pausePlayback() {
     guard isPlayback else { return }
-    playerControlQueue.async { [weak self] in
+    engineControlQueue.async { [weak self] in
       self?.player.pause()
     }
     scrubTask = nil
@@ -1589,7 +1634,7 @@ public final class AIOEngine: Sendable {
   @MainActor
   public func resumePlayback() {
     guard isPlayback, !player.isPlaying else { return }
-    playerControlQueue.async { [weak self] in
+    engineControlQueue.async { [weak self] in
       self?.player.play()
     }
     // Update the playback state to reflect playing status
@@ -1775,7 +1820,10 @@ public final class AIOEngine: Sendable {
   /// - Parameter event: The route change details.
   @MainActor
   public func handleRouteChange(event: AudioRouteChangeEvent) async {
-    guard isRecording else { return }
+    guard isRecording else {
+      await handlePlaybackRouteChange(event: event)
+      return
+    }
 
     // Prevent re-entrant calls
     guard !state.isHandlingRouteChange else {
@@ -1789,7 +1837,7 @@ public final class AIOEngine: Sendable {
     log.info("Handling route change: \(String(describing: event.reason), privacy: .public)")
 
     let session = AVAudioSession.sharedInstance()
-    let newInputFormat = engine.inputNode.outputFormat(forBus: 0)
+    let newInputFormat = runOnEngineControlQueue { engine.inputNode.outputFormat(forBus: 0) }
 
     guard let currentConfig = state.recordingConfiguration,
       let processingFormat = currentConfig.processingFormat,
@@ -1845,6 +1893,31 @@ public final class AIOEngine: Sendable {
         await handleUnrecoverableInterruption(reason: "No suitable audio route available")
       }
     }
+  }
+
+  @MainActor
+  private func handlePlaybackRouteChange(event: AudioRouteChangeEvent) async {
+    guard isPlayback else { return }
+
+    let resume = capturePlaybackResumeState()
+    guard let resume else { return }
+
+    let (engineIsRunning, playerIsPlaying) = await withEngineControlQueue { [weak self] in
+      guard let self else { return (false, false) }
+      return (self.engine.isRunning, self.player.isPlaying)
+    }
+
+    if resume.wasPlaying {
+      if engineIsRunning && playerIsPlaying { return }
+    } else {
+      if engineIsRunning { return }
+    }
+
+    log.info(
+      "Playback route change recovery triggered: \(String(describing: event.reason), privacy: .public)"
+    )
+    await stopPlayback()
+    await restartPlayback(from: resume)
   }
 
   /// Handles an audio session interruption.
@@ -1953,7 +2026,7 @@ public final class AIOEngine: Sendable {
 
   @MainActor
   private func resetEngineForMediaServices() async {
-    await withPlayerControlQueue { [weak self] in
+    await withEngineControlQueue { [weak self] in
       guard let self else { return }
       self.player.stop()
       self.engine.stop()
@@ -2022,22 +2095,20 @@ public final class AIOEngine: Sendable {
     processingFormat: AVAudioFormat,
     file: AVAudioFile
   ) throws(AIOError) {
-    // Remove old tap (defensive: remove even if state got out of sync).
-    engine.inputNode.removeTap(onBus: state.installedTapBus ?? 0)
+    // Remove old tap and stop engine before reconfiguring.
+    let currentInputFormat = runOnEngineControlQueue { [weak self] in
+      guard let self else { return newInputFormat }
+      self.engine.inputNode.removeTap(onBus: self.state.installedTapBus ?? 0)
+      self.engine.stop()
+      return self.engine.inputNode.outputFormat(forBus: 0)
+    }
     state.installedTapBus = nil
-
-    // Stop engine briefly
-    engine.stop()
-
-    // Re-fetch the input format after stopping - it may have changed
-    // This is critical because the engine state can change after stop()
-    let currentInputFormat = engine.inputNode.outputFormat(forBus: 0)
 
     // Validate the format before attempting to install tap.
     // installTap throws an uncatchable NSException if the format is invalid.
     guard currentInputFormat.channelCount > 0 else {
       let session = AVAudioSession.sharedInstance()
-      let hardwareFormat = engine.inputNode.inputFormat(forBus: 0)
+      let hardwareFormat = runOnEngineControlQueue { engine.inputNode.inputFormat(forBus: 0) }
       let recordPermission = AVAudioApplication.shared.recordPermission
       log.warning(
         """
@@ -2054,7 +2125,7 @@ public final class AIOEngine: Sendable {
 
     guard currentInputFormat.sampleRate > 0 else {
       let session = AVAudioSession.sharedInstance()
-      let hardwareFormat = engine.inputNode.inputFormat(forBus: 0)
+      let hardwareFormat = runOnEngineControlQueue { engine.inputNode.inputFormat(forBus: 0) }
       let recordPermission = AVAudioApplication.shared.recordPermission
       log.warning(
         """
@@ -2097,31 +2168,31 @@ public final class AIOEngine: Sendable {
 
     // Install new tap with updated format
     let audioBuffers = state.audioBuffers ?? []
-    engine.inputNode.installTap(
-      onBus: tapConfiguration.bus,
-      bufferSize: tapConfiguration.bufferSize,
-      format: tapFormat
-    ) {
-      @Sendable [bufferReceivers]
-      buffer,
-      time in
-      self.processAudio(
-        buffer: buffer,
-        time: time,
-        to: processingFormat,
-        enqueueingTo: audioBuffers,
-        bufferReceivers: bufferReceivers
-      )
+    let startResult = runOnEngineControlQueueResult { [weak self] in
+      guard let self else { return }
+      self.engine.inputNode.installTap(
+        onBus: tapConfiguration.bus,
+        bufferSize: tapConfiguration.bufferSize,
+        format: tapFormat
+      ) {
+        @Sendable [bufferReceivers]
+        buffer,
+        time in
+        self.processAudio(
+          buffer: buffer,
+          time: time,
+          to: processingFormat,
+          enqueueingTo: audioBuffers,
+          bufferReceivers: bufferReceivers
+        )
+      }
+      try self.engine.start()
+    }
+    if case .failure(let error) = startResult {
+      throw .engineStartFailed(error: ErrorContext(error))
     }
 
     state.installedTapBus = tapConfiguration.bus
-
-    // Restart engine
-    do {
-      try engine.start()
-    } catch {
-      throw .engineStartFailed(error: ErrorContext(error))
-    }
 
     log.info("Reconfigured tap for new route: \(currentInputFormat, privacy: .public)")
   }
