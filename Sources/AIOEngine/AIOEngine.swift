@@ -1758,7 +1758,7 @@ public final class AIOEngine: Sendable {
       }
     }
 
-    if session.allowsHapticsAndSystemSoundsDuringRecording
+    if session.allowHapticsAndSystemSoundsDuringRecording
       != configuration.allowsHapticsAndSystemSoundsDuringRecording
     {
       do {
