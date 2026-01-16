@@ -695,19 +695,22 @@
       /// - it should be applied at the same level of nesting as its setup
       /// - the end effect once returning should be that `run()` is ready to be called
       await withThrowingTaskGroup(of: Void.self) { group in
-        func configureAudioSession() {
+        func configureAudioSession(
+          env: AudioEnvironment,
+          configuration: AudioSessionConfiguration
+        ) {
           group.addTask {
             do {
               // Configure audio session category/options early, but do NOT activate.
               // Activation should only occur when the app expresses intent to record or play audio.
               try Self.configureAudioSessionCategory(
-                self.env.session,
-                configuration: self.sessionConfiguration
+                env.session,
+                configuration: configuration
               )
               do {
-                try self.env.request(
-                  input: self.env.input
-                    ?? self.env.availableInputs.first(where: { $0.platform.portType == .builtInMic }
+                try env.request(
+                  input: env.input
+                    ?? env.availableInputs.first(where: { $0.platform.portType == .builtInMic }
                     )
                 )
               } catch let error as AudioEnvironment.RequestError {
@@ -721,22 +724,22 @@
               log.info(
                 """
                 🔊 AudioEnvironmentManager.run() configured AudioSession (inactive) with base settings:
-                category: \(self.env.session.category.rawValue, privacy: .public)
-                options: \(self.env.session.categoryOptions.description, privacy: .public)
-                allowHapticsAndSystemSoundsDuringRecording: \(self.env.session.allowHapticsAndSystemSoundsDuringRecording, privacy: .public)
-                prefersNoInterruptionsFromSystemAlerts: \(self.env.session.prefersNoInterruptionsFromSystemAlerts, privacy: .public)
-                prefersInterruptionOnRouteDisconnect: \(self.env.session.prefersInterruptionOnRouteDisconnect, privacy: .public)
+                category: \(env.session.category.rawValue, privacy: .public)
+                options: \(env.session.categoryOptions.description, privacy: .public)
+                allowHapticsAndSystemSoundsDuringRecording: \(env.session.allowHapticsAndSystemSoundsDuringRecording, privacy: .public)
+                prefersNoInterruptionsFromSystemAlerts: \(env.session.prefersNoInterruptionsFromSystemAlerts, privacy: .public)
+                prefersInterruptionOnRouteDisconnect: \(env.session.prefersInterruptionOnRouteDisconnect, privacy: .public)
                 """
               )
             } catch let error as ManagerError {
               log.error(
                 """
                 🔊 AudioEnvironmentManager.run() failed:
-                category: \(self.env.session.category.rawValue, privacy: .public)
-                options: \(self.env.session.categoryOptions.description, privacy: .public)
-                allowHapticsAndSystemSoundsDuringRecording: \(self.env.session.allowHapticsAndSystemSoundsDuringRecording, privacy: .public)
-                prefersNoInterruptionsFromSystemAlerts: \(self.env.session.prefersNoInterruptionsFromSystemAlerts, privacy: .public)
-                prefersInterruptionOnRouteDisconnect: \(self.env.session.prefersInterruptionOnRouteDisconnect, privacy: .public)
+                category: \(env.session.category.rawValue, privacy: .public)
+                options: \(env.session.categoryOptions.description, privacy: .public)
+                allowHapticsAndSystemSoundsDuringRecording: \(env.session.allowHapticsAndSystemSoundsDuringRecording, privacy: .public)
+                prefersNoInterruptionsFromSystemAlerts: \(env.session.prefersNoInterruptionsFromSystemAlerts, privacy: .public)
+                prefersInterruptionOnRouteDisconnect: \(env.session.prefersInterruptionOnRouteDisconnect, privacy: .public)
                 error: \(error, privacy: .public)
                 """
               )
@@ -746,11 +749,11 @@
               log.error(
                 """
                 🔊 AudioEnvironmentManager.run() failed:
-                category: \(self.env.session.category.rawValue, privacy: .public)
-                options: \(self.env.session.categoryOptions.description, privacy: .public)
-                allowHapticsAndSystemSoundsDuringRecording: \(self.env.session.allowHapticsAndSystemSoundsDuringRecording, privacy: .public)
-                prefersNoInterruptionsFromSystemAlerts: \(self.env.session.prefersNoInterruptionsFromSystemAlerts, privacy: .public)
-                prefersInterruptionOnRouteDisconnect: \(self.env.session.prefersInterruptionOnRouteDisconnect, privacy: .public)
+                category: \(env.session.category.rawValue, privacy: .public)
+                options: \(env.session.categoryOptions.description, privacy: .public)
+                allowHapticsAndSystemSoundsDuringRecording: \(env.session.allowHapticsAndSystemSoundsDuringRecording, privacy: .public)
+                prefersNoInterruptionsFromSystemAlerts: \(env.session.prefersNoInterruptionsFromSystemAlerts, privacy: .public)
+                prefersInterruptionOnRouteDisconnect: \(env.session.prefersInterruptionOnRouteDisconnect, privacy: .public)
                 error: \(mapped, privacy: .public)
                 """
               )
@@ -763,7 +766,10 @@
         var isConfigured = false
         while !isConfigured {
           do {
-            configureAudioSession()
+            let (env, configuration) = await MainActor.run {
+              (self.env, self.sessionConfiguration)
+            }
+            configureAudioSession(env: env, configuration: configuration)
             _ = try await group.next()
             isConfigured = true
           } catch {
