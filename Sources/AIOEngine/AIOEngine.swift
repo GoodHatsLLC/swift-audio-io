@@ -1264,15 +1264,16 @@ public final class AIOEngine: Sendable {
       pollingInterval: interval
     )
 
-    // Connect the player node to the output node.
-    // Note: player is already attached in init(), we only need to connect it.
-    engine.connect(
-      player,
-      to: engine.outputNode,
-      format: file.processingFormat)
     state.playbackInstance = playbackInstance
     await withPlayerControlQueue { [weak self] in
       guard let self else { return }
+      // Connect the player node to the output node.
+      // Note: player is already attached in init(), we only need to connect it.
+      self.engine.connect(
+        self.player,
+        to: self.engine.outputNode,
+        format: file.processingFormat
+      )
       self.player
         .scheduleFile(file, at: nil, completionCallbackType: .dataPlayedBack) {
           [
@@ -1363,11 +1364,15 @@ public final class AIOEngine: Sendable {
       pollingInterval: interval
     )
 
-    engine.connect(player, to: engine.outputNode, format: file.processingFormat)
     state.playbackInstance = playbackInstance
 
     await withPlayerControlQueue { [weak self] in
       guard let self else { return }
+      self.engine.connect(
+        self.player,
+        to: self.engine.outputNode,
+        format: file.processingFormat
+      )
       self.player.scheduleSegment(
         file,
         startingFrame: startFrame,
