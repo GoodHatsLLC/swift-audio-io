@@ -60,9 +60,13 @@ public final class AIOEngine: Sendable {
   /// Errors that can occur during audio engine operations.
   public enum AIOError: AudioError, LocalizedError {
     public enum AudioSessionOperation: String, Sendable, Equatable, CustomStringConvertible {
+      case setCategory
       case setPreferredSampleRate
       case setPreferredIOBufferDuration
       case setPreferredInputNumberOfChannels
+      case setAllowHapticsAndSystemSoundsDuringRecording
+      case setPrefersNoInterruptionsFromSystemAlerts
+      case setPrefersInterruptionOnRouteDisconnect
       case setActive
       case setPreferredInput
       case overrideOutputAudioPort
@@ -245,6 +249,9 @@ public final class AIOEngine: Sendable {
 
   /// Configuration for state reconciliation attempts.
   @MainActor public var reconciliationConfiguration: ReconciliationConfiguration = .default
+
+  /// Preferred audio session category/mode/options for this engine.
+  @MainActor public var sessionConfiguration: AudioSessionConfiguration = .recorderDefault
 
   /// Called when the engine fails to reconcile the desired recording state
   /// with the actual state after the configured timeout.
@@ -1234,6 +1241,8 @@ public final class AIOEngine: Sendable {
       throw AIOError.cannotPlayWhileRecording
     }
 
+    try configureAudioSessionForPlayback()
+
     if getPlayback() != nil {
       await stopPlayerIfNeeded()
       engine.stop()
@@ -1320,6 +1329,8 @@ public final class AIOEngine: Sendable {
     guard !isRecording else {
       throw AIOError.cannotPlayWhileRecording
     }
+
+    try configureAudioSessionForPlayback()
 
     // Stop any existing playback
     if getPlayback() != nil {
@@ -1612,6 +1623,8 @@ public final class AIOEngine: Sendable {
   private func configureAudioSession(for configuration: RecordingConfiguration) throws(AIOError) {
     let session = AVAudioSession.sharedInstance()
 
+    try applyAudioSessionConfiguration(session)
+
     // Set preferred sample rate
     do {
       try session.setPreferredSampleRate(configuration.inputConfiguration.sampleRate.platform)
@@ -1652,6 +1665,82 @@ public final class AIOEngine: Sendable {
     log.info(
       "Audio session configured - Sample rate: \(session.sampleRate, privacy: .public), Buffer duration: \(session.ioBufferDuration, privacy: .public), Input channels: \(session.inputNumberOfChannels, privacy: .public)"
     )
+  }
+
+  @MainActor
+  private func configureAudioSessionForPlayback() throws(AIOError) {
+    let session = AVAudioSession.sharedInstance()
+    try applyAudioSessionConfiguration(session)
+    do {
+      try session.setActive(true)
+    } catch {
+      throw .audioSessionFailed(operation: .setActive, error: ErrorContext(error))
+    }
+  }
+
+  @MainActor
+  private func applyAudioSessionConfiguration(_ session: AVAudioSession) throws(AIOError) {
+    let configuration = sessionConfiguration
+
+    if session.category != configuration.category
+      || session.mode != configuration.mode
+      || session.categoryOptions != configuration.options
+    {
+      do {
+        try session.setCategory(
+          configuration.category,
+          mode: configuration.mode,
+          options: configuration.options
+        )
+      } catch {
+        throw .audioSessionFailed(operation: .setCategory, error: ErrorContext(error))
+      }
+    }
+
+    if session.allowsHapticsAndSystemSoundsDuringRecording
+      != configuration.allowsHapticsAndSystemSoundsDuringRecording
+    {
+      do {
+        try session.setAllowHapticsAndSystemSoundsDuringRecording(
+          configuration.allowsHapticsAndSystemSoundsDuringRecording
+        )
+      } catch {
+        throw .audioSessionFailed(
+          operation: .setAllowHapticsAndSystemSoundsDuringRecording,
+          error: ErrorContext(error)
+        )
+      }
+    }
+
+    if session.prefersNoInterruptionsFromSystemAlerts
+      != configuration.prefersNoInterruptionsFromSystemAlerts
+    {
+      do {
+        try session.setPrefersNoInterruptionsFromSystemAlerts(
+          configuration.prefersNoInterruptionsFromSystemAlerts
+        )
+      } catch {
+        throw .audioSessionFailed(
+          operation: .setPrefersNoInterruptionsFromSystemAlerts,
+          error: ErrorContext(error)
+        )
+      }
+    }
+
+    if session.prefersInterruptionOnRouteDisconnect
+      != configuration.prefersInterruptionOnRouteDisconnect
+    {
+      do {
+        try session.setPrefersInterruptionOnRouteDisconnect(
+          configuration.prefersInterruptionOnRouteDisconnect
+        )
+      } catch {
+        throw .audioSessionFailed(
+          operation: .setPrefersInterruptionOnRouteDisconnect,
+          error: ErrorContext(error)
+        )
+      }
+    }
   }
 
   private func calculatePreferredBufferDuration(sampleRate: Double) -> TimeInterval {
