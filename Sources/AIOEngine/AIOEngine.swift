@@ -252,6 +252,10 @@ public final class AIOEngine: Sendable {
 
   /// Preferred audio session category/mode/options for this engine.
   @MainActor public var sessionConfiguration: AudioSessionConfiguration = .recorderDefault
+  /// Whether the engine should deactivate the audio session when it becomes idle.
+  ///
+  /// Leave this `false` when a higher-level manager owns session lifecycle.
+  @MainActor public var deactivateAudioSessionOnStop: Bool = false
 
   @MainActor private var lastRecordingConfiguration: RecordingConfiguration?
   @MainActor private var pendingRecordingRestart: RecordingConfiguration?
@@ -894,6 +898,7 @@ public final class AIOEngine: Sendable {
     isRecording = false
     wantsRecording = false
     reconciliationTask = nil
+    deactivateAudioSessionIfNeeded(reason: "recording stopped")
   }
 
   @MainActor private func cleanUp() {
@@ -1609,6 +1614,7 @@ public final class AIOEngine: Sendable {
     scrubTask = nil
     placeState(\.playbackInstance, nil)
     playback = nil
+    deactivateAudioSessionIfNeeded(reason: "playback stopped")
   }
 
   /// Pauses the current playback without stopping it.
@@ -1656,6 +1662,7 @@ public final class AIOEngine: Sendable {
       Task { @MainActor [weak self, state] in
         if state.playbackInstance == nil {
           self?.setPlayback(nil)
+          self?.deactivateAudioSessionIfNeeded(reason: "playback finished")
         }
       }
       finishedFile.close()
@@ -1801,6 +1808,26 @@ public final class AIOEngine: Sendable {
           error: ErrorContext(error)
         )
       }
+    }
+  }
+
+  @MainActor
+  private func deactivateAudioSessionIfNeeded(reason: String) {
+    guard deactivateAudioSessionOnStop else { return }
+    guard !isRecording, !isPlayback, !wantsRecording else { return }
+
+    let session = AVAudioSession.sharedInstance()
+    do {
+      try session.setActive(false, options: .notifyOthersOnDeactivation)
+    } catch {
+      let wrapped = AIOError.audioSessionFailed(
+        operation: .setActive,
+        error: ErrorContext(error)
+      )
+      log.error(
+        "Failed to deactivate audio session (\(reason, privacy: .public)): \(wrapped, privacy: .public)"
+      )
+      errorSubject.send(wrapped)
     }
   }
 
