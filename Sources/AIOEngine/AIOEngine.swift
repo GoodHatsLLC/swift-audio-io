@@ -2018,7 +2018,8 @@ public final class AIOEngine: Sendable {
   private func capturePlaybackResumeState() -> PlaybackResume? {
     guard let instance = state.playbackInstance else { return nil }
     let playback = getPlayback(for: instance)
-    let time = playback.time
+    let time =
+      playback.time
       ?? (Double(instance.startFrame) / instance.file.processingFormat.sampleRate)
 
     return PlaybackResume(
