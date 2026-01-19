@@ -1,5 +1,6 @@
 #if canImport(AVFAudio)
   import Foundation
+  import Tools
 
   // MARK: - Time Domain Data
 
@@ -283,6 +284,103 @@
       sensitivity: 0.7,
       minimumBeatInterval: 0.15
     )
+  }
+
+  // MARK: - Visualization Work Registration
+
+  /// Declarative work specification for visualization pipelines.
+  public struct VisualizationWork: Sendable, Equatable {
+    public var lod: LODWork?
+    public var analysis: AnalysisWork?
+
+    public init(lod: LODWork? = nil, analysis: AnalysisWork? = nil) {
+      self.lod = lod
+      self.analysis = analysis
+    }
+
+    public static let none = VisualizationWork()
+  }
+
+  /// LOD (multi-band waveform) processing requirements.
+  public struct LODWork: Sendable, Equatable {
+    public var configuration: MultiBandLODConfiguration
+    public var publishRateHz: Double
+
+    public init(
+      configuration: MultiBandLODConfiguration = .default,
+      publishRateHz: Double = 60
+    ) {
+      self.configuration = configuration
+      self.publishRateHz = max(1, publishRateHz)
+    }
+  }
+
+  /// Analysis processing requirements for time/frequency/beat data.
+  public struct AnalysisWork: Sendable, Equatable {
+    public var updateRateHz: Double
+    public var timeDomain: AmplitudeAnalyzer.Configuration?
+    public var frequencyDomain: FrequencyDomainWork?
+    public var beatDetection: BeatDetectionConfiguration?
+
+    public init(
+      updateRateHz: Double = 30,
+      timeDomain: AmplitudeAnalyzer.Configuration? = nil,
+      frequencyDomain: FrequencyDomainWork? = nil,
+      beatDetection: BeatDetectionConfiguration? = nil
+    ) {
+      self.updateRateHz = max(1, updateRateHz)
+      self.timeDomain = timeDomain
+      self.frequencyDomain = frequencyDomain
+      self.beatDetection = beatDetection
+    }
+  }
+
+  /// Frequency-domain requirements including FFT and bucketing configuration.
+  public struct FrequencyDomainWork: Sendable, Equatable {
+    public var configuration: FrequencyAnalyzer.Configuration
+    public var bucketMode: FrequencyBucketMode
+    public var peakHoldDecayRate: Float
+
+    public init(
+      configuration: FrequencyAnalyzer.Configuration,
+      bucketMode: FrequencyBucketMode = .default,
+      peakHoldDecayRate: Float = 0.015
+    ) {
+      self.configuration = configuration
+      self.bucketMode = bucketMode
+      self.peakHoldDecayRate = max(0, peakHoldDecayRate)
+    }
+  }
+
+  /// Sink callbacks for visualization outputs.
+  public struct VisualizationSinks: @unchecked Sendable {
+    public var timeDomain: (@MainActor (TimeDomainData) -> Void)?
+    public var frequencyDomain: (@MainActor (FrequencyDomainData) -> Void)?
+    public var beat: (@MainActor (BeatInfo) -> Void)?
+    public var lodSnapshot: (@MainActor (LODSnapshotRef?) -> Void)?
+    public var latestBufferTiming: (@MainActor (BufferTiming?) -> Void)?
+
+    public init(
+      timeDomain: (@MainActor (TimeDomainData) -> Void)? = nil,
+      frequencyDomain: (@MainActor (FrequencyDomainData) -> Void)? = nil,
+      beat: (@MainActor (BeatInfo) -> Void)? = nil,
+      lodSnapshot: (@MainActor (LODSnapshotRef?) -> Void)? = nil,
+      latestBufferTiming: (@MainActor (BufferTiming?) -> Void)? = nil
+    ) {
+      self.timeDomain = timeDomain
+      self.frequencyDomain = frequencyDomain
+      self.beat = beat
+      self.lodSnapshot = lodSnapshot
+      self.latestBufferTiming = latestBufferTiming
+    }
+
+    public static let empty = VisualizationSinks()
+  }
+
+  /// A consumer that declares required work and exposes sinks for updates.
+  public protocol VisualizationConsumer: AnyObject {
+    var work: VisualizationWork { get }
+    var sinks: VisualizationSinks { get }
   }
 
 #endif

@@ -147,7 +147,9 @@
     private let isActiveAtomic = ManagedAtomic<Bool>(false)
     private let wantsActiveAtomic = ManagedAtomic<Bool>(false)
     private let isForegroundAtomic = ManagedAtomic<Bool>(true)
-    private let visualizationConsumerCountAtomic = ManagedAtomic<Int>(0)
+    private let hasConsumerAtomic = ManagedAtomic<Bool>(false)
+    private let analysisEnabledAtomic = ManagedAtomic<Bool>(false)
+    private let lodEnabledAtomic = ManagedAtomic<Bool>(false)
 
     /// Most recently received buffer timing (published from the main queue).
     public var latestBufferTiming: BufferTiming?
@@ -261,6 +263,8 @@
     /// Multi-band Level-of-Detail processor for Metal visualization.
     /// Enable with `enableMultiBandLOD(configuration:)`.
     private var lodProcessor: MultiBandLODProcessor?
+    private var lodConfig: MultiBandLODConfiguration?
+    private var legacyLodWork: LODWork?
 
     /// Current multi-band LOD snapshot for GPU rendering (creates a copy).
     /// Returns nil if multi-band LOD is not enabled.
@@ -288,21 +292,113 @@
 
     private let configuration: Configuration
 
-    #if DEBUG
-      private let processingQueue = DispatchQueue(
-        label: "audio-visualization",
-        qos: .userInteractive
-      )
+    private let processingQueue = DispatchQueue(
+      label: "audio-visualization",
+      qos: .userInteractive
+    )
 
-      private let amplitudeAnalyzer: AmplitudeAnalyzer
-      private let frequencyAnalyzer: FrequencyAnalyzer?
-      private let frequencyBucketer: FrequencyBucketer
-      private let beatDetector: BeatDetector
-      private let frequencySampleCount: Int
-      private let ringBuffer: RingBuffer<Float>
-      private let maxVisualizationSamples: Int
-      private var readScratchBuffer: [Float]
-    #endif
+    private struct ConsumerState {
+      var consumerId: ObjectIdentifier?
+      var work: VisualizationWork
+      var sinks: VisualizationSinks
+
+      init(
+        consumerId: ObjectIdentifier? = nil,
+        work: VisualizationWork = .none,
+        sinks: VisualizationSinks = .empty
+      ) {
+        self.consumerId = consumerId
+        self.work = work
+        self.sinks = sinks
+      }
+    }
+
+    private struct AnalysisFlags: OptionSet {
+      let rawValue: Int
+      static let timeDomain = AnalysisFlags(rawValue: 1 << 0)
+      static let frequencyDomain = AnalysisFlags(rawValue: 1 << 1)
+      static let beat = AnalysisFlags(rawValue: 1 << 2)
+    }
+
+    private struct AnalysisConfig: Equatable {
+      var timeDomain: AmplitudeAnalyzer.Configuration?
+      var frequencyDomain: FrequencyDomainWork?
+      var beatDetection: BeatDetectionConfiguration?
+    }
+
+    private final class AnalysisPipeline {
+      let amplitudeAnalyzer: AmplitudeAnalyzer?
+      let frequencyAnalyzer: FrequencyAnalyzer?
+      let frequencyBucketer: FrequencyBucketer?
+      let beatDetector: BeatDetector?
+      let frequencySampleCount: Int
+      let peakHoldDecayRate: Float
+      let ringBuffer: RingBuffer<Float>
+      let maxVisualizationSamples: Int
+      var readScratchBuffer: [Float]
+
+      init(config: AnalysisConfig, sampleRate: Double) {
+        if let amplitudeConfig = config.timeDomain {
+          self.amplitudeAnalyzer = AmplitudeAnalyzer(configuration: amplitudeConfig)
+        } else {
+          self.amplitudeAnalyzer = nil
+        }
+
+        var builtFrequencyAnalyzer: FrequencyAnalyzer?
+        var frequencySampleCount = 0
+        var frequencyBucketer: FrequencyBucketer?
+        var peakHoldDecayRate: Float = 0.015
+
+        if let frequencyWork = config.frequencyDomain {
+          let frequencyConfig = frequencyWork.configuration
+          frequencySampleCount = frequencyConfig.fftSize
+          do {
+            builtFrequencyAnalyzer = try FrequencyAnalyzer(configuration: frequencyConfig)
+          } catch {
+            log.error(
+              "Failed to create FrequencyAnalyzer: \(error.localizedDescription, privacy: .public)"
+            )
+            frequencySampleCount = 0
+          }
+          frequencyBucketer = FrequencyBucketer(
+            mode: frequencyWork.bucketMode,
+            sampleRate: Float(sampleRate),
+            peakHoldDecayRate: frequencyWork.peakHoldDecayRate
+          )
+          peakHoldDecayRate = frequencyWork.peakHoldDecayRate
+        }
+
+        self.frequencyAnalyzer = builtFrequencyAnalyzer
+        self.frequencySampleCount = frequencySampleCount
+        self.frequencyBucketer = frequencyBucketer
+        self.peakHoldDecayRate = peakHoldDecayRate
+
+        if let beatConfig = config.beatDetection {
+          self.beatDetector = BeatDetector(configuration: beatConfig)
+        } else {
+          self.beatDetector = nil
+        }
+
+        let maxSamples = max(config.timeDomain?.windowSize ?? 0, frequencySampleCount)
+        let resolvedMaxSamples = max(maxSamples, 1)
+        let ringCapacity = max(resolvedMaxSamples * 4, 1024)
+        self.maxVisualizationSamples = resolvedMaxSamples
+        self.ringBuffer = RingBuffer<Float>(capacity: ringCapacity)
+        self.readScratchBuffer = Array(repeating: 0.0, count: resolvedMaxSamples)
+      }
+    }
+
+    private let consumerLock = NSLock()
+    private var consumerState = ConsumerState()
+    private let analysisFlagsAtomic = ManagedAtomic<Int>(0)
+
+    private var analysisConfig: AnalysisConfig?
+    private var analysisPipeline: AnalysisPipeline?
+    private var analysisUpdateRateHz: Double?
+    private var lodPublishRateHz: Double?
+
+    private var analysisTimer: DispatchSourceTimer?
+    private var lodPublishTimer: DispatchSourceTimer?
 
     // MARK: - Initialization
 
@@ -312,44 +408,6 @@
     public init(configuration: Configuration = Configuration()) {
       self.configuration = configuration
       self.latestSampleRateBitsAtomic = ManagedAtomic(configuration.sampleRate.bitPattern)
-
-      #if DEBUG
-        self.amplitudeAnalyzer = AmplitudeAnalyzer(
-          configuration: configuration.amplitudeAnalyzerConfiguration)
-        self.frequencyBucketer = FrequencyBucketer(
-          mode: configuration.bucketMode,
-          sampleRate: Float(configuration.sampleRate)
-        )
-        self.beatDetector = BeatDetector(configuration: configuration.beatDetectionConfiguration)
-
-        var builtFrequencyAnalyzer: FrequencyAnalyzer?
-        var frequencySampleCount = 0
-
-        if let frequencyConfig = configuration.frequencyAnalyzerConfiguration {
-          frequencySampleCount = frequencyConfig.fftSize
-          do {
-            builtFrequencyAnalyzer = try FrequencyAnalyzer(configuration: frequencyConfig)
-          } catch {
-            log.error(
-              "Failed to create FrequencyAnalyzer: \(error.localizedDescription, privacy: .public)")
-            frequencySampleCount = 0
-          }
-        }
-
-        self.frequencyAnalyzer = builtFrequencyAnalyzer
-        self.frequencySampleCount = frequencySampleCount
-
-        if let analyzer = builtFrequencyAnalyzer {
-          self.frequencyLabels = analyzer.getFrequencyLabels()
-        }
-
-        let maxSamples = max(configuration.amplitudeWindowSize, frequencySampleCount)
-        let resolvedMaxSamples = max(maxSamples, 1)
-        let ringCapacity = max(resolvedMaxSamples * 4, 1024)
-        self.maxVisualizationSamples = resolvedMaxSamples
-        self.ringBuffer = RingBuffer<Float>(capacity: ringCapacity)
-        self.readScratchBuffer = Array(repeating: 0.0, count: resolvedMaxSamples)
-      #endif
     }
 
     deinit {
@@ -364,19 +422,39 @@
       updateProcessingState()
     }
 
-    /// Marks a visualization consumer as visible.
-    ///
-    /// Used to prevent running the visualization processing pipeline when it would be wasted
-    /// because no UI is visible that consumes its data.
-    public func visualizationConsumerDidAppear() {
-      visualizationConsumerCountAtomic.wrappingIncrement(by: 1, ordering: .relaxed)
+    /// Registers a visualization consumer and applies its declared work and sinks.
+    @MainActor
+    public func register(consumer: VisualizationConsumer) {
+      let consumerId = ObjectIdentifier(consumer)
+      let work = consumer.work
+      let sinks = consumer.sinks
+
+      updateConsumerState(consumerId: consumerId, work: work, sinks: sinks)
+      hasConsumerAtomic.store(true, ordering: .relaxed)
+      applyWork(work, sinks: sinks)
       updateProcessingState()
     }
 
-    /// Marks a visualization consumer as no longer visible.
+    /// Unregisters a visualization consumer if it is currently active.
+    @MainActor
+    public func unregister(consumer: VisualizationConsumer) {
+      let consumerId = ObjectIdentifier(consumer)
+      let removed = clearConsumerIfMatching(consumerId)
+      guard removed else { return }
+      hasConsumerAtomic.store(false, ordering: .relaxed)
+      applyWork(.none, sinks: .empty)
+      updateProcessingState()
+    }
+
+    @available(*, deprecated, message: "Use register(consumer:) instead.")
+    public func visualizationConsumerDidAppear() {
+      hasConsumerAtomic.store(true, ordering: .relaxed)
+      updateProcessingState()
+    }
+
+    @available(*, deprecated, message: "Use unregister(consumer:) instead.")
     public func visualizationConsumerDidDisappear() {
-      let current = visualizationConsumerCountAtomic.load(ordering: .relaxed)
-      visualizationConsumerCountAtomic.store(max(current - 1, 0), ordering: .relaxed)
+      hasConsumerAtomic.store(false, ordering: .relaxed)
       updateProcessingState()
     }
 
@@ -407,11 +485,9 @@
       spectrumPeakHold.removeAll()
       latestBufferTiming = nil
       lastBeatUpdateEndSampleTimeAtomic.store(0, ordering: .relaxed)
-      #if DEBUG
-        frequencyBucketer.resetPeakHold()
-        beatDetector.reset()
-        ringBuffer.clearIndices()
-      #endif
+      analysisPipeline?.frequencyBucketer?.resetPeakHold()
+      analysisPipeline?.beatDetector?.reset()
+      analysisPipeline?.ringBuffer.clearIndices()
       fallbackSampleTimeAtomic.store(0, ordering: .relaxed)
       latestEndSampleTimeAtomic.store(0, ordering: .relaxed)
       latestSampleRateBitsAtomic.store(configuration.sampleRate.bitPattern, ordering: .relaxed)
@@ -423,20 +499,21 @@
     private func updateProcessingState() {
       let wantsActive = wantsActiveAtomic.load(ordering: .relaxed)
       let isForeground = isForegroundAtomic.load(ordering: .relaxed)
-      let consumerCount = visualizationConsumerCountAtomic.load(ordering: .relaxed)
+      let hasConsumer = hasConsumerAtomic.load(ordering: .relaxed)
 
-      let shouldBeActive = wantsActive && isForeground && consumerCount > 0
+      let shouldBeActive = wantsActive && isForeground && hasConsumer
       let wasActive = isActiveAtomic.exchange(shouldBeActive, ordering: .relaxed)
       guard wasActive != shouldBeActive else { return }
 
-      #if DEBUG
-        if shouldBeActive {
-          setupUpdateTimer()
-        } else {
-          updateTimer?.cancel()
-          updateTimer = nil
-        }
-      #endif
+      if shouldBeActive {
+        updateAnalysisTimerIfNeeded()
+        updateLodPublishTimerIfNeeded()
+      } else {
+        analysisTimer?.cancel()
+        analysisTimer = nil
+        lodPublishTimer?.cancel()
+        lodPublishTimer = nil
+      }
 
       isActive = shouldBeActive
     }
@@ -444,19 +521,17 @@
     /// Updates the frequency bucket mode.
     ///
     /// - Parameter mode: The new bucketing mode to use.
+    @available(*, deprecated, message: "Use VisualizationWork instead.")
     public func updateBucketMode(_ mode: FrequencyBucketMode) {
-      #if DEBUG
-        frequencyBucketer.updateMode(mode)
-      #endif
+      analysisPipeline?.frequencyBucketer?.updateMode(mode)
     }
 
     /// Updates the beat detection configuration.
     ///
     /// - Parameter configuration: The new beat detection configuration.
+    @available(*, deprecated, message: "Use VisualizationWork instead.")
     public func updateBeatDetectionConfiguration(_ configuration: BeatDetectionConfiguration) {
-      #if DEBUG
-        beatDetector.updateConfiguration(configuration)
-      #endif
+      analysisPipeline?.beatDetector?.updateConfiguration(configuration)
     }
 
     // MARK: - Multi-Band LOD
@@ -469,12 +544,6 @@
     ///
     /// - Parameter configuration: LOD processing configuration.
     public func enableMultiBandLOD(configuration: MultiBandLODConfiguration = .default) {
-      #if DEBUG
-        precondition(
-          !isActiveAtomic.load(ordering: .relaxed),
-          "Multi-band LOD must be configured before attaching/activating AudioVisualizationEngine"
-        )
-      #endif
       let resolvedSampleRate = max(Int(self.configuration.sampleRate.rounded()), 1)
       let resolvedConfig = MultiBandLODConfiguration(
         bandCount: configuration.bandCount,
@@ -482,21 +551,20 @@
         bufferSeconds: configuration.bufferSeconds,
         sampleRate: resolvedSampleRate,
         crossoverMode: configuration.crossoverMode,
-        snapshotSwapInterval: configuration.snapshotSwapInterval
+        snapshotSwapInterval: configuration.snapshotSwapInterval,
+        rawBufferLengthOverride: configuration.rawBufferLengthOverride
       )
-      lodProcessor = MultiBandLODProcessor(configuration: resolvedConfig)
+      legacyLodWork = LODWork(configuration: resolvedConfig)
+      let snapshot = consumerSnapshot()
+      applyWork(snapshot.work, sinks: snapshot.sinks)
       log.info("Multi-band LOD enabled: \(configuration.bandCount, privacy: .public) bands")
     }
 
     /// Disables multi-band LOD processing.
     public func disableMultiBandLOD() {
-      #if DEBUG
-        precondition(
-          !isActiveAtomic.load(ordering: .relaxed),
-          "Multi-band LOD must be configured before attaching/activating AudioVisualizationEngine"
-        )
-      #endif
-      lodProcessor = nil
+      legacyLodWork = nil
+      let snapshot = consumerSnapshot()
+      applyWork(snapshot.work, sinks: snapshot.sinks)
       log.info("Multi-band LOD disabled")
     }
 
@@ -523,113 +591,374 @@
     }
 
     // MARK: - Private Methods
+    private func updateConsumerState(
+      consumerId: ObjectIdentifier,
+      work: VisualizationWork,
+      sinks: VisualizationSinks
+    ) {
+      consumerLock.lock()
+      consumerState.consumerId = consumerId
+      consumerState.work = work
+      consumerState.sinks = sinks
+      consumerLock.unlock()
+    }
 
-    #if DEBUG
-      private var updateTimer: DispatchSourceTimer?
+    private func clearConsumerIfMatching(_ consumerId: ObjectIdentifier) -> Bool {
+      consumerLock.lock()
+      defer { consumerLock.unlock() }
+      guard consumerState.consumerId == consumerId else { return false }
+      consumerState = ConsumerState()
+      return true
+    }
 
-      private func setupUpdateTimer() {
-        let interval = 1.0 / configuration.updateRateHz
-        let timer = DispatchSource.makeTimerSource(queue: processingQueue)
-        timer.schedule(deadline: .now(), repeating: interval)
-        timer.setEventHandler { [weak self] in
-          self?.updateVisualizations()
+    private func consumerSnapshot() -> ConsumerState {
+      consumerLock.lock()
+      let snapshot = consumerState
+      consumerLock.unlock()
+      return snapshot
+    }
+
+    private func sinksSnapshot() -> VisualizationSinks {
+      consumerLock.lock()
+      let sinks = consumerState.sinks
+      consumerLock.unlock()
+      return sinks
+    }
+
+    private func applyWork(_ work: VisualizationWork, sinks: VisualizationSinks) {
+      let resolvedLodWork = work.lod ?? legacyLodWork
+      if resolvedLodWork != nil, sinks.lodSnapshot == nil {
+        log.warning("VisualizationWork.lod requested without a lodSnapshot sink.")
+      }
+      let wantsLod = resolvedLodWork != nil && sinks.lodSnapshot != nil
+      lodPublishRateHz = wantsLod ? resolvedLodWork?.publishRateHz : nil
+
+      if let lodWork = resolvedLodWork, wantsLod {
+        let resolvedConfig = normalizedLODConfig(lodWork.configuration)
+        if lodConfig != resolvedConfig {
+          lodEnabledAtomic.store(false, ordering: .relaxed)
+          lodProcessor = MultiBandLODProcessor(configuration: resolvedConfig)
+          lodConfig = resolvedConfig
         }
-        timer.resume()
-        self.updateTimer = timer
+        lodEnabledAtomic.store(true, ordering: .relaxed)
+      } else {
+        lodEnabledAtomic.store(false, ordering: .relaxed)
+        lodProcessor = nil
+        lodConfig = nil
       }
 
-      private func updateAudioBuffer(_ data: UnsafeBufferPointer<Float>) {
-        guard !data.isEmpty else { return }
-        ringBuffer.write(data)
-      }
+      var flags: AnalysisFlags = []
+      if let analysisWork = work.analysis {
+        let wantsBeat = analysisWork.beatDetection != nil && sinks.beat != nil
+        let wantsTimeOutput = analysisWork.timeDomain != nil && sinks.timeDomain != nil
+        let wantsFrequencyOutput = analysisWork.frequencyDomain != nil && sinks.frequencyDomain != nil
 
-      private func updateVisualizations() {
-        let desiredSamples = maxVisualizationSamples
-        var readCount = 0
-
-        readScratchBuffer.withUnsafeMutableBufferPointer { bufferPointer in
-          guard let base = bufferPointer.baseAddress else { return }
-          let limitedBuffer = UnsafeMutableBufferPointer(start: base, count: desiredSamples)
-          readCount = ringBuffer.read(into: limitedBuffer)
+        let wantsTimeAnalysis = wantsTimeOutput || wantsBeat
+        if analysisWork.timeDomain != nil || analysisWork.beatDetection != nil {
+          if wantsTimeAnalysis {
+            flags.insert(.timeDomain)
+          } else {
+            log.warning("VisualizationWork.timeDomain requested without any time-domain sinks.")
+          }
         }
 
-        guard readCount > 0 else { return }
+        let wantsFrequencyAnalysis =
+          analysisWork.frequencyDomain != nil && (wantsFrequencyOutput || wantsBeat)
+        if analysisWork.frequencyDomain != nil {
+          if wantsFrequencyAnalysis {
+            flags.insert(.frequencyDomain)
+          } else {
+            log.warning(
+              "VisualizationWork.frequencyDomain requested without any frequency sinks."
+            )
+          }
+        }
 
-        let sampleRate = currentSampleRate
-        let latestEnd = latestEndSampleTimeAtomic.load(ordering: .relaxed)
-        let lastEnd = lastBeatUpdateEndSampleTimeAtomic.exchange(latestEnd, ordering: .relaxed)
-        let deltaSamples = max(Int64(0), latestEnd - lastEnd)
-        let deltaTime = Double(deltaSamples) / max(sampleRate, 1)
-        let audioChunk = Array(readScratchBuffer.prefix(readCount))
-        let amplitudeResult = amplitudeAnalyzer.processAmplitudeData(audioChunk)
-        let spectrumResult = frequencyAnalyzer?.processFrequencyData(audioChunk)
+        if wantsBeat {
+          flags.insert(.beat)
+        } else if analysisWork.beatDetection != nil {
+          log.warning("VisualizationWork.beatDetection requested without a beat sink.")
+        }
+      }
 
-        // Build time-domain data
-        let newTimeDomain = TimeDomainData(
+      analysisFlagsAtomic.store(flags.rawValue, ordering: .relaxed)
+      analysisEnabledAtomic.store(!flags.isEmpty, ordering: .relaxed)
+      analysisUpdateRateHz = flags.isEmpty
+        ? nil
+        : (work.analysis?.updateRateHz ?? configuration.updateRateHz)
+
+      configureAnalysisPipelineIfNeeded(analysisWork: work.analysis, flags: flags)
+      updateAnalysisTimerIfNeeded()
+      updateLodPublishTimerIfNeeded()
+    }
+
+    private func normalizedLODConfig(_ config: MultiBandLODConfiguration) -> MultiBandLODConfiguration {
+      let sampleRate = max(Int(configuration.sampleRate.rounded()), 1)
+      return MultiBandLODConfiguration(
+        bandCount: config.bandCount,
+        lodRatio: config.lodRatio,
+        bufferSeconds: config.bufferSeconds,
+        sampleRate: sampleRate,
+        crossoverMode: config.crossoverMode,
+        snapshotSwapInterval: config.snapshotSwapInterval,
+        rawBufferLengthOverride: config.rawBufferLengthOverride
+      )
+    }
+
+    private func normalizedFrequencyWork(_ work: FrequencyDomainWork) -> FrequencyDomainWork {
+      let config = work.configuration
+      let sampleRate = configuration.sampleRate
+      guard config.sampleRate != sampleRate else { return work }
+      let adjusted = FrequencyAnalyzer.Configuration(
+        fftSize: config.fftSize,
+        spectrumSize: config.spectrumSize,
+        sampleRate: sampleRate,
+        smoothingFactor: config.smoothingFactor,
+        noiseFloor: config.noiseFloor,
+        windowType: config.windowType
+      )
+      return FrequencyDomainWork(
+        configuration: adjusted,
+        bucketMode: work.bucketMode,
+        peakHoldDecayRate: work.peakHoldDecayRate
+      )
+    }
+
+    private func configureAnalysisPipelineIfNeeded(
+      analysisWork: AnalysisWork?,
+      flags: AnalysisFlags
+    ) {
+      guard !flags.isEmpty else { return }
+
+      var resolvedTimeDomain = analysisWork?.timeDomain
+      if (flags.contains(.timeDomain) || flags.contains(.beat)) && resolvedTimeDomain == nil {
+        resolvedTimeDomain = configuration.amplitudeAnalyzerConfiguration
+        log.warning("Analysis work requested without a timeDomain configuration; using defaults.")
+      }
+
+      var resolvedFrequencyWork: FrequencyDomainWork?
+      if flags.contains(.frequencyDomain) {
+        if let frequencyWork = analysisWork?.frequencyDomain {
+          resolvedFrequencyWork = normalizedFrequencyWork(frequencyWork)
+        } else if let frequencyConfig = configuration.frequencyAnalyzerConfiguration {
+          resolvedFrequencyWork = FrequencyDomainWork(
+            configuration: frequencyConfig,
+            bucketMode: configuration.bucketMode
+          )
+          log.warning(
+            "Analysis frequency domain requested without a configuration; using defaults."
+          )
+        }
+      }
+
+      var resolvedBeatDetection: BeatDetectionConfiguration?
+      if flags.contains(.beat) {
+        resolvedBeatDetection = analysisWork?.beatDetection ?? configuration.beatDetectionConfiguration
+      }
+
+      let newConfig = AnalysisConfig(
+        timeDomain: resolvedTimeDomain,
+        frequencyDomain: resolvedFrequencyWork,
+        beatDetection: resolvedBeatDetection
+      )
+
+      let needsRebuild = analysisPipeline == nil || analysisConfig != newConfig
+      guard needsRebuild else { return }
+
+      analysisEnabledAtomic.store(false, ordering: .relaxed)
+      analysisTimer?.cancel()
+      analysisTimer = nil
+      processingQueue.sync {}
+
+      analysisPipeline = AnalysisPipeline(config: newConfig, sampleRate: configuration.sampleRate)
+      analysisConfig = newConfig
+
+      if let analyzer = analysisPipeline?.frequencyAnalyzer {
+        frequencyLabels = analyzer.getFrequencyLabels()
+      } else {
+        frequencyLabels.removeAll()
+      }
+
+      analysisEnabledAtomic.store(true, ordering: .relaxed)
+    }
+
+    private func updateAnalysisTimerIfNeeded() {
+      analysisTimer?.cancel()
+      analysisTimer = nil
+
+      guard isActiveAtomic.load(ordering: .relaxed) else { return }
+      guard analysisEnabledAtomic.load(ordering: .relaxed) else { return }
+      guard let updateRateHz = analysisUpdateRateHz else { return }
+
+      let interval = 1.0 / max(updateRateHz, 1)
+      let timer = DispatchSource.makeTimerSource(queue: processingQueue)
+      timer.schedule(deadline: .now(), repeating: interval)
+      timer.setEventHandler { [weak self] in
+        self?.updateVisualizations()
+      }
+      timer.resume()
+      analysisTimer = timer
+    }
+
+    private func updateLodPublishTimerIfNeeded() {
+      lodPublishTimer?.cancel()
+      lodPublishTimer = nil
+
+      guard isActiveAtomic.load(ordering: .relaxed) else { return }
+      guard let rateHz = lodPublishRateHz else { return }
+
+      let interval = 1.0 / max(rateHz, 1)
+      let timer = DispatchSource.makeTimerSource(queue: processingQueue)
+      timer.schedule(deadline: .now(), repeating: interval)
+      timer.setEventHandler { [weak self] in
+        self?.publishLODSnapshot()
+      }
+      timer.resume()
+      lodPublishTimer = timer
+    }
+
+    private func updateAudioBuffer(_ data: UnsafeBufferPointer<Float>) {
+      guard !data.isEmpty else { return }
+      analysisPipeline?.ringBuffer.write(data)
+    }
+
+    private func updateVisualizations() {
+      guard analysisEnabledAtomic.load(ordering: .relaxed),
+        let pipeline = analysisPipeline
+      else { return }
+
+      let flags = AnalysisFlags(rawValue: analysisFlagsAtomic.load(ordering: .relaxed))
+      guard !flags.isEmpty else { return }
+
+      let desiredSamples = pipeline.maxVisualizationSamples
+      var readCount = 0
+
+      pipeline.readScratchBuffer.withUnsafeMutableBufferPointer { bufferPointer in
+        guard let base = bufferPointer.baseAddress else { return }
+        let limitedBuffer = UnsafeMutableBufferPointer(start: base, count: desiredSamples)
+        readCount = pipeline.ringBuffer.read(into: limitedBuffer)
+      }
+
+      guard readCount > 0 else { return }
+
+      let sampleRate = currentSampleRate
+      let latestEnd = latestEndSampleTimeAtomic.load(ordering: .relaxed)
+      let lastEnd = lastBeatUpdateEndSampleTimeAtomic.exchange(latestEnd, ordering: .relaxed)
+      let deltaSamples = max(Int64(0), latestEnd - lastEnd)
+      let deltaTime = Double(deltaSamples) / max(sampleRate, 1)
+      let audioChunk = Array(pipeline.readScratchBuffer.prefix(readCount))
+
+      var amplitudeResult: AmplitudeData?
+      if (flags.contains(.timeDomain) || flags.contains(.beat)),
+        let amplitudeAnalyzer = pipeline.amplitudeAnalyzer
+      {
+        amplitudeResult = amplitudeAnalyzer.processAmplitudeData(audioChunk)
+      }
+
+      var spectrumResult: SpectrumData?
+      if flags.contains(.frequencyDomain), let frequencyAnalyzer = pipeline.frequencyAnalyzer {
+        spectrumResult = frequencyAnalyzer.processFrequencyData(audioChunk)
+      }
+
+      var newTimeDomain: TimeDomainData?
+      if flags.contains(.timeDomain), let amplitudeResult {
+        newTimeDomain = TimeDomainData(
           samples: amplitudeResult.amplitudes,
           peaks: amplitudeResult.peaks,
           rmsLevel: amplitudeResult.rms,
           level: amplitudeResult.overallLevel
         )
+      }
 
-        // Build frequency-domain data
-        var newFrequencyDomain = FrequencyDomainData.empty
-        var newSpectrumPeakHold: [Float] = []
-
-        if let spectrumResult {
-          let buckets = frequencyBucketer.bucket(
-            spectrum: spectrumResult.spectrum,
-            frequencies: spectrumResult.frequencies
-          )
-
-          newFrequencyDomain = FrequencyDomainData(
-            buckets: buckets,
-            rawSpectrum: spectrumResult.spectrum,
-            frequencies: spectrumResult.frequencies,
-            peakFrequency: spectrumResult.peakFrequency,
-            spectralCentroid: spectrumResult.spectralCentroid
-          )
-
-          // Update spectrum peak hold for legacy API
-          newSpectrumPeakHold = updateSpectrumPeaks(
-            current: spectrumPeakHold,
-            newSpectrum: spectrumResult.spectrum
-          )
-        }
-
-        // Beat detection
-        let beatInfo = beatDetector.analyze(
-          spectrum: spectrumResult?.spectrum ?? [],
-          rmsLevel: amplitudeResult.rms,
-          deltaTime: deltaTime
+      var newFrequencyDomain: FrequencyDomainData?
+      var newSpectrumPeakHold: [Float] = []
+      if flags.contains(.frequencyDomain),
+        let spectrumResult,
+        let bucketer = pipeline.frequencyBucketer
+      {
+        let buckets = bucketer.bucket(
+          spectrum: spectrumResult.spectrum,
+          frequencies: spectrumResult.frequencies
         )
 
-        DispatchQueue.main.async {
+        newFrequencyDomain = FrequencyDomainData(
+          buckets: buckets,
+          rawSpectrum: spectrumResult.spectrum,
+          frequencies: spectrumResult.frequencies,
+          peakFrequency: spectrumResult.peakFrequency,
+          spectralCentroid: spectrumResult.spectralCentroid
+        )
+
+        let decayRate = pipeline.peakHoldDecayRate
+        newSpectrumPeakHold = updateSpectrumPeaks(
+          current: spectrumPeakHold,
+          newSpectrum: spectrumResult.spectrum,
+          decayRate: decayRate
+        )
+      }
+
+      var beatInfo: BeatInfo?
+      if flags.contains(.beat), let beatDetector = pipeline.beatDetector {
+        let rmsLevel = amplitudeResult?.rms ?? 0
+        beatInfo = beatDetector.analyze(
+          spectrum: spectrumResult?.spectrum ?? [],
+          rmsLevel: rmsLevel,
+          deltaTime: deltaTime
+        )
+      }
+
+      let sinks = sinksSnapshot()
+      let shouldPublishTimeDomain = sinks.timeDomain != nil
+      let shouldPublishFrequencyDomain = sinks.frequencyDomain != nil
+      let shouldPublishBeat = sinks.beat != nil
+      DispatchQueue.main.async {
+        if let newTimeDomain, shouldPublishTimeDomain {
           self.timeDomain = newTimeDomain
+          sinks.timeDomain?(newTimeDomain)
+        }
+
+        if let newFrequencyDomain, shouldPublishFrequencyDomain {
           self.frequencyDomain = newFrequencyDomain
+          sinks.frequencyDomain?(newFrequencyDomain)
           self.spectrumPeakHold = newSpectrumPeakHold
+        }
+
+        if let beatInfo, shouldPublishBeat {
           self.beat = beatInfo
+          sinks.beat?(beatInfo)
         }
       }
+    }
 
-      private func updateSpectrumPeaks(current: [Float], newSpectrum: [Float]) -> [Float] {
-        let decayRate: Float = 0.015
-
-        var peaks: [Float]
-        if current.count != newSpectrum.count {
-          peaks = Array(repeating: 0.0, count: newSpectrum.count)
-        } else {
-          peaks = current
-        }
-
-        for index in newSpectrum.indices {
-          let decayed = max(0.0, peaks[index] - decayRate)
-          peaks[index] = max(decayed, newSpectrum[index])
-        }
-
-        return peaks
+    private func publishLODSnapshot() {
+      guard lodEnabledAtomic.load(ordering: .relaxed) else { return }
+      let snapshot = lodProcessor?.snapshotRef()
+      let sinks = sinksSnapshot()
+      guard sinks.lodSnapshot != nil else { return }
+      DispatchQueue.main.async {
+        sinks.lodSnapshot?(snapshot)
       }
-    #endif
+    }
+
+    private func updateSpectrumPeaks(
+      current: [Float],
+      newSpectrum: [Float],
+      decayRate: Float
+    ) -> [Float] {
+      var peaks: [Float]
+      if current.count != newSpectrum.count {
+        peaks = Array(repeating: 0.0, count: newSpectrum.count)
+      } else {
+        peaks = current
+      }
+
+      for index in newSpectrum.indices {
+        let decayed = max(0.0, peaks[index] - decayRate)
+        peaks[index] = max(decayed, newSpectrum[index])
+      }
+
+      return peaks
+    }
   }
 
   extension AudioVisualizationEngine: BufferReceiver {
@@ -658,15 +987,18 @@
       latestSampleRateBitsAtomic.store(timing.sampleRate.bitPattern, ordering: .relaxed)
 
       guard isActiveAtomic.load(ordering: .relaxed) else { return }
-      #if DEBUG
+      if analysisEnabledAtomic.load(ordering: .relaxed) {
         self.updateAudioBuffer(data)
-      #endif
+      }
 
-      // Also feed multi-band LOD processor if enabled
-      lodProcessor?.process(data)
+      if lodEnabledAtomic.load(ordering: .relaxed) {
+        lodProcessor?.process(data)
+      }
 
+      let sinks = sinksSnapshot()
       DispatchQueue.main.async {
         self.latestBufferTiming = timing
+        sinks.latestBufferTiming?(timing)
       }
     }
 

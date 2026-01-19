@@ -20,17 +20,26 @@ import AIOEngine
 // Get the visualization engine (typically from your audio recording setup)
 let vizEngine = AudioVisualizationEngine()
 
-// Enable multi-band LOD processing
-vizEngine.enableMultiBandLOD()
+final class LODConsumer: VisualizationConsumer {
+    var work: VisualizationWork = VisualizationWork(
+        lod: LODWork(configuration: .default, publishRateHz: 60)
+    )
+    let sinks: VisualizationSinks
+
+    init(onSnapshot: @escaping @MainActor (LODSnapshotRef?) -> Void) {
+        sinks = VisualizationSinks(lodSnapshot: onSnapshot)
+    }
+}
+
+// Register a consumer that declares LOD work and a sink.
+let consumer = LODConsumer { snapshot in
+    renderWaveform(snapshot)
+}
+vizEngine.register(consumer: consumer)
+vizEngine.startVisualization()
 
 // Start feeding audio data (called from your audio callback)
 vizEngine.processBuffer(audioSamples)
-
-// Access LOD snapshot for rendering (copying)
-if let snapshot = vizEngine.multiBandLOD {
-    // Pass to Metal renderer
-    renderWaveform(snapshot)
-}
 ```
 
 ### Offline Generation from Audio File
@@ -151,7 +160,11 @@ The `AudioVisualizationEngine` provides convenient integration:
 ```swift
 @MainActor
 final class AudioVisualizationEngine {
-    // Enable/disable multi-band processing
+    // Register work + sinks for visualization
+    func register(consumer: VisualizationConsumer)
+    func unregister(consumer: VisualizationConsumer)
+
+    // Enable/disable multi-band processing (legacy API)
     func enableMultiBandLOD(configuration: MultiBandLODConfiguration = .default)
     func disableMultiBandLOD()
     func resetMultiBandLOD()
@@ -168,7 +181,11 @@ final class AudioVisualizationEngine {
 **Usage in Recording Pipeline:**
 ```swift
 // During recording setup
-vizEngine.enableMultiBandLOD()
+let consumer = LODConsumer { snapshot in
+    // Cache or render snapshot
+}
+vizEngine.register(consumer: consumer)
+vizEngine.startVisualization()
 
 // In audio callback
 func audioCallback(samples: UnsafeBufferPointer<Float>) {
@@ -177,14 +194,10 @@ func audioCallback(samples: UnsafeBufferPointer<Float>) {
 
 // In UI (SwiftUI timer or display link)
 struct WaveformView: View {
-    @State private var snapshot: MultiBandLODSnapshot?
+    @State private var snapshot: LODSnapshotRef?
 
     var body: some View {
         // Render waveform using snapshot
-    }
-
-    func updateSnapshot() {
-        snapshot = vizEngine.multiBandLOD
     }
 }
 ```
