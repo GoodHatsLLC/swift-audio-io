@@ -10,11 +10,11 @@
   public final class AmplitudeAnalyzer {
     // MARK: - Configuration
 
-    public struct Configuration: Sendable {
-      let windowSize: Int
-      let smoothingFactor: Float
-      let peakDecayRate: Float
-      let noiseFloor: Float
+    public struct Configuration: Sendable, Equatable {
+      public let windowSize: Int
+      public let smoothingFactor: Float
+      public let peakDecayRate: Float
+      public let noiseFloor: Float
 
       public init(
         windowSize: Int,

@@ -11,13 +11,13 @@
   public final class FrequencyAnalyzer {
     // MARK: - Configuration
 
-    public struct Configuration: Sendable {
-      let fftSize: Int
-      let spectrumSize: Int
-      let sampleRate: Double
-      let smoothingFactor: Float
-      let noiseFloor: Float
-      let windowType: WindowType
+    public struct Configuration: Sendable, Equatable {
+      public let fftSize: Int
+      public let spectrumSize: Int
+      public let sampleRate: Double
+      public let smoothingFactor: Float
+      public let noiseFloor: Float
+      public let windowType: WindowType
 
       public init(
         fftSize: Int,

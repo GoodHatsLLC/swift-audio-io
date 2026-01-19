@@ -24,7 +24,7 @@
     private var peakHoldValues: [Float] = []
 
     /// Decay rate for peak hold (per frame).
-    private let peakDecayRate: Float = 0.015
+    private var peakHoldDecayRate: Float
 
     // MARK: - Initialization
 
@@ -33,10 +33,16 @@
     /// - Parameters:
     ///   - mode: The bucketing mode to use.
     ///   - sampleRate: The audio sample rate in Hz.
-    public init(mode: FrequencyBucketMode = .default, sampleRate: Float = 44100) {
+    ///   - peakHoldDecayRate: Decay applied to peak hold values each update.
+    public init(
+      mode: FrequencyBucketMode = .default,
+      sampleRate: Float = 44100,
+      peakHoldDecayRate: Float = 0.015
+    ) {
       self.mode = mode
       self.sampleRate = sampleRate
       self.nyquist = sampleRate / 2
+      self.peakHoldDecayRate = max(0, peakHoldDecayRate)
 
       computeBucketBoundaries()
     }
@@ -48,6 +54,11 @@
       guard self.mode != mode else { return }
       self.mode = mode
       computeBucketBoundaries()
+    }
+
+    /// Updates the peak hold decay rate.
+    public func updatePeakHoldDecayRate(_ rate: Float) {
+      peakHoldDecayRate = max(0, rate)
     }
 
     /// The current bucketing mode.
@@ -95,7 +106,7 @@
         let magnitude = count > 0 ? bucketSums[index] / Float(count) : 0
 
         // Update peak hold with decay
-        let decayedPeak = max(0, peakHoldValues[index] - peakDecayRate)
+        let decayedPeak = max(0, peakHoldValues[index] - peakHoldDecayRate)
         peakHoldValues[index] = max(decayedPeak, magnitude)
 
         buckets.append(
