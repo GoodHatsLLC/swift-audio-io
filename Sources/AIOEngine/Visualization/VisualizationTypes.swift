@@ -378,6 +378,7 @@
   }
 
   /// A consumer that declares required work and exposes sinks for updates.
+  @MainActor
   public protocol VisualizationConsumer: AnyObject {
     var work: VisualizationWork { get }
     var sinks: VisualizationSinks { get }
