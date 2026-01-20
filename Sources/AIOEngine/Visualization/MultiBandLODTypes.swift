@@ -77,7 +77,7 @@
       snapshotSwapInterval: Int = 6,
       rawBufferLengthOverride: Int? = nil
     ) {
-      self.bandCount = max(1, min(8, bandCount))
+      self.bandCount = max(1, min(128, bandCount))
       self.lodRatio = max(1, lodRatio)
       self.bufferSeconds = max(1, bufferSeconds)
       self.sampleRate = max(1, sampleRate)
