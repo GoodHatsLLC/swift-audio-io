@@ -198,6 +198,8 @@
       public let frequencyAnalyzerConfiguration: FrequencyAnalyzer.Configuration?
       /// Configuration for frequency bucketing.
       public let bucketMode: FrequencyBucketMode
+      /// Configuration for perceptual frequency weighting.
+      public let frequencyWeighting: FrequencyWeighting
       /// Configuration for beat detection.
       public let beatDetectionConfiguration: BeatDetectionConfiguration
 
@@ -210,6 +212,7 @@
       ///   - smoothingFactor: A factor that controls the amount of smoothing applied. Defaults to 0.3.
       ///   - sampleRate: The nominal sample rate of the source audio. Defaults to 44100.0.
       ///   - bucketMode: The frequency bucketing mode. Defaults to MEL scale with 24 buckets.
+      ///   - frequencyWeighting: Perceptual weighting applied to frequency buckets. Defaults to none.
       ///   - beatDetectionConfiguration: Beat detection configuration. Defaults to standard settings.
       public init(
         amplitudeWindowSize: Int = 512,
@@ -220,6 +223,7 @@
         amplitudeAnalyzerConfiguration: AmplitudeAnalyzer.Configuration? = nil,
         frequencyAnalyzerConfiguration: FrequencyAnalyzer.Configuration? = nil,
         bucketMode: FrequencyBucketMode = .default,
+        frequencyWeighting: FrequencyWeighting = .none,
         beatDetectionConfiguration: BeatDetectionConfiguration = .default
       ) {
         self.amplitudeWindowSize = amplitudeWindowSize
@@ -228,6 +232,7 @@
         self.smoothingFactor = smoothingFactor
         self.sampleRate = sampleRate
         self.bucketMode = bucketMode
+        self.frequencyWeighting = frequencyWeighting
         self.beatDetectionConfiguration = beatDetectionConfiguration
 
         if let amplitudeAnalyzerConfiguration {
@@ -363,7 +368,8 @@
           frequencyBucketer = FrequencyBucketer(
             mode: frequencyWork.bucketMode,
             sampleRate: Float(sampleRate),
-            peakHoldDecayRate: frequencyWork.peakHoldDecayRate
+            peakHoldDecayRate: frequencyWork.peakHoldDecayRate,
+            weighting: frequencyWork.weighting
           )
           peakHoldDecayRate = frequencyWork.peakHoldDecayRate
         }
@@ -720,7 +726,8 @@
       return FrequencyDomainWork(
         configuration: adjusted,
         bucketMode: work.bucketMode,
-        peakHoldDecayRate: work.peakHoldDecayRate
+        peakHoldDecayRate: work.peakHoldDecayRate,
+        weighting: work.weighting
       )
     }
 
@@ -743,7 +750,8 @@
         } else if let frequencyConfig = configuration.frequencyAnalyzerConfiguration {
           resolvedFrequencyWork = FrequencyDomainWork(
             configuration: frequencyConfig,
-            bucketMode: configuration.bucketMode
+            bucketMode: configuration.bucketMode,
+            weighting: configuration.frequencyWeighting
           )
           log.warning(
             "Analysis frequency domain requested without a configuration; using defaults."
@@ -1024,6 +1032,7 @@
         amplitudeAnalyzerConfiguration: amplitudeAnalyzerConfiguration,
         frequencyAnalyzerConfiguration: frequencyAnalyzerConfiguration,
         bucketMode: bucketMode,
+        frequencyWeighting: frequencyWeighting,
         beatDetectionConfiguration: beatDetectionConfiguration
       )
     }

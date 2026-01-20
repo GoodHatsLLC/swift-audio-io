@@ -189,6 +189,14 @@
     public static let `default` = FrequencyBucketMode.mel(bucketCount: 24)
   }
 
+  /// Perceptual weighting applied to frequency bucket magnitudes.
+  public enum FrequencyWeighting: Sendable, Equatable {
+    /// No perceptual weighting.
+    case none
+    /// A-weighting (approximates human loudness sensitivity).
+    case aWeighting
+  }
+
   /// Standard predefined frequency bands for audio analysis.
   public struct StandardBands: Sendable, Equatable {
     /// The frequency ranges for each band.
@@ -340,15 +348,18 @@
     public var configuration: FrequencyAnalyzer.Configuration
     public var bucketMode: FrequencyBucketMode
     public var peakHoldDecayRate: Float
+    public var weighting: FrequencyWeighting
 
     public init(
       configuration: FrequencyAnalyzer.Configuration,
       bucketMode: FrequencyBucketMode = .default,
-      peakHoldDecayRate: Float = 0.015
+      peakHoldDecayRate: Float = 0.015,
+      weighting: FrequencyWeighting = .none
     ) {
       self.configuration = configuration
       self.bucketMode = bucketMode
       self.peakHoldDecayRate = max(0, peakHoldDecayRate)
+      self.weighting = weighting
     }
   }
 

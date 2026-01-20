@@ -11,6 +11,7 @@
     private var mode: FrequencyBucketMode
     private let sampleRate: Float
     private let nyquist: Float
+    private var weighting: FrequencyWeighting
 
     // MARK: - Precomputed Data
 
@@ -19,6 +20,9 @@
 
     /// Mapping from spectrum indices to bucket indices.
     private var spectrumToBucketMap: [Int] = []
+
+    /// Per-bucket perceptual weights.
+    private var bucketWeights: [Float] = []
 
     /// Peak hold values for each bucket (with decay).
     private var peakHoldValues: [Float] = []
@@ -37,12 +41,14 @@
     public init(
       mode: FrequencyBucketMode = .default,
       sampleRate: Float = 44100,
-      peakHoldDecayRate: Float = 0.015
+      peakHoldDecayRate: Float = 0.015,
+      weighting: FrequencyWeighting = .none
     ) {
       self.mode = mode
       self.sampleRate = sampleRate
       self.nyquist = sampleRate / 2
       self.peakHoldDecayRate = max(0, peakHoldDecayRate)
+      self.weighting = weighting
 
       computeBucketBoundaries()
     }
@@ -59,6 +65,13 @@
     /// Updates the peak hold decay rate.
     public func updatePeakHoldDecayRate(_ rate: Float) {
       peakHoldDecayRate = max(0, rate)
+    }
+
+    /// Updates the perceptual weighting mode.
+    public func updateWeighting(_ weighting: FrequencyWeighting) {
+      guard self.weighting != weighting else { return }
+      self.weighting = weighting
+      computeBucketWeights()
     }
 
     /// The current bucketing mode.
@@ -104,17 +117,19 @@
       for (index, boundary) in bucketBoundaries.enumerated() {
         let count = bucketCounts[index]
         let magnitude = count > 0 ? bucketSums[index] / Float(count) : 0
+        let weight = bucketWeights.count > index ? bucketWeights[index] : 1
+        let weightedMagnitude = magnitude * weight
 
         // Update peak hold with decay
         let decayedPeak = max(0, peakHoldValues[index] - peakHoldDecayRate)
-        peakHoldValues[index] = max(decayedPeak, magnitude)
+        peakHoldValues[index] = max(decayedPeak, weightedMagnitude)
 
         buckets.append(
           FrequencyBucket(
             id: index,
             lowFrequency: boundary.low,
             highFrequency: boundary.high,
-            magnitude: magnitude,
+            magnitude: weightedMagnitude,
             peakHold: peakHoldValues[index]
           ))
       }
@@ -143,6 +158,7 @@
 
       // Reset peak hold for new bucket count
       peakHoldValues = [Float](repeating: 0, count: bucketBoundaries.count)
+      computeBucketWeights()
       // Clear spectrum mapping to force recomputation
       spectrumToBucketMap = []
     }
@@ -248,6 +264,45 @@
           )
         )
       }
+    }
+
+    private func computeBucketWeights() {
+      guard !bucketBoundaries.isEmpty else {
+        bucketWeights = []
+        return
+      }
+
+      switch weighting {
+      case .none:
+        bucketWeights = [Float](repeating: 1, count: bucketBoundaries.count)
+      case .aWeighting:
+        var weights: [Float] = []
+        weights.reserveCapacity(bucketBoundaries.count)
+        for boundary in bucketBoundaries {
+          let center = max(1, (boundary.low + boundary.high) * 0.5)
+          let weightDb = aWeightingDecibels(frequency: center)
+          let linear = pow(10, weightDb / 20)
+          weights.append(linear.isFinite ? linear : 1)
+        }
+        let maxWeight = weights.max() ?? 1
+        let scale = maxWeight > 0 ? (1 / maxWeight) : 1
+        bucketWeights = weights.map { $0 * scale }
+      }
+    }
+
+    private func aWeightingDecibels(frequency: Float) -> Float {
+      guard frequency > 0 else { return -80 }
+
+      let f2 = frequency * frequency
+      let term1 = f2 + 20.6 * 20.6
+      let term2 = f2 + 107.7 * 107.7
+      let term3 = f2 + 737.9 * 737.9
+      let term4 = f2 + 12_200 * 12_200
+      let numerator = 12_200 * 12_200 * f2 * f2
+      let denominator = term1 * sqrt(term2 * term3) * term4
+      guard denominator > 0 else { return -80 }
+      let ra = numerator / denominator
+      return 2.0 + 20 * log10(ra)
     }
 
     // MARK: - Mel Scale Conversion
