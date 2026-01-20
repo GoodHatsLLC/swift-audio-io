@@ -40,6 +40,7 @@
       case hann
       case hamming
       case blackman
+      case blackmanHarris
       case rectangular
     }
 
@@ -352,7 +353,7 @@
           vDSP_hann_window(windowPtr, vDSP_Length(size), Int32(vDSP_HANN_NORM))
         case .hamming:
           vDSP_hamm_window(windowPtr, vDSP_Length(size), 0)
-        case .blackman:
+        case .blackman, .blackmanHarris:
           vDSP_blkman_window(windowPtr, vDSP_Length(size), 0)
         case .rectangular:
           var one: Float = 1.0
