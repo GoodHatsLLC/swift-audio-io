@@ -93,6 +93,40 @@
     }
   }
 
+  // MARK: - Raw Band Storage
+
+  /// Shared storage for raw audio samples (single circular buffer per band).
+  ///
+  /// This storage is shared across all snapshots and updated lock-free by the audio thread.
+  /// Readers (render thread) read from `buffers` up to `rawWriteIndex`.
+  final class RawBandStorage: @unchecked Sendable {
+    let memory: UnsafeMutableBufferPointer<Float>
+    let buffers: [UnsafeMutableBufferPointer<Float>]
+    let length: Int
+    let bandCount: Int
+
+    init(bandCount: Int, length: Int) {
+      self.bandCount = bandCount
+      self.length = length
+      let totalCount = bandCount * length
+      self.memory = UnsafeMutableBufferPointer<Float>.allocate(capacity: totalCount)
+      self.memory.initialize(repeating: 0)
+      
+      var slices: [UnsafeMutableBufferPointer<Float>] = []
+      for i in 0..<bandCount {
+        let start = i * length
+        // Create a slice (view) into the memory
+        let slice = UnsafeMutableBufferPointer(start: memory.baseAddress! + start, count: length)
+        slices.append(slice)
+      }
+      self.buffers = slices
+    }
+
+    deinit {
+      memory.deallocate()
+    }
+  }
+
   // MARK: - Zero-Copy Snapshot Reference
 
   /// A reference to LOD data for GPU rendering.
@@ -133,9 +167,13 @@
   /// ```
   public struct LODSnapshotRef: @unchecked Sendable, SnapshotProvider, LODSnapshot {
     fileprivate let slot: LODBufferSlot
+    fileprivate let rawStorage: RawBandStorage?
+    public let rawWriteIndexSnapshot: Int
 
-    fileprivate init(_ slot: LODBufferSlot) {
+    fileprivate init(_ slot: LODBufferSlot, rawStorage: RawBandStorage? = nil, rawWriteIndex: Int = 0) {
       self.slot = slot
+      self.rawStorage = rawStorage
+      self.rawWriteIndexSnapshot = rawWriteIndex
     }
 
     public var bandCount: Int { slot.bandCount }
@@ -157,6 +195,21 @@
     /// Direct access to a band's RMS buffer.
     public func withRMSBuffer<R>(band: Int, _ body: (UnsafeBufferPointer<Float>) -> R) -> R {
       slot.bands[band].rmsBuffer.withUnsafeBufferPointer(body)
+    }
+
+    /// Direct access to a band's raw buffer.
+    public func withRawBuffer<R>(band: Int, _ body: (UnsafeBufferPointer<Float>) -> R) -> R {
+      guard let storage = rawStorage, band < storage.buffers.count else {
+        return body(UnsafeBufferPointer(start: nil, count: 0))
+      }
+      return body(UnsafeBufferPointer(storage.buffers[band]))
+    }
+
+    /// Access the flat contiguous raw buffer (containing all bands).
+    /// Used for single-copy upload to GPU.
+    public func withFlatRawBuffer<R>(_ body: (UnsafeBufferPointer<Float>?) -> R) -> R {
+      guard let storage = rawStorage else { return body(nil) }
+      return body(UnsafeBufferPointer(storage.memory))
     }
 
     /// Creates a flat copy of min buffers for all bands (for GPU upload).
@@ -214,12 +267,30 @@
     // MARK: - Configuration
 
     private let configuration: MultiBandLODConfiguration
-    private let crossoverAlphas: [Float]
+    private let filterCoefficients: [BiquadCoefficients]
+
+    // MARK: - Filter Types
+
+    private struct BiquadCoefficients: Sendable {
+      let b0, b1, b2, a1, a2: Float
+    }
+
+    private struct BiquadState: Sendable {
+      var x1: Float = 0
+      var x2: Float = 0
+      var y1: Float = 0
+      var y2: Float = 0
+
+      mutating func reset() {
+        x1 = 0; x2 = 0
+        y1 = 0; y2 = 0
+      }
+    }
 
     // MARK: - State (Single-writer: audio thread)
 
-    /// Filter states for cascading lowpass (one per band)
-    private var filterStates: [Float]
+    /// Filter states for cascading lowpass (one per crossover)
+    private var filterStates: [BiquadState]
 
     private struct RunningStats {
       var minV: Float = 0
@@ -251,6 +322,12 @@
 
     /// Per-band running stats for LOD computation (current window).
     private var windowStats: [RunningStats]
+
+    /// Raw band storage (single circular buffer per band).
+    private let rawBandStorage: RawBandStorage
+
+    /// Current write index for raw storage (atomic).
+    private let rawWriteIndex: ManagedAtomic<Int>
 
     /// Total samples processed.
     private let totalSamplesProcessed: ManagedAtomic<Int>
@@ -303,16 +380,48 @@
     public init(configuration: MultiBandLODConfiguration = .default) {
       self.configuration = configuration
 
-      // Compute crossover filter alphas
-      self.crossoverAlphas = configuration.crossoverMode.computeAlphas(
+      // Compute crossover frequencies
+      let frequencies = configuration.crossoverMode.computeCrossoverFrequencies(
         bandCount: configuration.bandCount,
         sampleRate: configuration.sampleRate
       )
 
-      // Initialize filter states
-      self.filterStates = Array(repeating: 0, count: configuration.bandCount)
+      // Calculate Biquad coefficients for each crossover (Linkwitz-Riley 2nd Order Lowpass)
+      // LR2 = Q of 0.5
+      self.filterCoefficients = frequencies.map { freq in
+        let w0 = 2.0 * Float.pi * freq / Float(configuration.sampleRate)
+        let cosW = cos(w0)
+        let sinW = sin(w0)
+        let Q: Float = 0.5
+        let alpha = sinW / (2.0 * Q)
+
+        let a0 = 1.0 + alpha
+        let b0 = (1.0 - cosW) / 2.0
+        let b1 = 1.0 - cosW
+        let b2 = (1.0 - cosW) / 2.0
+        let a1 = -2.0 * cosW
+        let a2 = 1.0 - alpha
+
+        return BiquadCoefficients(
+          b0: b0 / a0,
+          b1: b1 / a0,
+          b2: b2 / a0,
+          a1: a1 / a0,
+          a2: a2 / a0
+        )
+      }
+
+      // Initialize filter states (one per crossover)
+      // Note: frequencies.count is bandCount - 1
+      self.filterStates = Array(repeating: BiquadState(), count: frequencies.count)
 
       self.windowStats = Array(repeating: RunningStats(), count: configuration.bandCount)
+      self.rawBandStorage = RawBandStorage(
+        bandCount: configuration.bandCount,
+        length: configuration.rawBufferLength
+      )
+      self.rawWriteIndex = ManagedAtomic(0)
+
       self.totalSamplesProcessed = ManagedAtomic(0)
       #if DEBUG
         self.debugLastProcessDurationNs = ManagedAtomic(0)
@@ -358,10 +467,16 @@
       let bandCount = configuration.bandCount
       let lodRatio = configuration.lodRatio
 
+      // Cache pointer to unsafe buffer for tight loop access if needed,
+      // but UnsafeBufferPointer subscript is already efficient.
+      let rawLength = configuration.rawBufferLength
+      // Get current raw write index
+      var currentRawWriteIndex = rawWriteIndex.load(ordering: .relaxed)
+
       for i in 0..<samples.count {
         let x = samples[i]
 
-        // Cascading lowpass filter bank
+        // Cascading lowpass filter bank (Linkwitz-Riley 2nd Order)
         // Each band gets: (lowpass at cutoff) - (lowpass at previous cutoff)
         // Final band gets: input - (lowpass at highest cutoff)
         var lowerBoundSignal: Float = 0
@@ -372,11 +487,25 @@
             // Highest band: everything above the last crossover
             part = x - lowerBoundSignal
           } else {
-            // Apply lowpass filter
-            let alpha = crossoverAlphas[b]
-            let prev = filterStates[b]
-            let lp = prev + alpha * (x - prev)
-            filterStates[b] = lp
+            // Apply Biquad lowpass filter
+            let coeffs = filterCoefficients[b]
+            // We use `withUnsafeMutablePointer` or just direct access since strict aliasing isn't an issue here with structs.
+            // Direct access to struct members in array is fast.
+            
+            var state = filterStates[b]
+            
+            // Direct Form 1:
+            // y[n] = b0*x[n] + b1*x[n-1] + b2*x[n-2] - a1*y[n-1] - a2*y[n-2]
+            let lp = coeffs.b0 * x + coeffs.b1 * state.x1 + coeffs.b2 * state.x2
+                   - coeffs.a1 * state.y1 - coeffs.a2 * state.y2
+            
+            // Shift state
+            state.x2 = state.x1
+            state.x1 = x
+            state.y2 = state.y1
+            state.y1 = lp
+            
+            filterStates[b] = state // Write back
 
             // This band's contribution
             part = lp - lowerBoundSignal
@@ -384,13 +513,20 @@
           }
 
           windowStats[b].add(part)
+          
+          // Write to raw buffer
+          rawBandStorage.buffers[b][currentRawWriteIndex] = part
         }
+        
+        currentRawWriteIndex = (currentRawWriteIndex + 1) % rawLength
 
         // Check if we have enough samples for an LOD commit
         if windowStats[0].count >= lodRatio {
           commitLOD()
         }
       }
+      
+      rawWriteIndex.store(currentRawWriteIndex, ordering: .relaxed)
 
       totalSamplesProcessed.wrappingIncrement(by: samples.count, ordering: .relaxed)
 
@@ -547,7 +683,8 @@
     /// - Returns: Zero-copy reference to LOD data for GPU rendering.
     public func snapshotRef() -> LODSnapshotRef {
       let index = currentSlotIndex.load(ordering: .acquiring)
-      return LODSnapshotRef(bufferSlots[index])
+      let rawWIdx = rawWriteIndex.load(ordering: .relaxed)
+      return LODSnapshotRef(bufferSlots[index], rawStorage: rawBandStorage, rawWriteIndex: rawWIdx)
     }
 
     /// Creates a snapshot of current LOD data for rendering.
@@ -590,7 +727,10 @@
     ///
     /// Call this when starting a new recording.
     public func reset() {
-      filterStates = Array(repeating: 0, count: configuration.bandCount)
+      // Reset filter states
+      for i in filterStates.indices {
+        filterStates[i].reset()
+      }
 
       for i in windowStats.indices {
         windowStats[i].reset()
@@ -610,6 +750,12 @@
       deltaWrittenCount = 0
       totalSamplesProcessed.store(0, ordering: .relaxed)
       writerWriteIndexAtomic.store(bufferSlots[writeSlotIndex].writeIndex, ordering: .relaxed)
+
+      rawWriteIndex.store(0, ordering: .relaxed)
+      // Zero out raw buffers
+      for b in rawBandStorage.buffers {
+        b.initialize(repeating: 0)
+      }
 
       os_log(.info, log: log, "Reset all buffers (triple-buffered)")
     }
