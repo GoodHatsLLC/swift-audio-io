@@ -126,19 +126,36 @@
     ///   - bandCount: Number of bands to split into.
     ///   - sampleRate: Audio sample rate.
     /// - Returns: Array of alpha values for each crossover point.
+    @available(*, deprecated, message: "Use computeCrossoverFrequencies instead")
     public func computeAlphas(bandCount: Int, sampleRate: Int) -> [Float] {
+      let cutoffs = computeCrossoverFrequencies(bandCount: bandCount, sampleRate: sampleRate)
+      
+      // Legacy alpha calculation: alpha = 1 - exp(-2 * pi * f / sr)
+      // This matches a simple 1-pole RC filter response.
+      let sr = max(Float(sampleRate), 1.0)
+      var alphas = cutoffs.map { freq -> Float in
+        let alpha = 1.0 - exp((-2.0 * Float.pi * freq) / sr)
+        return min(max(alpha, 0.0), 1.0)
+      }
+      
+      // Keep a trailing value for diagnostics/debugging parity with older code paths.
+      alphas.append(1.0)
+      
+      return alphas
+    }
+
+    /// Compute crossover frequencies for the bands.
+    ///
+    /// - Parameters:
+    ///   - bandCount: Number of bands to split into.
+    ///   - sampleRate: Audio sample rate.
+    /// - Returns: Array of crossover frequencies (Hz). Count is `max(bandCount - 1, 0)`.
+    public func computeCrossoverFrequencies(bandCount: Int, sampleRate: Int) -> [Float] {
       let nyquist = Float(sampleRate) * 0.5
 
       func clampFrequency(_ f: Float) -> Float {
         let maxF = max(1.0, nyquist * 0.98)
         return min(max(f, 1.0), maxF)
-      }
-
-      func alphaForCutoff(_ cutoffHz: Float) -> Float {
-        let f = clampFrequency(cutoffHz)
-        let sr = max(Float(sampleRate), 1.0)
-        let alpha = 1.0 - exp((-2.0 * Float.pi * f) / sr)
-        return min(max(alpha, 0.0), 1.0)
       }
 
       let desiredCutoffCount = max(bandCount - 1, 0)
@@ -213,12 +230,7 @@
         }
       }
 
-      var alphas = cutoffFrequencies.map(alphaForCutoff)
-
-      // Keep a trailing value for diagnostics/debugging parity with older code paths.
-      alphas.append(1.0)
-
-      return alphas
+      return cutoffFrequencies
     }
   }
 
@@ -253,6 +265,15 @@
 
     /// Direct access to a band's RMS buffer.
     func withRMSBuffer<R>(band: Int, _ body: (UnsafeBufferPointer<Float>) -> R) -> R
+
+    /// Direct access to a band's raw sample buffer (if available).
+    func withRawBuffer<R>(band: Int, _ body: (UnsafeBufferPointer<Float>) -> R) -> R
+  }
+
+  extension LODSnapshot {
+    public func withRawBuffer<R>(band: Int, _ body: (UnsafeBufferPointer<Float>) -> R) -> R {
+      body(UnsafeBufferPointer(start: nil, count: 0))
+    }
   }
 
   // MARK: - LOD Data Types
@@ -277,6 +298,9 @@
     /// Values are in the range [0.0, 1.0] (linear amplitude).
     public var rmsBuffer: [Float]
 
+    /// Raw sample buffer (optional, for high-zoom visualization).
+    public var rawBuffer: [Float]?
+
     /// Creates a new band LOD data container.
     ///
     /// - Parameters:
@@ -287,6 +311,7 @@
       self.minBuffer = Array(repeating: 0, count: capacity)
       self.maxBuffer = Array(repeating: 0, count: capacity)
       self.rmsBuffer = Array(repeating: 0, count: capacity)
+      self.rawBuffer = nil
     }
   }
 
@@ -375,6 +400,15 @@
     /// Direct access to a band's RMS buffer.
     public func withRMSBuffer<R>(band: Int, _ body: (UnsafeBufferPointer<Float>) -> R) -> R {
       bands[band].rmsBuffer.withUnsafeBufferPointer(body)
+    }
+
+    /// Direct access to a band's raw buffer.
+    public func withRawBuffer<R>(band: Int, _ body: (UnsafeBufferPointer<Float>) -> R) -> R {
+      if let raw = bands[band].rawBuffer {
+        return raw.withUnsafeBufferPointer(body)
+      } else {
+        return body(UnsafeBufferPointer(start: nil, count: 0))
+      }
     }
   }
 
