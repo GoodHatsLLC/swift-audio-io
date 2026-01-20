@@ -240,7 +240,12 @@
           lowFrequency: boundary.low,
           highFrequency: boundary.high,
           magnitude: 0,
-          peakHold: max(0, peakHoldValues.count > index ? peakHoldValues[index] - peakDecayRate : 0)
+          peakHold: max(
+            0,
+            peakHoldValues.count > index
+              ? peakHoldValues[index] - peakHoldDecayRate
+              : 0
+          )
         )
       }
     }
