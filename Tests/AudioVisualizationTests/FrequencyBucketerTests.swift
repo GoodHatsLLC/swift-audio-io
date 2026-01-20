@@ -5,6 +5,13 @@
 
   @Suite("Frequency Bucketer Tests")
   struct FrequencyBucketerTests {
+    private func linearFrequencies(count: Int, min: Float = 20, max: Float = 20_000) -> [Float] {
+      guard count > 1 else { return [min] }
+      let span = max - min
+      return (0..<count).map { index in
+        min + (Float(index) / Float(count - 1)) * span
+      }
+    }
 
     // MARK: - Initialization Tests
 
@@ -78,6 +85,66 @@
 
       let buckets = bucketer.bucket(spectrum: spectrum, frequencies: frequencies)
       #expect(buckets.count == StandardBands.musicProduction.ranges.count)
+    }
+
+    // MARK: - Weighting Tests
+
+    @Test("A-weighting emphasizes midrange frequencies")
+    func testAWeightingEmphasis() {
+      let bucketer = FrequencyBucketer(
+        mode: .bands(.threeBand),
+        sampleRate: 44_100,
+        peakHoldDecayRate: 0,
+        weighting: .aWeighting
+      )
+      let spectrum = Array(repeating: Float(1.0), count: 512)
+      let frequencies = linearFrequencies(count: spectrum.count)
+
+      let buckets = bucketer.bucket(spectrum: spectrum, frequencies: frequencies)
+      #expect(buckets.count == 3)
+
+      let low = buckets[0].magnitude
+      let mid = buckets[1].magnitude
+      let high = buckets[2].magnitude
+
+      #expect(mid > low)
+      #expect(mid > high)
+    }
+
+    @Test("No weighting keeps magnitudes uniform for flat spectrum")
+    func testNoWeightingUniform() {
+      let bucketer = FrequencyBucketer(
+        mode: .bands(.threeBand),
+        sampleRate: 44_100,
+        peakHoldDecayRate: 0,
+        weighting: .none
+      )
+      let spectrum = Array(repeating: Float(1.0), count: 512)
+      let frequencies = linearFrequencies(count: spectrum.count)
+
+      let buckets = bucketer.bucket(spectrum: spectrum, frequencies: frequencies)
+      let magnitudes = buckets.map(\.magnitude)
+      let minValue = magnitudes.min() ?? 0
+      let maxValue = magnitudes.max() ?? 0
+      #expect(abs(maxValue - minValue) < 0.001)
+    }
+
+    @Test("Updating weighting recomputes bucket magnitudes")
+    func testWeightingUpdate() {
+      let bucketer = FrequencyBucketer(
+        mode: .bands(.threeBand),
+        sampleRate: 44_100,
+        peakHoldDecayRate: 0,
+        weighting: .none
+      )
+      let spectrum = Array(repeating: Float(1.0), count: 512)
+      let frequencies = linearFrequencies(count: spectrum.count)
+
+      let unweighted = bucketer.bucket(spectrum: spectrum, frequencies: frequencies)
+      bucketer.updateWeighting(.aWeighting)
+      let weighted = bucketer.bucket(spectrum: spectrum, frequencies: frequencies)
+
+      #expect(weighted[0].magnitude < unweighted[0].magnitude)
     }
 
     // MARK: - Empty Input Tests
