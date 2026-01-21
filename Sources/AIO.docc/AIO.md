@@ -18,7 +18,6 @@ The application's architecture is based on the **MVVM (Model-View-ViewModel)** d
 *   **AIOEngine:** A custom-built audio engine for recording and playback, built on top of `AVFoundation`.
 *   **GRDB:** A Swift wrapper for SQLite, used for data persistence.
 *   **FluidAudio:** An on-device neural speech recognition library.
-*   **ChromaSwift:** An on-device vector database for semantic search.
 *   **SwiftUI:** The framework used for building the user interface.
 *   **swift-testing:** The framework used for testing.
 
@@ -73,5 +72,4 @@ The application follows the **MVVM (Model-View-ViewModel)** design pattern and i
 *   **AIOEngine:** The custom-built audio engine.
 *   **GRDB:** For SQLite database management.
 *   **FluidAudio:** For on-device speech recognition.
-*   **ChromaSwift:** For on-device vector database for semantic search.
 *   **AsyncAlgorithms:** For concurrency utilities.
