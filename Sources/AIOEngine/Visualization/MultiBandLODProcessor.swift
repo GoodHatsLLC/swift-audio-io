@@ -902,6 +902,131 @@
       return processor.snapshotLocking()
     }
 
+    /// Generate LOD data from specific segments of an audio file.
+    ///
+    /// Segments are concatenated in the order provided to form a trimmed snapshot.
+    ///
+    /// - Parameters:
+    ///   - url: URL of the audio file to process.
+    ///   - segments: Ordered time ranges (in seconds) to include.
+    ///   - configuration: LOD configuration to use.
+    /// - Returns: LOD snapshot representing only the provided segments.
+    public static func generateFromFile(
+      url: URL,
+      segments: [ClosedRange<TimeInterval>],
+      configuration: MultiBandLODConfiguration = .default
+    ) async throws(LODGenerationError) -> MultiBandLODSnapshot {
+      let file: AVFAudio.AVAudioFile
+      do {
+        file = try AVFAudio.AVAudioFile(forReading: url)
+      } catch {
+        throw .audioFileOpenFailed(url: url, error: ErrorContext(error))
+      }
+      let processingFormat = file.processingFormat
+      let sampleRate = max(processingFormat.sampleRate, 1)
+      let fileDuration = Double(file.length) / sampleRate
+
+      let normalizedSegments: [ClosedRange<TimeInterval>] = segments.compactMap { range in
+        let lower = max(0, min(range.lowerBound, range.upperBound))
+        let upper = max(0, max(range.lowerBound, range.upperBound))
+        let clampedLower = min(lower, fileDuration)
+        let clampedUpper = min(max(clampedLower, upper), fileDuration)
+        guard clampedUpper > clampedLower else { return nil }
+        return clampedLower...clampedUpper
+      }
+
+      guard !normalizedSegments.isEmpty else {
+        return .empty
+      }
+
+      let segmentFrames: [(start: AVFAudio.AVAudioFramePosition, end: AVFAudio.AVAudioFramePosition)]
+      segmentFrames = normalizedSegments.map { range in
+        let start = AVFAudio.AVAudioFramePosition(range.lowerBound * sampleRate)
+        let end = AVFAudio.AVAudioFramePosition(range.upperBound * sampleRate)
+        return (start: start, end: max(start, end))
+      }
+
+      let totalFrames = segmentFrames.reduce(0) { sum, frames in
+        let count = max(AVFAudio.AVAudioFramePosition(0), frames.end - frames.start)
+        return sum + max(0, Int(count))
+      }
+
+      guard totalFrames > 0 else {
+        return .empty
+      }
+
+      let (paddedFrameCount, paddedOverflow) = totalFrames.addingReportingOverflow(
+        max(configuration.lodRatio, 1)
+      )
+      let rawBufferLengthOverride = paddedOverflow ? totalFrames : paddedFrameCount
+      let bufferSeconds = max(Int(ceil(Double(totalFrames) / sampleRate)), 1)
+      let adjustedConfig = MultiBandLODConfiguration(
+        bandCount: configuration.bandCount,
+        lodRatio: configuration.lodRatio,
+        bufferSeconds: bufferSeconds,
+        sampleRate: Int(sampleRate),
+        crossoverMode: configuration.crossoverMode,
+        snapshotSwapInterval: configuration.snapshotSwapInterval,
+        rawBufferLengthOverride: rawBufferLengthOverride
+      )
+
+      let processor = MultiBandLODProcessor(configuration: adjustedConfig)
+
+      let bufferSize: AVFAudio.AVAudioFrameCount = 4096
+      guard
+        let buffer = AVFAudio.AVAudioPCMBuffer(
+          pcmFormat: processingFormat,
+          frameCapacity: bufferSize
+        )
+      else {
+        throw LODGenerationError.bufferCreationFailed
+      }
+
+      for frames in segmentFrames {
+        var framesRemaining = max(AVFAudio.AVAudioFramePosition(0), frames.end - frames.start)
+
+        file.framePosition = frames.start
+
+        while framesRemaining > 0 {
+          let framesToRead = min(bufferSize, AVFAudio.AVAudioFrameCount(framesRemaining))
+          do {
+            try file.read(into: buffer, frameCount: framesToRead)
+          } catch {
+            throw .audioFileReadFailed(url: url, error: ErrorContext(error))
+          }
+
+          guard buffer.frameLength > 0 else { break }
+
+          if let channels = buffer.floatChannelData {
+            let frameCount = Int(buffer.frameLength)
+            let channelCount = Int(processingFormat.channelCount)
+
+            if channelCount == 1 {
+              processor.process(buffer)
+            } else {
+              var monoBuffer = [Float](repeating: 0, count: frameCount)
+              for frame in 0..<frameCount {
+                var sum: Float = 0
+                for ch in 0..<channelCount {
+                  sum += channels[ch][frame]
+                }
+                monoBuffer[frame] = sum / Float(channelCount)
+              }
+              processor.process(monoBuffer)
+            }
+          }
+
+          framesRemaining -= AVFAudio.AVAudioFramePosition(buffer.frameLength)
+        }
+      }
+
+      if processor.windowStats.first?.count ?? 0 > 0 {
+        processor.commitLOD()
+      }
+
+      return processor.snapshotLocking()
+    }
+
     /// Errors that can occur during LOD generation.
     public enum LODGenerationError: AudioError, LocalizedError {
       case bufferCreationFailed
