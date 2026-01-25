@@ -49,6 +49,7 @@ let package = Package(
       dependencies: [
         .product(name: "Atomics", package: "swift-atomics"),
         .product(name: "OrderedCollections", package: "swift-collections"),
+        .product(name: "DequeModule", package: "swift-collections"),
         .product(name: "AsyncAlgorithms", package: "swift-async-algorithms"),
       ],
       swiftSettings: [
