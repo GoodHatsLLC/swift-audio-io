@@ -45,7 +45,7 @@ Add search state to `RecorderView.swift` (which already has the `.searchable(tex
 
 1. **Search Binding** - The existing `@State var search: String = ""` binding captures user input
 2. **Debounce Timer** - Add `@State var searchTask: Task<Void, Never>?` to manage debounced search
-3. **Search Results** - Add `@State var matchingTrackIds: Set<Int64> = []` to store track IDs from embedding search
+3. **Search Results** - Add `@State var matchingTrackIds: Set<UUID> = []` to store track IDs from embedding search
 
 ### Debounce Flow
 
@@ -161,7 +161,7 @@ Add properties and filter the displayed tracks:
 
 ```swift
 let searchActive: Bool
-let matchingTrackIds: Set<Int64>
+let matchingTrackIds: Set<UUID>
 
 var filteredTracks: [Track] {
   if !searchActive {
@@ -246,7 +246,7 @@ if searchActive && filteredTracks.isEmpty {
 
 1. **RecorderView.swift**
    - Add `@State var searchTask: Task<Void, Never>?`
-   - Add `@State var matchingTrackIds: Set<Int64> = []`
+   - Add `@State var matchingTrackIds: Set<UUID> = []`
    - Add `.onChange(of: search)` modifier with debounce logic
    - Implement `performSearch(query:)` method
    - Implement `searchTranscriptionsLocally(query:)` method for fallback
@@ -254,7 +254,7 @@ if searchActive && filteredTracks.isEmpty {
 
 2. **TrackList.swift**
    - Add `let searchActive: Bool` property
-   - Add `let matchingTrackIds: Set<Int64>` property
+   - Add `let matchingTrackIds: Set<UUID>` property
    - Add `filteredTracks` computed property
    - Replace `tracks` iteration with `filteredTracks`
    - Add `ContentUnavailableView` for empty search results
