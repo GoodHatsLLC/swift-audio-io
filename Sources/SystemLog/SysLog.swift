@@ -275,9 +275,45 @@ public enum SystemLog {
   }
   public struct Viewer: View {
     @State private var model: LogModel = .init()
+    @State private var persistModel: Bool = false
+    @AppStorage("systemLog.persistModel") private var persistModelSetting: Bool = false
+
+    private static var sharedModel: LogModel?
+
     public init() {}
+
     public var body: some View {
-      LogListScreen(model: model)
+      LogListScreen(model: currentModel, isLoading: currentModel.exportState == .processing)
+        .toolbar {
+          ToolbarItem(placement: .automatic) {
+            Toggle(isOn: $persistModel) {
+              Label("Persist", systemImage: persistModel ? "pin.fill" : "pin")
+            }
+            .toggleStyle(.button)
+            .help("Keep log data when navigating away")
+          }
+        }
+        .onChange(of: persistModel) { _, newValue in
+          persistModelSetting = newValue
+          if newValue {
+            Self.sharedModel = model
+          } else {
+            Self.sharedModel = nil
+          }
+        }
+        .onAppear {
+          persistModel = persistModelSetting
+          if persistModelSetting, let shared = Self.sharedModel {
+            model = shared
+          }
+        }
+    }
+
+    private var currentModel: LogModel {
+      if persistModel, let shared = Self.sharedModel {
+        return shared
+      }
+      return model
     }
   }
 
@@ -445,133 +481,450 @@ public enum SystemLog {
           ]
         )
       }
+
+      var isActive: Bool {
+        minLevel != nil || !categories.isEmpty || !subsystems.isEmpty
+      }
+
+      var activeCount: Int {
+        var count = 0
+        if minLevel != nil {
+          count += 1
+        }
+        if !subsystems.isEmpty {
+          count += 1
+        }
+        if !categories.isEmpty {
+          count += 1
+        }
+        return count
+      }
     }
 
     fileprivate var model: LogModel
     @Binding var filters: Filters
     @Binding var isDisplayed: Bool
-    @State var newFilters: Filters = .init()
+    @State private var newFilters: Filters = .init()
+    @State private var categoryQuery: String = ""
+    @State private var subsystemQuery: String = ""
 
     var body: some View {
-      VStack {
-        HStack {
-          Rectangle().fill(.clear)
-            .overlay {
-              VStack {
-                Button {
-                  newFilters.categories = []
-                } label: {
-                  Label("Clear", systemImage: "xmark")
-                }
-                ScrollView([.vertical]) {
-                  VStack(alignment: .leading) {
-                    ForEach(
-                      model.knownCategories.compactMap {
-                        $0.isEmpty ? nil : $0
-                      }.sorted(), id: \.self
-                    ) { v in
-                      Button {
-                        if !newFilters.categories.insert(v).inserted {
-                          newFilters.categories.remove(v)
-                        }
-                      } label: {
-                        Label(
-                          v.description,
-                          systemImage: newFilters.categories.contains(v)
-                            ? "checkmark.square"
-                            : "square"
-                        )
-                      }.buttonStyle(.plain)
-                    }
+      NavigationStack {
+        Form {
+          Section {
+            if activeSummaryChips.isEmpty {
+              Text("No filters applied.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+              ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                  ForEach(activeSummaryChips, id: \.text) { chip in
+                    FilterChip(text: chip.text, tint: chip.tint)
                   }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+              }
+            }
+          } header: {
+            Text("Active Filters")
+          }
+
+          Section {
+            Picker("Minimum Level", selection: $newFilters.minLevel) {
+              Text("Any").tag(OSLogStream.LogEntry.LogLevel?.none)
+              ForEach(levelOptions, id: \.self) { level in
+                Label(level.description, systemImage: level.sfSymbol)
+                  .tag(Optional(level))
+              }
+            }
+            .pickerStyle(.menu)
+          } header: {
+            Text("Level")
+          }
+
+          Section {
+            TextField("Search categories", text: $categoryQuery)
+              .textInputAutocapitalization(.never)
+              .disableAutocorrection(true)
+
+            if filteredCategories.isEmpty {
+              Text(categoryQuery.isEmpty ? "No categories available yet." : "No categories match.")
+                .foregroundStyle(.secondary)
+            } else {
+              ForEach(filteredCategories, id: \.self) { category in
+                selectionRow(
+                  title: category,
+                  isSelected: newFilters.categories.contains(category)
+                ) {
+                  toggleSelection(category, selection: &newFilters.categories)
                 }
               }
             }
-          Rectangle().fill(.clear)
-            .overlay {
-              VStack {
-                Button {
-                  newFilters.subsystems = []
-                } label: {
-                  Label("Clear", systemImage: "xmark")
-                }
-                ScrollView([.vertical]) {
-                  VStack(alignment: .leading) {
-                    ForEach(
-                      model.knownSubsystems.compactMap {
-                        $0.isEmpty ? nil : $0
-                      }.sorted(), id: \.self
-                    ) { v in
-                      Button {
-                        let insert = newFilters.subsystems.insert(v).inserted
-                        if !insert {
-                          newFilters.subsystems.remove(v)
-                        }
-                      } label: {
-                        Label(
-                          v.description,
-                          systemImage: newFilters.subsystems.contains(v)
-                            ? "checkmark.square"
-                            : "square"
-                        )
-                      }.buttonStyle(.plain)
-                    }
-                  }
-                }
-              }
-            }
-          Rectangle().fill(.clear)
-            .overlay {
-              VStack {
-                Button {
-                  newFilters.minLevel = nil
-                } label: {
-                  Label("Clear", systemImage: "xmark")
-                }
-                ScrollView([.vertical]) {
-                  VStack(alignment: .leading) {
-                    ForEach(OSLogStream.LogEntry.LogLevel.allCases, id: \.self) { v in
-                      Button {
-                        newFilters.minLevel = v
-                      } label: {
-                        Label(
-                          v.description,
-                          systemImage: newFilters.minLevel == v
-                            ? "checkmark.square"
-                            : "square"
-                        )
-                        .foregroundStyle(.white)
-                        .shadow(color: .black, radius: 2, x: 0, y: 0)
-                        .padding(4)
-                        .background(v.color)
-                        .background(in: Capsule())
-                      }.buttonStyle(.plain)
-                    }
-                  }
+          } header: {
+            FilterSectionHeader(
+              title: "Categories",
+              selectedCount: newFilters.categories.count,
+              totalCount: categoryOptions.count,
+              selectAllTitle: categoryQuery.isEmpty ? "All" : "All Matches",
+              selectAllEnabled: !filteredCategories.isEmpty,
+              clearEnabled: categoryQuery.isEmpty
+                ? !newFilters.categories.isEmpty
+                : !newFilters.categories.isDisjoint(with: filteredCategories),
+              selectAllAction: { selectAllCategories() },
+              clearAction: { clearCategories() }
+            )
+          }
+
+          Section {
+            TextField("Search subsystems", text: $subsystemQuery)
+              .textInputAutocapitalization(.never)
+              .disableAutocorrection(true)
+
+            if filteredSubsystems.isEmpty {
+              Text(subsystemQuery.isEmpty ? "No subsystems available yet." : "No subsystems match.")
+                .foregroundStyle(.secondary)
+            } else {
+              ForEach(filteredSubsystems, id: \.self) { subsystem in
+                selectionRow(
+                  title: subsystem,
+                  isSelected: newFilters.subsystems.contains(subsystem)
+                ) {
+                  toggleSelection(subsystem, selection: &newFilters.subsystems)
                 }
               }
             }
+          } header: {
+            FilterSectionHeader(
+              title: "Subsystems",
+              selectedCount: newFilters.subsystems.count,
+              totalCount: subsystemOptions.count,
+              selectAllTitle: subsystemQuery.isEmpty ? "All" : "All Matches",
+              selectAllEnabled: !filteredSubsystems.isEmpty,
+              clearEnabled: subsystemQuery.isEmpty
+                ? !newFilters.subsystems.isEmpty
+                : !newFilters.subsystems.isDisjoint(with: filteredSubsystems),
+              selectAllAction: { selectAllSubsystems() },
+              clearAction: { clearSubsystems() }
+            )
+          }
         }
-        .font(.caption)
-        HStack {
-          Spacer()
-          Button {
-            isDisplayed = false
-          } label: {
-            Text("dismiss")
+        .navigationTitle("Filters")
+        .toolbar {
+          ToolbarItem(placement: .cancellationAction) {
+            Button {
+              isDisplayed = false
+            } label: {
+              Image(systemName: "xmark")
+                .fontWeight(.semibold)
+            }
+            .buttonStyle(.bordered)
+            .buttonBorderShape(.circle)
           }
-          Button {
-            filters = newFilters
-          } label: {
-            Text("update")
+          ToolbarItem(placement: .confirmationAction) {
+            Button("Apply") {
+              filters = newFilters
+              isDisplayed = false
+            }
+            .disabled(newFilters == filters)
           }
-          .disabled(newFilters == filters)
+          ToolbarItem(placement: .primaryAction) {
+            Button("Reset") {
+              newFilters = .init()
+              categoryQuery = ""
+              subsystemQuery = ""
+            }
+            .disabled(newFilters == .init())
+          }
         }
       }
-      .padding()
       .task {
         newFilters = filters
       }
+    }
+
+    private var levelOptions: [OSLogStream.LogEntry.LogLevel] {
+      OSLogStream.LogEntry.LogLevel.allCases.filter { $0 != .unknown }
+    }
+
+    private var categoryOptions: [String] {
+      model.knownCategories.compactMap { $0.isEmpty ? nil : $0 }.sorted()
+    }
+
+    private var subsystemOptions: [String] {
+      model.knownSubsystems.compactMap { $0.isEmpty ? nil : $0 }.sorted()
+    }
+
+    private var filteredCategories: [String] {
+      filteredValues(categoryOptions, query: categoryQuery, selected: newFilters.categories)
+    }
+
+    private var filteredSubsystems: [String] {
+      filteredValues(subsystemOptions, query: subsystemQuery, selected: newFilters.subsystems)
+    }
+
+    private struct ActiveChip: Hashable {
+      let text: String
+      let tint: Color
+    }
+
+    private var activeSummaryChips: [ActiveChip] {
+      var chips: [ActiveChip] = []
+      if let minLevel = newFilters.minLevel {
+        chips.append(ActiveChip(text: "Min \(minLevel.description)", tint: minLevel.color))
+      }
+      if !newFilters.categories.isEmpty {
+        chips.append(
+          ActiveChip(
+            text: "\(newFilters.categories.count) categories",
+            tint: .blue
+          )
+        )
+      }
+      if !newFilters.subsystems.isEmpty {
+        chips.append(
+          ActiveChip(
+            text: "\(newFilters.subsystems.count) subsystems",
+            tint: .teal
+          )
+        )
+      }
+      return chips
+    }
+
+    private func filteredValues(
+      _ values: [String],
+      query: String,
+      selected: Set<String>
+    ) -> [String] {
+      let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard !trimmed.isEmpty else {
+        return values
+      }
+      let filtered = values.filter { value in
+        value.range(of: trimmed, options: [.caseInsensitive, .diacriticInsensitive]) != nil
+      }
+      let selectedFirst = filtered.filter { selected.contains($0) }
+      let remaining = filtered.filter { !selected.contains($0) }
+      return selectedFirst + remaining
+    }
+
+    private func toggleSelection(_ value: String, selection: inout Set<String>) {
+      if !selection.insert(value).inserted {
+        selection.remove(value)
+      }
+    }
+
+    private func selectAllCategories() {
+      newFilters.categories.formUnion(filteredCategories)
+    }
+
+    private func clearCategories() {
+      if categoryQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        newFilters.categories = []
+      } else {
+        newFilters.categories.subtract(filteredCategories)
+      }
+    }
+
+    private func selectAllSubsystems() {
+      newFilters.subsystems.formUnion(filteredSubsystems)
+    }
+
+    private func clearSubsystems() {
+      if subsystemQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        newFilters.subsystems = []
+      } else {
+        newFilters.subsystems.subtract(filteredSubsystems)
+      }
+    }
+
+    private func selectionRow(
+      title: String,
+      isSelected: Bool,
+      action: @escaping () -> Void
+    ) -> some View {
+      Button(action: action) {
+        HStack(spacing: 8) {
+          Text(title)
+            .font(.callout)
+            .foregroundStyle(.primary)
+          Spacer()
+          Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+            .foregroundStyle(isSelected ? Color.accentColor : .secondary)
+        }
+      }
+      .buttonStyle(.plain)
+    }
+
+    private struct FilterChip: View {
+      let text: String
+      let tint: Color
+
+      var body: some View {
+        Text(text)
+          .font(.caption.weight(.semibold))
+          .foregroundStyle(tint)
+          .padding(.horizontal, 10)
+          .padding(.vertical, 6)
+          .background(tint.opacity(0.16), in: Capsule())
+      }
+    }
+
+    private struct FilterSectionHeader: View {
+      let title: String
+      let selectedCount: Int
+      let totalCount: Int
+      let selectAllTitle: String
+      let selectAllEnabled: Bool
+      let clearEnabled: Bool
+      let selectAllAction: () -> Void
+      let clearAction: () -> Void
+
+      var body: some View {
+        HStack(spacing: 8) {
+          Text(title)
+          if totalCount > 0 {
+            Text("\(selectedCount)/\(totalCount)")
+              .foregroundStyle(.secondary)
+          }
+          Spacer()
+          Button(selectAllTitle, action: selectAllAction)
+            .disabled(!selectAllEnabled)
+          Button("Clear", action: clearAction)
+            .disabled(!clearEnabled)
+        }
+        .font(.caption)
+        .textCase(nil)
+        .buttonStyle(.borderless)
+      }
+    }
+  }
+
+  struct ExportSheet: View {
+    let logs: [OSLogStream.LogEntry]
+    @Binding var isDisplayed: Bool
+    @State private var selectedFormat: UTType = .json
+    @State private var exportedFileURL: URL?
+    @State private var isExporting: Bool = false
+    @State private var exportError: (any Error)?
+
+    private let supportedFormats: [UTType] = [.json, .commaSeparatedText, .plainText, .log]
+
+    var body: some View {
+      NavigationStack {
+        Form {
+          Section {
+            HStack {
+              Image(systemName: "doc.text")
+                .foregroundStyle(.secondary)
+              Text("\(logs.count) log entries")
+                .font(.headline)
+            }
+          } header: {
+            Text("Export Summary")
+          }
+
+          Section {
+            Picker("Format", selection: $selectedFormat) {
+              ForEach(supportedFormats, id: \.self) { format in
+                Label(format.exportDescription, systemImage: format.exportIcon)
+                  .tag(format)
+              }
+            }
+            .pickerStyle(.inline)
+            .labelsHidden()
+          } header: {
+            Text("Export Format")
+          }
+
+          if let error = exportError {
+            Section {
+              Label {
+                Text(error.localizedDescription)
+                  .font(.caption)
+              } icon: {
+                Image(systemName: "exclamationmark.triangle.fill")
+                  .foregroundStyle(.orange)
+              }
+            }
+          }
+
+          Section {
+            if isExporting {
+              HStack {
+                Spacer()
+                ProgressView("Preparing export…")
+                Spacer()
+              }
+            } else if let fileURL = exportedFileURL {
+              ShareLink(item: fileURL) {
+                Label("Share Logs", systemImage: "square.and.arrow.up")
+                  .frame(maxWidth: .infinity)
+              }
+              .buttonStyle(.borderedProminent)
+              .controlSize(.large)
+            } else {
+              Button {
+                Task {
+                  await prepareExport()
+                }
+              } label: {
+                Label("Prepare Export", systemImage: "doc.badge.gearshape")
+                  .frame(maxWidth: .infinity)
+              }
+              .buttonStyle(.borderedProminent)
+              .controlSize(.large)
+              .disabled(logs.isEmpty)
+            }
+          }
+        }
+        .navigationTitle("Export Logs")
+        .toolbar {
+          ToolbarItem(placement: .cancellationAction) {
+            Button {
+              cleanupAndDismiss()
+            } label: {
+              Image(systemName: "xmark")
+                .fontWeight(.semibold)
+            }
+            .buttonStyle(.bordered)
+            .buttonBorderShape(.circle)
+          }
+        }
+        .onChange(of: selectedFormat) { _, _ in
+          exportedFileURL = nil
+          exportError = nil
+        }
+      }
+    }
+
+    @MainActor
+    private func prepareExport() async {
+      isExporting = true
+      exportError = nil
+      exportedFileURL = nil
+
+      do {
+        let content = LogModel.exportLogs(logs, as: selectedFormat)
+        let fileName = "logs_\(Date.now.ISO8601Format()).\(selectedFormat.preferredFilenameExtension ?? "txt")"
+        let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
+
+        try content.write(to: tempURL, atomically: true, encoding: .utf8)
+        exportedFileURL = tempURL
+      } catch {
+        exportError = error
+      }
+
+      isExporting = false
+    }
+
+    private func cleanupAndDismiss() {
+      if let url = exportedFileURL {
+        try? FileManager.default.removeItem(at: url)
+      }
+      isDisplayed = false
     }
   }
 
@@ -742,11 +1095,20 @@ public enum SystemLog {
 
   struct LogListScreen: View {
     @Bindable fileprivate var model: LogModel
+    fileprivate var isLoading: Bool = false
     @State private var isFilterSheetPresented: Bool = false
-    @State private var filters: FilterSheet.Filters = .init()
+    @State private var isExportSheetPresented: Bool = false
+    @State private var filters: FilterSheet.Filters = {
+      var filters = FilterSheet.Filters()
+      if let bundleId = Bundle.main.bundleIdentifier {
+        filters.categories = [bundleId]
+      }
+      return filters
+    }()
 
-    fileprivate init(model: LogModel) {
+    fileprivate init(model: LogModel, isLoading: Bool = false) {
       self.model = model
+      self.isLoading = isLoading
     }
 
     var body: some View {
@@ -759,7 +1121,9 @@ public enum SystemLog {
       }
       .listStyle(.plain)
       .overlay {
-        if let error = model.error {
+        if isLoading && model.logs.isEmpty {
+          loadingOverlay
+        } else if let error = model.error {
           errorOverlay(error: error)
         }
       }
@@ -772,8 +1136,15 @@ public enum SystemLog {
       }
       .toolbar {
         ToolbarItemGroup(placement: .automatic) {
+          exportButton
           filterButton
         }
+      }
+      .sheet(isPresented: $isExportSheetPresented) {
+        ExportSheet(logs: model.logs, isDisplayed: $isExportSheetPresented)
+          #if os(iOS)
+            .presentationDetents([.medium])
+          #endif
       }
       .sheet(isPresented: $isFilterSheetPresented) {
         FilterSheet(
@@ -793,15 +1164,40 @@ public enum SystemLog {
           isFilterSheetPresented.toggle()
         }
       } label: {
-        Label(
-          "Filter",
-          systemImage: true
-            ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle"
-        )
+        Label {
+          Text(filterLabelText)
+        } icon: {
+          Image(systemName: filterIconName)
+        }
         .symbolRenderingMode(.hierarchical)
       }
       .help("Filter logs by category and level")
       .keyboardShortcut("f", modifiers: .command)
+    }
+
+    private var exportButton: some View {
+      Button {
+        isExportSheetPresented = true
+      } label: {
+        Label("Export", systemImage: "square.and.arrow.up")
+          .symbolRenderingMode(.hierarchical)
+      }
+      .disabled(model.logs.isEmpty)
+      .help("Export logs")
+      .keyboardShortcut("e", modifiers: .command)
+    }
+
+    private var filterIconName: String {
+      filters.isActive
+        ? "line.3.horizontal.decrease.circle.fill"
+        : "line.3.horizontal.decrease.circle"
+    }
+
+    private var filterLabelText: String {
+      if filters.isActive {
+        return "Filter (\(filters.activeCount))"
+      }
+      return "Filter"
     }
 
     private func errorOverlay(error: Error) -> some View {
@@ -843,6 +1239,21 @@ public enum SystemLog {
       }
       .padding()
       .transition(.scale.combined(with: .opacity))
+    }
+
+    private var loadingOverlay: some View {
+      VStack(spacing: 16) {
+        ProgressView()
+          .scaleEffect(1.5)
+          .padding(.bottom, 8)
+
+        Text("Loading logs…")
+          .font(.headline)
+          .foregroundStyle(.secondary)
+      }
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
+      .background(.ultraThinMaterial)
+      .transition(.opacity)
     }
   }
 
@@ -966,6 +1377,26 @@ extension UTType {
     case .text: return "Text file"
     case .commaSeparatedText: return "CSV"
     default: return preferredFilenameExtension ?? ""
+    }
+  }
+
+  fileprivate var exportDescription: String {
+    switch self {
+    case .log: return "Log File (.log)"
+    case .json: return "JSON (.json)"
+    case .plainText: return "Plain Text (.txt)"
+    case .commaSeparatedText: return "CSV (.csv)"
+    default: return description
+    }
+  }
+
+  fileprivate var exportIcon: String {
+    switch self {
+    case .log: return "doc.text"
+    case .json: return "curlybraces"
+    case .plainText: return "doc.plaintext"
+    case .commaSeparatedText: return "tablecells"
+    default: return "doc"
     }
   }
 }
