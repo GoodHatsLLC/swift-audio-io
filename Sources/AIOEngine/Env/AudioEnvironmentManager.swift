@@ -270,7 +270,9 @@
                 )
               _selectedSampleRate = actual
             }
-            persistCurrentInputPreferencesIfNeeded()
+            persistInputPreferencesIfNeeded { prefs in
+              prefs.sampleRateHz = newValue.rawValue
+            }
           }
         } catch: { error in
           let actual = env.sampleRate
@@ -282,7 +284,9 @@
               Rate is \(actual, privacy: .public).
               """
             )
-          persistCurrentInputPreferencesIfNeeded()
+          persistInputPreferencesIfNeeded { prefs in
+            prefs.sampleRateHz = newValue.rawValue
+          }
         }
       }
     }
@@ -319,7 +323,11 @@
           }
           _availableSources = env.input?.availableSources ?? validSources
           defaults.set(env.input?.id, forKey: StorageKey.preferredInputId)
-          persistCurrentInputPreferencesIfNeeded()
+          persistInputPreferencesIfNeeded { prefs in
+            prefs.sampleRateHz = env.sampleRate.rawValue
+            prefs.channelCount = _selectedNumberOfChannels.count
+            prefs.sourceId = env.source?.id
+          }
         } catch {
           errorManager.enqueue(error)
         }
@@ -344,7 +352,9 @@
           _availableInputs = env.availableInputs
           _selectedSource = env.source
           _availableSources = env.availableSources
-          persistCurrentInputPreferencesIfNeeded()
+          persistInputPreferencesIfNeeded { prefs in
+            prefs.sourceId = env.source?.id
+          }
         } catch {
           _input = env.input
           _selectedSampleRate = env.sampleRate
@@ -353,7 +363,9 @@
           _selectedSource = env.source
           _availableSources = env.input?.availableSources ?? []
           errorManager.enqueue(error)
-          persistCurrentInputPreferencesIfNeeded()
+          persistInputPreferencesIfNeeded { prefs in
+            prefs.sourceId = env.source?.id
+          }
         }
       }
     }
@@ -437,6 +449,15 @@
     ///
     /// - Throws: An error if the audio session cannot be configured for mono.
     public func applyMono() throws(ManagerError) {
+      try applyMonoInternal(persistPreference: true)
+    }
+
+    private func applyMonoInternal(persistPreference: Bool) throws(ManagerError) {
+      if persistPreference {
+        persistInputPreferencesIfNeeded { prefs in
+          prefs.channelCount = ChannelCount.mono.count
+        }
+      }
       // Force mono input at the session level and clear orientation
       do {
         try session.setPreferredInputNumberOfChannels(1)
@@ -543,7 +564,11 @@
       _availableInputs = env.availableInputs
       _selectedSource = env.source
       _availableSources = filterSources(env.availableSources, for: _selectedNumberOfChannels)
-      persistCurrentInputPreferencesIfNeeded()
+      if persistPreference {
+        persistInputPreferencesIfNeeded { prefs in
+          prefs.sourceId = env.source?.id
+        }
+      }
     }
 
     /// Applies a stereo audio configuration.
@@ -552,6 +577,15 @@
     ///
     /// - Throws: An error if the audio session cannot be configured for stereo.
     public func applyStereo() throws(ManagerError) {
+      try applyStereoInternal(persistPreference: true)
+    }
+
+    private func applyStereoInternal(persistPreference: Bool) throws(ManagerError) {
+      if persistPreference {
+        persistInputPreferencesIfNeeded { prefs in
+          prefs.channelCount = ChannelCount.stereo.count
+        }
+      }
       do {
         if let input = env.input {
           let allDataSources: [AudioSource] = input.availableSources
@@ -623,13 +657,17 @@
         _availableInputs = env.availableInputs
         _selectedSource = env.source
         _availableSources = filterSources(env.availableSources, for: _selectedNumberOfChannels)
-        persistCurrentInputPreferencesIfNeeded()
+        if persistPreference {
+          persistInputPreferencesIfNeeded { prefs in
+            prefs.sourceId = env.source?.id
+          }
+        }
       } catch let error as ManagerError {
-        try applyMono()
+        try applyMonoInternal(persistPreference: false)
         throw error
       } catch {
         let mapped = ManagerError.unexpected(ErrorContext(error))
-        try applyMono()
+        try applyMonoInternal(persistPreference: false)
         throw mapped
       }
     }
@@ -654,6 +692,11 @@
       isAudioSessionActive = active
       log.info(
         "🔊 Audio session manually set to \(active ? "active" : "inactive", privacy: .public)")
+      if active {
+        restorePreferredInputAndConfigurationIfPossible(
+          reason: "audio session activated"
+        )
+      }
     }
 
   }
@@ -1093,38 +1136,46 @@
       _availableSources = filterSources(env.availableSources, for: _selectedNumberOfChannels)
 
       let inputId = env.input?.id ?? "_default"
+      let canApplyPreferences = isAudioSessionActive
+      let modeStatus = canApplyPreferences ? "applied" : "deferred"
       if let prefs = persistedInputPreferencesById[inputId] {
-        if let sampleRateHz = prefs.sampleRateHz {
-          self.sampleRate = SampleRate(rawValue: sampleRateHz)
-        }
-
-        if let channelCount = prefs.channelCount {
-          do {
-            if channelCount > 1 {
-              try applyStereo()
-            } else {
-              try applyMono()
-            }
-          } catch {
-            errorManager.enqueue(error)
+        if canApplyPreferences {
+          if let sampleRateHz = prefs.sampleRateHz {
+            self.sampleRate = SampleRate(rawValue: sampleRateHz)
           }
-        }
 
-        if let sourceId = prefs.sourceId {
-          let desired = _availableSources.first(where: { $0.id == sourceId })
-          if desired != nil {
-            selectedSource = desired
-          } else if inputHasStereoSource, shouldAutoSelectStereoWhenAvailable == false {
-            // Best-effort fallback: choose another stereo-capable source when the remembered one
-            // is no longer available.
+          if let channelCount = prefs.channelCount {
             do {
-              try applyStereo()
+              if channelCount > 1 {
+                try applyStereo()
+              } else {
+                try applyMono()
+              }
             } catch {
               errorManager.enqueue(error)
             }
           }
+
+          if let sourceId = prefs.sourceId {
+            let desired = _availableSources.first(where: { $0.id == sourceId })
+            if desired != nil {
+              selectedSource = desired
+            } else if inputHasStereoSource, shouldAutoSelectStereoWhenAvailable == false {
+              // Best-effort fallback: choose another stereo-capable source when the remembered one
+              // is no longer available.
+              do {
+                try applyStereo()
+              } catch {
+                errorManager.enqueue(error)
+              }
+            }
+          }
+        } else {
+          log.info(
+            "Skipping input preference restore; audio session inactive (\(reason, privacy: .public))"
+          )
         }
-      } else {
+      } else if canApplyPreferences {
         // First-run default: prefer stereo if available.
         if inputHasStereoSource {
           do {
@@ -1133,21 +1184,32 @@
             errorManager.enqueue(error)
           }
         }
+      } else {
+        log.info(
+          "Skipping input preference defaults; audio session inactive (\(reason, privacy: .public))"
+        )
       }
 
-      log.info("Restored audio environment preferences (\(reason, privacy: .public))")
+      log.info(
+        "Restored audio environment preferences (\(reason, privacy: .public); \(modeStatus, privacy: .public))"
+      )
     }
 
-    private func persistCurrentInputPreferencesIfNeeded() {
+    private func persistInputPreferencesIfNeeded(
+      _ update: (inout PersistedInputPreferences) -> Void
+    ) {
       guard !isRestoringFromDefaults else { return }
 
       let inputId = env.input?.id ?? "_default"
       defaults.set(inputId, forKey: StorageKey.preferredInputId)
-      let prefs = PersistedInputPreferences(
-        sampleRateHz: env.sampleRate.rawValue,
-        channelCount: isConfiguredForStereo ? 2 : 1,
-        sourceId: env.source?.id
-      )
+
+      var prefs = persistedInputPreferencesById[inputId]
+        ?? PersistedInputPreferences(
+          sampleRateHz: env.sampleRate.rawValue,
+          channelCount: isConfiguredForStereo ? 2 : 1,
+          sourceId: env.source?.id
+        )
+      update(&prefs)
 
       persistedInputPreferencesById[inputId] = prefs
       guard let data = try? JSONEncoder().encode(persistedInputPreferencesById) else { return }
