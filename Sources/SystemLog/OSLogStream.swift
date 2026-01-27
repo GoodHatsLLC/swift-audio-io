@@ -168,6 +168,92 @@ public struct OSLogStream: AsyncSequence {
     }
   }
 
+  /// Streams log entries for a fixed time range in batches.
+  ///
+  /// This is intended for fast "time to first render" by yielding results as they are read.
+  public static nonisolated func fetchRangeBatches(
+    from startDate: Date,
+    to endDate: Date,
+    inclusiveEnd: Bool = false,
+    batchSize: Int = 200,
+    scope: OSLogStore.Scope = .currentProcessIdentifier,
+    filter: Filter = .any
+  ) -> AsyncThrowingStream<[LogEntry], Error> {
+    AsyncThrowingStream { continuation in
+      let task = Task.detached(priority: .userInitiated) {
+        do {
+          guard startDate <= endDate else {
+            continuation.finish()
+            return
+          }
+          let batchSize = Swift.max(1, batchSize)
+
+          let logStore: OSLogStore
+          do {
+            logStore = try OSLogStore(scope: scope)
+          } catch {
+            continuation.finish(
+              throwing: StreamError.logStoreCreationFailed(
+                scope: String(describing: scope),
+                error: ErrorContext(error)
+              )
+            )
+            return
+          }
+
+          let datePredicate: NSPredicate =
+            if inclusiveEnd {
+              NSPredicate(
+                format: "date >= %@ AND date <= %@", startDate as NSDate, endDate as NSDate)
+            } else {
+              NSPredicate(
+                format: "date >= %@ AND date < %@", startDate as NSDate, endDate as NSDate)
+            }
+
+          let compoundPredicate = NSCompoundPredicate(
+            andPredicateWithSubpredicates: [
+              datePredicate,
+              filter.predicate,
+            ]
+          )
+
+          let itemSequence = try logStore.getEntries(matching: compoundPredicate)
+          var batch: [LogEntry] = []
+          batch.reserveCapacity(batchSize)
+
+          for item in itemSequence {
+            if Task.isCancelled {
+              throw StreamError.cancelled
+            }
+            batch.append(LogEntry(log: item))
+            if batch.count >= batchSize {
+              continuation.yield(batch)
+              batch.removeAll(keepingCapacity: true)
+            }
+          }
+
+          if !batch.isEmpty {
+            continuation.yield(batch)
+          }
+
+          continuation.finish()
+        } catch let error as StreamError {
+          continuation.finish(throwing: error)
+        } catch {
+          if Task.isCancelled {
+            continuation.finish(throwing: StreamError.cancelled)
+            return
+          }
+          continuation.finish(throwing: StreamError.queryFailed(error: ErrorContext(error)))
+        }
+      }
+
+      continuation.onTermination = { @Sendable _ in
+        task.cancel()
+      }
+    }
+  }
+
   public static nonisolated func withCallback(
     batchSize: Int = 100,
     from date: Date? = nil,
