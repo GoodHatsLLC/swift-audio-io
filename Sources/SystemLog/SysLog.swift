@@ -323,11 +323,14 @@ public enum SystemLog {
       didSet {
         let len = max(0, logs.count - oldValue.count)
         let new = logs.suffix(len)
-        knownCategories.formUnion(new.map { $0.category ?? "" })
-        knownSubsystems.formUnion(new.map { $0.subsystem ?? "" })
+        updateKnownSets(with: new)
       }
     }
     var error: (any Error)?
+    var isLoadingOlder: Bool = false
+    var loadedStartDate: Date?
+    var loadedEndDate: Date?
+    var subscriptionID = UUID()
     var knownCategories: Set<String> = []
     var knownSubsystems: Set<String> = []
     let levels = OSLogStream.LogEntry.LogLevel.allCases
@@ -335,6 +338,42 @@ public enum SystemLog {
     var exportState: ExportState = .ready
     static let allowedTypes: [UTType] = [.log, .json, .plainText, .text, .commaSeparatedText]
     init() {
+    }
+
+    fileprivate func updateKnownSets<S: Sequence>(
+      with entries: S
+    ) where S.Element == OSLogStream.LogEntry {
+      for entry in entries {
+        knownCategories.insert(entry.category ?? "")
+        knownSubsystems.insert(entry.subsystem ?? "")
+      }
+    }
+  }
+
+  enum LogWindow: String, CaseIterable, Identifiable, CustomStringConvertible {
+    case minutes15
+    case hour1
+    case hours6
+    case all
+
+    var id: Self { self }
+
+    var description: String {
+      switch self {
+      case .minutes15: return "15 min"
+      case .hour1: return "1 hour"
+      case .hours6: return "6 hours"
+      case .all: return "All"
+      }
+    }
+
+    var duration: TimeInterval? {
+      switch self {
+      case .minutes15: return 15 * 60
+      case .hour1: return 60 * 60
+      case .hours6: return 6 * 60 * 60
+      case .all: return nil
+      }
     }
   }
 
@@ -546,8 +585,10 @@ public enum SystemLog {
 
           Section {
             TextField("Search categories", text: $categoryQuery)
-              .textInputAutocapitalization(.never)
-              .disableAutocorrection(true)
+              #if os(iOS)
+                .textInputAutocapitalization(.never)
+                .disableAutocorrection(true)
+              #endif
 
             if filteredCategories.isEmpty {
               Text(categoryQuery.isEmpty ? "No categories available yet." : "No categories match.")
@@ -579,8 +620,10 @@ public enum SystemLog {
 
           Section {
             TextField("Search subsystems", text: $subsystemQuery)
-              .textInputAutocapitalization(.never)
-              .disableAutocorrection(true)
+              #if os(iOS)
+                .textInputAutocapitalization(.never)
+                .disableAutocorrection(true)
+              #endif
 
             if filteredSubsystems.isEmpty {
               Text(subsystemQuery.isEmpty ? "No subsystems available yet." : "No subsystems match.")
@@ -1098,6 +1141,7 @@ public enum SystemLog {
     fileprivate var isLoading: Bool = false
     @State private var isFilterSheetPresented: Bool = false
     @State private var isExportSheetPresented: Bool = false
+    @State private var window: LogWindow = .minutes15
     @State private var filters: FilterSheet.Filters = {
       var filters = FilterSheet.Filters()
       if let bundleId = Bundle.main.bundleIdentifier {
@@ -1109,6 +1153,11 @@ public enum SystemLog {
     fileprivate init(model: LogModel, isLoading: Bool = false) {
       self.model = model
       self.isLoading = isLoading
+    }
+
+    private struct SubscriptionKey: Hashable {
+      let filters: FilterSheet.Filters
+      let window: LogWindow
     }
 
     var body: some View {
@@ -1131,11 +1180,13 @@ public enum SystemLog {
       #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
       #endif
-      .task(id: filters) {
-        await model.subscribe(filter: filters.filter)
+      .task(id: SubscriptionKey(filters: filters, window: window)) {
+        await model.subscribe(filter: filters.filter, window: window)
       }
       .toolbar {
         ToolbarItemGroup(placement: .automatic) {
+          loadOlderButton
+          rangeMenu
           exportButton
           filterButton
         }
@@ -1185,6 +1236,31 @@ public enum SystemLog {
       .disabled(model.logs.isEmpty)
       .help("Export logs")
       .keyboardShortcut("e", modifiers: .command)
+    }
+
+    private var rangeMenu: some View {
+      Menu {
+        Picker("Range", selection: $window) {
+          ForEach(LogWindow.allCases) { option in
+            Text(option.description).tag(option)
+          }
+        }
+      } label: {
+        Label("Range", systemImage: "clock")
+      }
+      .help("Set the initial log range")
+    }
+
+    private var loadOlderButton: some View {
+      Button {
+        Task {
+          await model.loadOlder(filter: filters.filter, window: window)
+        }
+      } label: {
+        Label("Load Older", systemImage: "clock.arrow.circlepath")
+      }
+      .disabled(isLoading || model.isLoadingOlder || !model.canLoadOlder(window: window))
+      .help("Load older logs")
     }
 
     private var filterIconName: String {
@@ -1444,24 +1520,49 @@ extension SystemLog.LogModel {
 extension SystemLog.LogModel {
 
   @MainActor
-  fileprivate func subscribe(filter: OSLogStream.Filter) async {
+  fileprivate func subscribe(filter: OSLogStream.Filter, window: SystemLog.LogWindow) async {
     logs = []
     error = nil
     self.exportState = .processing
+    isLoadingOlder = false
+    subscriptionID = UUID()
+    let token = subscriptionID
     do {
-      let startDate = Date() - ProcessInfo.processInfo.systemUptime
       let endDate = Date.now
-      let shardCount = Swift.min(8, Swift.max(1, ProcessInfo.processInfo.activeProcessorCount))
+      let processStart = processStartDate
+      let startDate: Date =
+        if let duration = window.duration {
+          max(processStart, endDate.addingTimeInterval(-duration))
+        } else {
+          processStart
+        }
+      loadedStartDate = startDate
+      loadedEndDate = endDate
 
-      let initial = try await OSLogStream.fetchSharded(
+      var receivedInitial = false
+      for try await batch in OSLogStream.fetchRangeBatches(
         from: startDate,
         to: endDate,
-        shardCount: shardCount,
+        inclusiveEnd: true,
+        batchSize: 200,
         filter: filter
-      )
-      try Task.checkCancellation()
-      self.logs = initial
-      self.exportState = .ready
+      ) {
+        try Task.checkCancellation()
+        guard subscriptionID == token else { return }
+        guard !batch.isEmpty else { continue }
+        receivedInitial = true
+        logs.append(contentsOf: batch)
+        if let last = batch.last {
+          loadedEndDate = max(loadedEndDate ?? last.date, last.date)
+        }
+        if exportState == .processing {
+          exportState = .ready
+        }
+      }
+
+      if !receivedInitial {
+        exportState = .ready
+      }
 
       try await OSLogStream.withCallback(
         batchSize: 200,
@@ -1469,7 +1570,12 @@ extension SystemLog.LogModel {
         pollInterval: .seconds(2),
         filter: filter
       ) { entries in
+        guard self.subscriptionID == token else { return }
+        guard !entries.isEmpty else { return }
         self.logs.append(contentsOf: entries)
+        if let last = entries.last {
+          self.loadedEndDate = max(self.loadedEndDate ?? last.date, last.date)
+        }
       }
     } catch {
       if let streamError = error as? OSLogStream.StreamError, case .cancelled = streamError {
@@ -1479,6 +1585,57 @@ extension SystemLog.LogModel {
       self.exportState = .ready
     }
   }
+
+  @MainActor
+  fileprivate func loadOlder(filter: OSLogStream.Filter, window: SystemLog.LogWindow) async {
+    guard !isLoadingOlder else { return }
+    guard let duration = window.duration else { return }
+    guard let loadedStartDate else { return }
+    let processStart = processStartDate
+    guard loadedStartDate > processStart else { return }
+    let targetStart = max(processStart, loadedStartDate.addingTimeInterval(-duration))
+    let targetEnd = loadedStartDate
+    guard targetStart < targetEnd else { return }
+
+    let token = subscriptionID
+    isLoadingOlder = true
+    defer { isLoadingOlder = false }
+
+    do {
+      var insertionIndex = 0
+      for try await batch in OSLogStream.fetchRangeBatches(
+        from: targetStart,
+        to: targetEnd,
+        inclusiveEnd: false,
+        batchSize: 200,
+        filter: filter
+      ) {
+        try Task.checkCancellation()
+        guard subscriptionID == token else { return }
+        guard !batch.isEmpty else { continue }
+        logs.insert(contentsOf: batch, at: insertionIndex)
+        insertionIndex += batch.count
+        updateKnownSets(with: batch)
+      }
+      self.loadedStartDate = targetStart
+    } catch {
+      if let streamError = error as? OSLogStream.StreamError, case .cancelled = streamError {
+        return
+      }
+      logger.error("Load older logs failed: \(error, privacy: .public)")
+    }
+  }
+
+  fileprivate func canLoadOlder(window: SystemLog.LogWindow) -> Bool {
+    guard window.duration != nil else { return false }
+    guard let loadedStartDate else { return false }
+    return loadedStartDate > processStartDate
+  }
+
+  private var processStartDate: Date {
+    Date() - ProcessInfo.processInfo.systemUptime
+  }
+
   fileprivate static func exportLogs(
     _ logs: [OSLogStream.LogEntry],
     as format: UTType,
