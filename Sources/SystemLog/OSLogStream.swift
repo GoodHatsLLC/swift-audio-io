@@ -6,7 +6,7 @@ import SwiftUI
 import Tools
 
 public struct OSLogStream: AsyncSequence {
-  public enum StreamError: AudioError {
+  public enum StreamError: AudioError, LocalizedError {
     case cancelled
     case file(File.FileError)
     case logStoreCreationFailed(scope: String, error: ErrorContext)
@@ -23,6 +23,10 @@ public struct OSLogStream: AsyncSequence {
       case .queryFailed(let error):
         "OSLogStore query failed: \(error)"
       }
+    }
+
+    public var errorDescription: String? {
+      description
     }
   }
 
@@ -80,7 +84,9 @@ public struct OSLogStream: AsyncSequence {
           let itemSequence = try logStore.getEntries(matching: compoundPredicate)
           var items: [LogEntry] = []
           for item in itemSequence {
-            items.append(LogEntry(log: item))
+            let entry = LogEntry(log: item)
+            guard filter.matches(entry) else { continue }
+            items.append(entry)
           }
           continuation.resume(returning: .success(items))
         } catch {
@@ -225,7 +231,9 @@ public struct OSLogStream: AsyncSequence {
             if Task.isCancelled {
               throw StreamError.cancelled
             }
-            batch.append(LogEntry(log: item))
+            let entry = LogEntry(log: item)
+            guard filter.matches(entry) else { continue }
+            batch.append(entry)
             if batch.count >= batchSize {
               continuation.yield(batch)
               batch.removeAll(keepingCapacity: true)
@@ -473,7 +481,7 @@ public struct OSLogStream: AsyncSequence {
       }
     }
 
-    private mutating func get() throws(StreamError) -> [OSLogEntry] {
+    private mutating func get() throws(StreamError) -> [LogEntry] {
       let logStore: OSLogStore
       switch self.logStore {
       case .success(let store):
@@ -500,19 +508,20 @@ public struct OSLogStream: AsyncSequence {
         throw .queryFailed(error: ErrorContext(error))
       }
 
-      var items: [OSLogEntry] = []
+      var items: [LogEntry] = []
       // the maxDate serves as the data cursor
       var maxDate: Date? = nil
       // pull from the underlying iterator one at a time.
       let iterator = itemSequence.makeIterator()
       while let item = iterator.next() {
-        // store the item
-        items.append(item)
         // update the cursor
         maxDate = Swift.max(
           maxDate ?? Date.distantPast,
           item.date
         )
+        let entry = LogEntry(log: item)
+        guard filter.matches(entry) else { continue }
+        items.append(entry)
         // if we reach the batch size, end pulling from the
         // iterator.
         if let batchSize, items.count >= batchSize {
@@ -526,9 +535,7 @@ public struct OSLogStream: AsyncSequence {
     public mutating func next(
       isolation actor: isolated (any Actor)?
     ) async throws(StreamError) -> [LogEntry]? {
-      try get().map { ent in
-        LogEntry(log: ent)
-      }
+      try get()
     }
   }
 
@@ -580,20 +587,16 @@ extension OSLogStream {
       switch self {
       case .any: NSPredicate.init(value: true)
       case .levelFloor(let minLevel):
-        NSPredicate(
-          format: "level >= %d",
-          minLevel.nativeIntValue
-        )
+        // OSLogStore predicates for `level` are not reliable on all platforms.
+        NSPredicate(value: true)
       case .text(let text):
         NSPredicate(
-          format: "message CONTAINS[c] %@",
+          format: "composedMessage CONTAINS[c] %@",
           text
         )
       case .level(let floor):
-        NSPredicate(
-          format: "level == %d",
-          floor.nativeIntValue
-        )
+        // OSLogStore predicates for `level` are not reliable on all platforms.
+        NSPredicate(value: true)
       case .category(let category):
         NSPredicate(
           format: "category == %@",
@@ -606,12 +609,12 @@ extension OSLogStream {
         )
       case .before(let date):
         NSPredicate(
-          format: "timestamp < %@",
+          format: "date < %@",
           date as NSDate
         )
       case .after(let date):
         NSPredicate(
-          format: "timestamp >= %@",
+          format: "date >= %@",
           date as NSDate
         )
       case .and(let filters):
@@ -622,6 +625,37 @@ extension OSLogStream {
         NSCompoundPredicate(
           orPredicateWithSubpredicates: filters.compactMap(\.predicate)
         )
+      }
+    }
+
+    func matches(_ entry: LogEntry) -> Bool {
+      switch self {
+      case .any:
+        return true
+      case .text(let text):
+        guard !text.isEmpty else { return true }
+        return entry.composedMessage.range(
+          of: text,
+          options: [.caseInsensitive, .diacriticInsensitive]
+        ) != nil
+      case .subsystem(let subsystem):
+        return entry.subsystem == subsystem
+      case .category(let category):
+        return entry.category == category
+      case .levelFloor(let minLevel):
+        guard entry.type == .log else { return true }
+        return entry.level.nativeIntValue >= minLevel.nativeIntValue
+      case .level(let level):
+        guard entry.type == .log else { return true }
+        return entry.level == level
+      case .before(let date):
+        return entry.date < date
+      case .after(let date):
+        return entry.date >= date
+      case .and(let filters):
+        return filters.allSatisfy { $0.matches(entry) }
+      case .or(let filters):
+        return filters.contains { $0.matches(entry) }
       }
     }
   }
