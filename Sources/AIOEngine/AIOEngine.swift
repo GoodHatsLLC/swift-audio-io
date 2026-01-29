@@ -64,6 +64,41 @@ private struct EmptyAudioFileError: LocalizedError, Sendable {
   }
 }
 
+private actor WriterDrainSignal {
+  private var isSignaled = false
+  private var continuations: [CheckedContinuation<Void, Never>] = []
+
+  func wait() async {
+    if isSignaled { return }
+    await withCheckedContinuation { continuation in
+      continuations.append(continuation)
+    }
+  }
+
+  func signal() {
+    guard !isSignaled else { return }
+    isSignaled = true
+    let pending = continuations
+    continuations.removeAll()
+    for continuation in pending {
+      continuation.resume()
+    }
+  }
+}
+
+private final class WriterControl: @unchecked Sendable {
+  let stopRequested = ManagedAtomic<Bool>(false)
+  let drainSignal = WriterDrainSignal()
+}
+
+private struct WriterSession: Sendable {
+  let id: UUID
+  let task: Task<Void, Never>
+  let control: WriterControl
+  let file: AVAudioFile
+  let fileURL: URL
+}
+
 @Observable
 public final class AIOEngine: Sendable {
   /// Errors that can occur during audio engine operations.
@@ -416,13 +451,8 @@ public final class AIOEngine: Sendable {
     )
   }
 
-  @MainActor private var writerTask: Task<Void, Never>? {
-    willSet {
-      if writerTask != newValue {
-        writerTask?.cancel()
-      }
-    }
-  }
+  @MainActor private var writerSession: WriterSession?
+  @MainActor private var drainingWriterSessions: [WriterSession] = []
 
   @MainActor private var playbackTask: Task<Void, Never>? {
     willSet {
@@ -678,14 +708,67 @@ public final class AIOEngine: Sendable {
     of processingFormat: AVAudioFormat,
     to file: AVAudioFile
   ) {
-    writerTask = Task.detached(priority: .userInitiated) {
-      await AIOEngine.writerLoop(
-        file: file,
-        format: processingFormat,
-        audioBuffers: buffers
-      )
+    let control = WriterControl()
+    let session = WriterSession(
+      id: UUID(),
+      task: Task.detached(priority: .userInitiated) {
+        await AIOEngine.writerLoop(
+          file: file,
+          format: processingFormat,
+          audioBuffers: buffers,
+          control: control
+        )
+      },
+      control: control,
+      file: file,
+      fileURL: file.url
+    )
+    writerSession = session
+
+  }
+
+  @MainActor
+  private func enqueueDrain(for session: WriterSession) {
+    session.control.stopRequested.store(true, ordering: .relaxed)
+    drainingWriterSessions.append(session)
+    Task { [weak self] in
+      await session.task.value
+      session.file.close()
+      await MainActor.run {
+        self?.drainingWriterSessions.removeAll { $0.id == session.id }
+      }
+    }
+  }
+
+  @MainActor
+  private func stopAndDrainAllWriterSessions() async {
+    var sessions: [WriterSession] = []
+    if let current = writerSession {
+      sessions.append(current)
+    }
+    sessions.append(contentsOf: drainingWriterSessions)
+
+    for session in sessions {
+      session.control.stopRequested.store(true, ordering: .relaxed)
+    }
+    for session in sessions {
+      await session.task.value
     }
 
+    writerSession = nil
+    drainingWriterSessions.removeAll()
+  }
+
+  @MainActor
+  private func cancelAllWriterSessions() {
+    if let current = writerSession {
+      current.task.cancel()
+    }
+    for session in drainingWriterSessions {
+      session.task.cancel()
+    }
+    writerSession = nil
+    drainingWriterSessions.removeAll()
   }
 
   /// Warms up the audio engine with the specified configuration.
@@ -806,9 +889,10 @@ public final class AIOEngine: Sendable {
         throw AIOError.hardwareNotSupported
       }
 
-      let audioBuffers = (0..<channelCount).map { _ in
-        RingBuffer<Float>(capacity: sampleRate * channelCount * 2)  // 2 seconds of buffer
-      }
+      let audioBuffers = Self.makeAudioBuffers(
+        sampleRate: sampleRate,
+        channelCount: channelCount
+      )
 
       guard let tapConfiguration = configuration.tapConfiguration(bus: 0, input: inputFormat)
       else {
@@ -822,21 +906,18 @@ public final class AIOEngine: Sendable {
         engine.inputNode.removeTap(onBus: tapConfiguration.bus)
       }
       recordingSampleTimeAtomic.store(0, ordering: .relaxed)
+      state.withLock { $0.audioBuffers = audioBuffers }
       // Install tap
       runOnEngineControlQueue {
         engine.inputNode.installTap(
           onBus: tapConfiguration.bus,
           bufferSize: tapConfiguration.bufferSize,
           format: tapConfiguration.inputAVAudioFormat
-        ) {
-          @Sendable [bufferReceivers]
-          buffer,
-          time in
+        ) { @Sendable [bufferReceivers] buffer, time in
           self.processAudio(
             buffer: buffer,
             time: time,
             to: processingFormat,
-            enqueueingTo: audioBuffers,
             bufferReceivers: bufferReceivers
           )
         }
@@ -868,6 +949,15 @@ public final class AIOEngine: Sendable {
     }
   }
 
+  private static func makeAudioBuffers(
+    sampleRate: Int,
+    channelCount: Int
+  ) -> [RingBuffer<Float>] {
+    (0..<channelCount).map { _ in
+      RingBuffer<Float>(capacity: sampleRate * channelCount * 2)  // 2 seconds of buffer
+    }
+  }
+
   @MainActor private func hardStop() {
     let tapBus = state.consume(\.installedTapBus)
     runOnEngineControlQueue { [weak self] in
@@ -885,7 +975,7 @@ public final class AIOEngine: Sendable {
       // raise an uncatchable NSException after background transitions; prefer `reset()`.
       self.engine.reset()
     }
-    writerTask = nil
+    cancelAllWriterSessions()
     cleanUp()
   }
 
@@ -899,10 +989,7 @@ public final class AIOEngine: Sendable {
       }
       self.engine.stop()
     }
-    if let writerTask {
-      writerTask.cancel()
-      await writerTask.value
-    }
+    await stopAndDrainAllWriterSessions()
     cleanUp()
     isRecording = false
     wantsRecording = false
@@ -930,7 +1017,6 @@ public final class AIOEngine: Sendable {
       c.cachedConverterOutputFormat = nil
       c.cachedConvertedBuffer = nil
     }
-    writerTask = nil
     playbackTask = nil
   }
 
@@ -938,7 +1024,6 @@ public final class AIOEngine: Sendable {
     buffer: AVAudioPCMBuffer,
     time: AVAudioTime?,
     to processingFormat: AVAudioFormat,
-    enqueueingTo audioBuffers: [RingBuffer<Float>],
     bufferReceivers: Synchronized<[any BufferReceiver<Float>]>
   ) {
     let frameLength = buffer.frameLength
@@ -1027,6 +1112,10 @@ public final class AIOEngine: Sendable {
       return
     }
 
+    guard let audioBuffers = state.withLock({ $0.audioBuffers }) else {
+      return
+    }
+
     // Enqueue to ring buffers
     let channelCount = Int(convertedBuffer.format.channelCount)
     guard channelCount <= audioBuffers.count else {
@@ -1081,11 +1170,13 @@ public final class AIOEngine: Sendable {
   private static func writerLoop(
     file: AVAudioFile,
     format: AVAudioFormat,
-    audioBuffers: [RingBuffer<Float>]
+    audioBuffers: [RingBuffer<Float>],
+    control: WriterControl
   ) async {
     let bufferSize = 1024  // Write in chunks
 
-    while !Task.isCancelled {
+    while true {
+      if Task.isCancelled { break }
       let framesRead = flushChunk(
         size: bufferSize,
         from: audioBuffers,
@@ -1093,14 +1184,21 @@ public final class AIOEngine: Sendable {
         to: file
       )
       if framesRead == 0 {
-        if Task.isCancelled {
-          return
-        } else {
-          // await more audio
-          await Task.yield()
+        let stopRequested = control.stopRequested.load(ordering: .relaxed)
+        if stopRequested,
+          minimumAvailableFrames(
+            channelCount: Int(format.channelCount),
+            audioBuffers: audioBuffers,
+            limit: bufferSize
+          ) == 0
+        {
+          break
         }
+        // await more audio
+        await Task.yield()
       }
     }
+    await control.drainSignal.signal()
   }
 
   private static func flushChunk(
@@ -1201,8 +1299,7 @@ public final class AIOEngine: Sendable {
     guard isRecording,
       let currentURL = state.recordingURL,
       let configuration = state.recordingConfiguration,
-      let processingFormat = configuration.processingFormat,
-      let audioBuffers = state.audioBuffers
+      let processingFormat = configuration.processingFormat
     else {
       throw AIOError.notRecording
     }
@@ -1225,23 +1322,30 @@ public final class AIOEngine: Sendable {
         operation: .openForWriting, url: newURL, error: ErrorContext(error))
     }
 
-    // Cancel current writer task (it will flush remaining data to the old file)
-    writerTask?.cancel()
-
-    // Wait for the writer to observe cancellation so we don't close the file while it's still writing.
-    if let writerTask {
-      await writerTask.value
+    let sampleRate = Int(processingFormat.sampleRate)
+    let channelCount = Int(processingFormat.channelCount)
+    guard sampleRate > 0, channelCount > 0 else {
+      throw AIOError.invalidRecordingConfiguration(details: "Invalid processing format")
     }
 
-    // Close the old file
-    state.file?.close()
+    let newBuffers = Self.makeAudioBuffers(
+      sampleRate: sampleRate,
+      channelCount: channelCount
+    )
+
+    if let currentWriter = writerSession {
+      enqueueDrain(for: currentWriter)
+    } else {
+      state.file?.close()
+    }
 
     // Update state with new file
     state.file = newFile
     state.recordingURL = newURL
+    state.audioBuffers = newBuffers
 
     // Start new writer loop for the new file
-    startFileWriteLoop(flushing: audioBuffers, of: processingFormat, to: newFile)
+    startFileWriteLoop(flushing: newBuffers, of: processingFormat, to: newFile)
 
     // Notify of new file (for crash detection tracking)
     let fileFormat = configuration.outputConfiguration.fileFormat.rawValue
