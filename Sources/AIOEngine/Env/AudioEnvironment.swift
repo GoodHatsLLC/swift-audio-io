@@ -1,4 +1,4 @@
-#if canImport(AVFoundation)
+#if canImport(AVFoundation) && (!os(macOS) || targetEnvironment(macCatalyst))
   import AVFoundation
   import SystemLog
   import Tools

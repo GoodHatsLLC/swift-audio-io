@@ -1,4 +1,4 @@
-#if canImport(AVFoundation)
+#if canImport(UIKit)
   import AVFoundation
   import Testing
   import UIKit

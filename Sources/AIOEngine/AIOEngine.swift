@@ -1,3 +1,4 @@
+#if !os(macOS) || targetEnvironment(macCatalyst)
 @preconcurrency import AVFoundation
 import AsyncAlgorithms
 import Atomics
@@ -2330,3 +2331,4 @@ extension AIOEngine: BufferEmitter {
     RecordingFilename(fileExtension: ext).filename
   }
 }
+#endif

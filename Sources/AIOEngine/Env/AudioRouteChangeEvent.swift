@@ -1,4 +1,4 @@
-#if canImport(AVFoundation)
+#if canImport(AVFoundation) && (!os(macOS) || targetEnvironment(macCatalyst))
   @preconcurrency import AVFoundation
   import Foundation
 
