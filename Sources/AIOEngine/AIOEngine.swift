@@ -56,6 +56,14 @@ import Tools
 ///
 private let log = SystemLog.make()
 
+private struct EmptyAudioFileError: LocalizedError, Sendable {
+  let url: URL
+
+  var errorDescription: String? {
+    "Audio file is empty: \(url.lastPathComponent)"
+  }
+}
+
 @Observable
 public final class AIOEngine: Sendable {
   /// Errors that can occur during audio engine operations.
@@ -1293,6 +1301,13 @@ public final class AIOEngine: Sendable {
     } catch {
       throw AIOError.audioFileFailed(
         operation: .openForReading, url: url, error: ErrorContext(error))
+    }
+    guard file.length > 0 else {
+      throw AIOError.audioFileFailed(
+        operation: .openForReading,
+        url: url,
+        error: ErrorContext(EmptyAudioFileError(url: url))
+      )
     }
     let interval =
       (playbackPollingInterval ?? defaultPlaybackPollingInterval) > .zero
