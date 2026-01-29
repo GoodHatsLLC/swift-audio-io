@@ -1,4 +1,4 @@
-#if canImport(AVFoundation)
+#if canImport(AVFoundation) && (!os(macOS) || targetEnvironment(macCatalyst))
   import Foundation
   import Testing
 

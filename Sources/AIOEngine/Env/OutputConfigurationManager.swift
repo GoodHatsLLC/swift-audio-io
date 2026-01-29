@@ -1,3 +1,4 @@
+#if canImport(AVFoundation) && (!os(macOS) || targetEnvironment(macCatalyst))
 import AVFAudio
 import Foundation
 import Observation
@@ -209,3 +210,4 @@ public final class OutputConfigurationManager {
   }
 
 }
+#endif
