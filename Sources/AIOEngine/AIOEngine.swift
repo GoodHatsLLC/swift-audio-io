@@ -429,7 +429,7 @@ public final class AIOEngine: Sendable {
     case timedOut
   }
 
-  private enum TapErrorCode: Int, Sendable {
+  enum TapErrorCode: Int, Sendable {
     case converterMissing = 1
     case bufferTooSmall = 2
     case conversionFailed = 3
@@ -1746,7 +1746,6 @@ public final class AIOEngine: Sendable {
     Task { await control.drainSignal.signal() }
   }
 
-  @_spi(TESTING)
   static func receiverLoopSync(
     buffers: [SPSCRingBuffer<Float>],
     timing: SPSCRingBuffer<TimingPacket>,
