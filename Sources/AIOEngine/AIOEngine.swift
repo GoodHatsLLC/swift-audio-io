@@ -1094,7 +1094,7 @@ public final class AIOEngine: Sendable {
   @MainActor
   private func gracefulStop() async {
     let tapBus = state.consume(\.installedTapBus)
-    await withEngineControlQueue { [weak self] in
+    engineControlQueue.async { [weak self] in
       guard let self else { return }
       if let tapBus = tapBus {
         self.engine.inputNode.removeTap(onBus: tapBus)
