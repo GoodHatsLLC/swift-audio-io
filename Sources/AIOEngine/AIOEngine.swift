@@ -1355,6 +1355,9 @@ public final class AIOEngine: Sendable {
     errorHandler: @escaping @Sendable (ErrorContext) -> Void
   ) async {
     let bufferSize = 1024  // Write in chunks
+    let clock = ContinuousClock()
+    var stopRequestedAt: ContinuousClock.Instant?
+    var lastStallLog = clock.now
 
     while true {
       if Task.isCancelled { break }
@@ -1368,6 +1371,9 @@ public final class AIOEngine: Sendable {
       case .success(let framesRead):
         if framesRead == 0 {
           let stopRequested = control.stopRequested.load(ordering: .relaxed)
+          if stopRequested, stopRequestedAt == nil {
+            stopRequestedAt = clock.now
+          }
           if stopRequested,
             minimumAvailableFrames(
               channelCount: Int(format.channelCount),
@@ -1376,6 +1382,21 @@ public final class AIOEngine: Sendable {
             ) == 0
           {
             break
+          }
+          if stopRequested, let stopRequestedAt {
+            let elapsed = stopRequestedAt.duration(to: clock.now)
+            if elapsed > .seconds(1), lastStallLog.duration(to: clock.now) > .seconds(1) {
+              lastStallLog = clock.now
+              let counts = audioBuffers.map { $0.count }
+              let minAvail = minimumAvailableFrames(
+                channelCount: Int(format.channelCount),
+                audioBuffers: audioBuffers,
+                limit: bufferSize
+              )
+              log.warning(
+                "🧹 Writer stall after stop: elapsed=\(elapsed, privacy: .public) minAvail=\(minAvail, privacy: .public) counts=\(counts, privacy: .public)"
+              )
+            }
           }
           // await more audio
           await Task.yield()
@@ -1432,7 +1453,15 @@ public final class AIOEngine: Sendable {
     pcmBuffer.frameLength = AVAudioFrameCount(actualFrames)
 
     do {
+      let clock = ContinuousClock()
+      let start = clock.now
       try file.write(from: pcmBuffer)
+      let elapsed = start.duration(to: clock.now)
+      if elapsed > .milliseconds(200) {
+        log.warning(
+          "🐢 Slow write: \(elapsed, privacy: .public) frames=\(actualFrames, privacy: .public) file=\(file.url.lastPathComponent, privacy: .public)"
+        )
+      }
     } catch {
       log.error("error flushing chunk: \(error, privacy: .public)")
       return .failure(error)
