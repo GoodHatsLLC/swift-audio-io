@@ -276,6 +276,7 @@ public final class AIOEngine: Sendable {
   private let engineControlQueue = DispatchQueue(label: "AIOEngine.engine-control", qos: .default)
 
   private let recordingSampleTimeAtomic = ManagedAtomic<Int64>(0)
+  private let writerDrainTimeout: Duration = .seconds(5)
 
   struct InternalState {
     var file: AVAudioFile?
@@ -768,16 +769,38 @@ public final class AIOEngine: Sendable {
       guard let self else { return }
       let clock = ContinuousClock()
       let start = clock.now
-      await session.task.value
-      session.file.close()
-      let elapsed = start.duration(to: clock.now)
-      let size = fileSizeDescription(for: session.fileURL)
-      log.info(
-        "🧹 Writer drained for \(session.fileURL.lastPathComponent, privacy: .public) (size=\(size, privacy: .public), elapsed=\(elapsed, privacy: .public))"
-      )
-      await MainActor.run {
-        self.drainingWriterSessions.removeAll { $0.id == session.id }
+      let drainResult: Result<Void, TimeoutOnlyError>
+      do {
+        try await withTimeout(of: writerDrainTimeout) {
+          await session.task.value
+        }
+        drainResult = .success(())
+      } catch let error as TimeoutOnlyError {
+        drainResult = .failure(error)
       }
+      let elapsed = start.duration(to: clock.now)
+      switch drainResult {
+      case .success:
+        session.file.close()
+        let size = fileSizeDescription(for: session.fileURL)
+        log.info(
+          "🧹 Writer drained for \(session.fileURL.lastPathComponent, privacy: .public) (size=\(size, privacy: .public), elapsed=\(elapsed, privacy: .public))"
+        )
+      case .failure(let error):
+        session.task.cancel()
+        session.file.close()
+        log.error(
+          "⏱️ Writer drain timed out for \(session.fileURL.lastPathComponent, privacy: .public) after \(elapsed, privacy: .public): \(error, privacy: .public)"
+        )
+        await MainActor.run {
+          self.recordWriteFailure(ErrorContext(error), url: session.fileURL)
+          self.errorSubject.send(
+            AIOError.audioFileFailed(operation: .write, url: session.fileURL, error: ErrorContext(error))
+          )
+          self.onRecordingFailed?()
+        }
+      }
+      await MainActor.run { self.drainingWriterSessions.removeAll { $0.id == session.id } }
     }
   }
 
@@ -795,12 +818,34 @@ public final class AIOEngine: Sendable {
     for session in sessions {
       let clock = ContinuousClock()
       let start = clock.now
-      await session.task.value
+      let drainResult: Result<Void, TimeoutOnlyError>
+      do {
+        try await withTimeout(of: writerDrainTimeout) {
+          await session.task.value
+        }
+        drainResult = .success(())
+      } catch let error as TimeoutOnlyError {
+        drainResult = .failure(error)
+      }
       let elapsed = start.duration(to: clock.now)
-      let size = fileSizeDescription(for: session.fileURL)
-      log.info(
-        "🧹 Writer drained for \(session.fileURL.lastPathComponent, privacy: .public) (size=\(size, privacy: .public), elapsed=\(elapsed, privacy: .public))"
-      )
+      switch drainResult {
+      case .success:
+        let size = fileSizeDescription(for: session.fileURL)
+        log.info(
+          "🧹 Writer drained for \(session.fileURL.lastPathComponent, privacy: .public) (size=\(size, privacy: .public), elapsed=\(elapsed, privacy: .public))"
+        )
+      case .failure(let error):
+        session.task.cancel()
+        session.file.close()
+        log.error(
+          "⏱️ Writer drain timed out for \(session.fileURL.lastPathComponent, privacy: .public) after \(elapsed, privacy: .public): \(error, privacy: .public)"
+        )
+        recordWriteFailure(ErrorContext(error), url: session.fileURL)
+        errorSubject.send(
+          AIOError.audioFileFailed(operation: .write, url: session.fileURL, error: ErrorContext(error))
+        )
+        onRecordingFailed?()
+      }
     }
 
     writerSession = nil
