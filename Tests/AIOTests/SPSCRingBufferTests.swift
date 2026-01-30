@@ -111,7 +111,8 @@
     }
   }
 
-  private final class CapturingReceiver: BufferReceiver<Float>, @unchecked Sendable {
+  private final class CapturingReceiver: BufferReceiver, @unchecked Sendable {
+    typealias T = Float
     private let control: ReceiverControl
     private let lock = NSLock()
     private var storedValues: [Float] = []
