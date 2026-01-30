@@ -748,6 +748,7 @@ public final class AIOEngine: Sendable {
       fileURL: file.url
     )
     writerSession = session
+    log.info("📝 Writer started for \(file.url.lastPathComponent, privacy: .public)")
 
   }
 
@@ -756,8 +757,15 @@ public final class AIOEngine: Sendable {
     session.control.stopRequested.store(true, ordering: .relaxed)
     drainingWriterSessions.append(session)
     Task { [weak self] in
+      let clock = ContinuousClock()
+      let start = clock.now
       await session.task.value
       session.file.close()
+      let elapsed = start.duration(to: clock.now)
+      let size = fileSizeDescription(for: session.fileURL)
+      log.info(
+        "🧹 Writer drained for \(session.fileURL.lastPathComponent, privacy: .public) (size=\(size, privacy: .public), elapsed=\(elapsed, privacy: .public))"
+      )
       await MainActor.run {
         self?.drainingWriterSessions.removeAll { $0.id == session.id }
       }
@@ -776,7 +784,14 @@ public final class AIOEngine: Sendable {
       session.control.stopRequested.store(true, ordering: .relaxed)
     }
     for session in sessions {
+      let clock = ContinuousClock()
+      let start = clock.now
       await session.task.value
+      let elapsed = start.duration(to: clock.now)
+      let size = fileSizeDescription(for: session.fileURL)
+      log.info(
+        "🧹 Writer drained for \(session.fileURL.lastPathComponent, privacy: .public) (size=\(size, privacy: .public), elapsed=\(elapsed, privacy: .public))"
+      )
     }
 
     writerSession = nil
@@ -2604,6 +2619,13 @@ extension AIOEngine: BufferEmitter {
     _ = protection
     _ = url
 #endif
+  }
+
+  private nonisolated func fileSizeDescription(for url: URL) -> String {
+    if let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize {
+      return "\(size)"
+    }
+    return "unknown"
   }
 
   // MARK: - Filename Generation
