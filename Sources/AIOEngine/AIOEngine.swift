@@ -70,6 +70,14 @@ private struct EmptyAudioFileError: LocalizedError, Sendable {
   }
 }
 
+private struct MissingAudioFileError: LocalizedError, Sendable {
+  let url: URL
+
+  var errorDescription: String? {
+    "Audio file is missing: \(url.lastPathComponent)"
+  }
+}
+
 private actor WriterDrainSignal {
   private var isSignaled = false
   private var continuations: [CheckedContinuation<Void, Never>] = []
@@ -814,6 +822,9 @@ public final class AIOEngine: Sendable {
   private func recordWriteFailure(_ error: ErrorContext, url: URL) {
     guard lastWriteFailure == nil else { return }
     lastWriteFailure = WriteFailure(url: url, error: error)
+    log.error(
+      "🛑 Recording write failed for \(url.lastPathComponent, privacy: .public): \(error, privacy: .public)"
+    )
   }
 
   @MainActor
@@ -1342,6 +1353,24 @@ public final class AIOEngine: Sendable {
     if let failure = consumeWriteFailure() {
       throw AIOError.audioFileFailed(operation: .write, url: failure.url, error: failure.error)
     }
+    if !FileManager.default.fileExists(atPath: url.path) {
+      throw AIOError.audioFileFailed(
+        operation: .write,
+        url: url,
+        error: ErrorContext(MissingAudioFileError(url: url))
+      )
+    }
+    if let size = fileSizeValue(for: url), size == 0 {
+      throw AIOError.audioFileFailed(
+        operation: .write,
+        url: url,
+        error: ErrorContext(EmptyAudioFileError(url: url))
+      )
+    }
+    let finalSize = fileSizeDescription(for: url)
+    log.info(
+      "✅ Recording stopped: \(url.lastPathComponent, privacy: .public) size=\(finalSize, privacy: .public)"
+    )
     onRecordingCompleted?()
     return url
   }
@@ -2520,10 +2549,12 @@ extension AIOEngine: BufferEmitter {
 #if os(iOS)
     switch configuration.outputDestination {
     case .temporary:
-      return (
+      let resolved = (
         FileManager.default.temporaryDirectory.appendingPathComponent(filename, isDirectory: false),
         nil
       )
+      logOutputDestination(configuration.outputDestination, url: resolved.0)
+      return resolved
     case .directory(let directory, let protection):
       do {
         try FileManager.default.createDirectory(
@@ -2536,10 +2567,12 @@ extension AIOEngine: BufferEmitter {
         )
       }
       applyFileProtectionIfNeeded(protection, to: directory)
-      return (
+      let resolved = (
         directory.appendingPathComponent(filename, isDirectory: false),
         protection
       )
+      logOutputDestination(configuration.outputDestination, url: resolved.0)
+      return resolved
     case .fileURL(let fileURL, let protection):
       guard allowExplicitFile else {
         throw AIOError.invalidRecordingConfiguration(
@@ -2558,15 +2591,19 @@ extension AIOEngine: BufferEmitter {
         )
       }
       applyFileProtectionIfNeeded(protection, to: parent)
-      return (fileURL, protection)
+      let resolved = (fileURL, protection)
+      logOutputDestination(configuration.outputDestination, url: resolved.0)
+      return resolved
     }
 #else
     switch configuration.outputDestination {
     case .temporary:
-      return (
+      let resolved = (
         FileManager.default.temporaryDirectory.appendingPathComponent(filename, isDirectory: false),
         nil
       )
+      logOutputDestination(configuration.outputDestination, url: resolved.0)
+      return resolved
     case .directory(let directory):
       do {
         try FileManager.default.createDirectory(
@@ -2578,10 +2615,12 @@ extension AIOEngine: BufferEmitter {
           operation: .openForWriting, url: directory, error: ErrorContext(error)
         )
       }
-      return (
+      let resolved = (
         directory.appendingPathComponent(filename, isDirectory: false),
         nil
       )
+      logOutputDestination(configuration.outputDestination, url: resolved.0)
+      return resolved
     case .fileURL(let fileURL):
       guard allowExplicitFile else {
         throw AIOError.invalidRecordingConfiguration(
@@ -2599,7 +2638,9 @@ extension AIOEngine: BufferEmitter {
           operation: .openForWriting, url: parent, error: ErrorContext(error)
         )
       }
-      return (fileURL, nil)
+      let resolved = (fileURL, nil)
+      logOutputDestination(configuration.outputDestination, url: resolved.0)
+      return resolved
     }
 #endif
   }
@@ -2632,6 +2673,19 @@ extension AIOEngine: BufferEmitter {
       return "\(size)"
     }
     return "unknown"
+  }
+
+  private nonisolated func fileSizeValue(for url: URL) -> Int? {
+    (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize)
+  }
+
+  private nonisolated func logOutputDestination(
+    _ destination: RecordingConfiguration.OutputDestination,
+    url: URL
+  ) {
+    log.info(
+      "🎯 Recording output: destination=\(destination, privacy: .public) url=\(url.lastPathComponent, privacy: .public)"
+    )
   }
 
   // MARK: - Filename Generation
