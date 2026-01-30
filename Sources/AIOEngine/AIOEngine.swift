@@ -203,10 +203,6 @@ private final class WriterControl: @unchecked Sendable {
   let drainSignal = WriterDrainSignal()
   let writtenSampleTime = ManagedAtomic<Int64>(0)
   let targetSampleTime = ManagedAtomic<Int64>(0)
-  let lastWriteDurationMillis = ManagedAtomic<Int64>(0)
-  let lastWriteUptime = ManagedAtomic<UInt64>(0)
-  let stopRequestedUptime = ManagedAtomic<UInt64>(0)
-  let lastLoopUptime = ManagedAtomic<UInt64>(0)
 }
 
 private struct WriterSession: Sendable {
@@ -905,7 +901,6 @@ public final class AIOEngine: Sendable {
   @MainActor
   private func prepareDrain(for session: WriterSession, targetSampleTime: Int64, logBuffers: Bool) {
     session.control.stopRequested.store(true, ordering: .relaxed)
-    session.control.stopRequestedUptime.store(DispatchTime.now().uptimeNanoseconds, ordering: .relaxed)
     session.control.targetSampleTime.store(targetSampleTime, ordering: .relaxed)
     if logBuffers {
       let counts = state.withLock { $0.audioBuffers?.map { $0.count } ?? [] }
@@ -948,18 +943,8 @@ public final class AIOEngine: Sendable {
       session.writer.close()
       let target = session.control.targetSampleTime.load(ordering: .relaxed)
       let written = session.control.writtenSampleTime.load(ordering: .relaxed)
-      let lastWriteMs = session.control.lastWriteDurationMillis.load(ordering: .relaxed)
-      let lastWriteAgoMs = Self.uptimeMillisSince(
-        session.control.lastWriteUptime.load(ordering: .relaxed)
-      )
-      let stopAgoMs = Self.uptimeMillisSince(
-        session.control.stopRequestedUptime.load(ordering: .relaxed)
-      )
-      let lastLoopAgoMs = Self.uptimeMillisSince(
-        session.control.lastLoopUptime.load(ordering: .relaxed)
-      )
       log.error(
-        "⏱️ Writer drain timed out for \(session.fileURL.lastPathComponent, privacy: .public) after \(elapsed, privacy: .public): \(error, privacy: .public) target=\(target, privacy: .public) written=\(written, privacy: .public) lastWriteMs=\(lastWriteMs, privacy: .public) lastWriteAgoMs=\(lastWriteAgoMs, privacy: .public) lastLoopAgoMs=\(lastLoopAgoMs, privacy: .public) stopAgoMs=\(stopAgoMs, privacy: .public)"
+        "⏱️ Writer drain timed out for \(session.fileURL.lastPathComponent, privacy: .public) after \(elapsed, privacy: .public): \(error, privacy: .public) target=\(target, privacy: .public) written=\(written, privacy: .public)"
       )
       recordWriteFailure(ErrorContext(error), url: session.fileURL)
       if notifyOnFailure {
@@ -1478,7 +1463,6 @@ public final class AIOEngine: Sendable {
 
     while true {
       if Task.isCancelled { break }
-      control.lastLoopUptime.store(DispatchTime.now().uptimeNanoseconds, ordering: .relaxed)
       let result = flushChunk(
         size: bufferSize,
         from: audioBuffers,
@@ -1492,9 +1476,6 @@ public final class AIOEngine: Sendable {
         if didWrite, framesRead > 0 {
           writtenSampleTime &+= Int64(framesRead)
           control.writtenSampleTime.store(writtenSampleTime, ordering: .relaxed)
-          control.lastWriteUptime.store(DispatchTime.now().uptimeNanoseconds, ordering: .relaxed)
-          let duration = writeResult.writeDuration ?? .zero
-          control.lastWriteDurationMillis.store(Self.durationMillis(duration), ordering: .relaxed)
         }
         let stopRequested = control.stopRequested.load(ordering: .relaxed)
         if stopRequested {
@@ -1603,15 +1584,9 @@ public final class AIOEngine: Sendable {
 
     do {
       let clock = ContinuousClock()
-      log.info(
-        "🧹 Write start: frames=\(actualFrames, privacy: .public) file=\(writer.fileURL.lastPathComponent, privacy: .public)"
-      )
       let start = clock.now
       try writer.write(pcmBuffer)
       let elapsed = start.duration(to: clock.now)
-      log.info(
-        "🧹 Write finished: elapsed=\(elapsed, privacy: .public) frames=\(actualFrames, privacy: .public) file=\(writer.fileURL.lastPathComponent, privacy: .public)"
-      )
       if elapsed > .milliseconds(200) {
         log.warning(
           "🐢 Slow write: \(elapsed, privacy: .public) frames=\(actualFrames, privacy: .public) file=\(writer.fileURL.lastPathComponent, privacy: .public)"
@@ -1637,20 +1612,6 @@ public final class AIOEngine: Sendable {
       if minimum == 0 { break }
     }
     return minimum
-  }
-
-  private static func durationMillis(_ duration: Duration) -> Int64 {
-    let components = duration.components
-    let secondsMillis = components.seconds * 1_000
-    let attosecondsMillis = components.attoseconds / 1_000_000_000_000_000
-    return secondsMillis + attosecondsMillis
-  }
-
-  private static func uptimeMillisSince(_ uptime: UInt64) -> Int64 {
-    guard uptime > 0 else { return -1 }
-    let now = DispatchTime.now().uptimeNanoseconds
-    guard now >= uptime else { return 0 }
-    return Int64((now - uptime) / 1_000_000)
   }
 
   /// Stops the current recording and returns the URL of the recorded file.
