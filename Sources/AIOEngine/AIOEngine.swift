@@ -383,23 +383,38 @@ public final class AIOEngine: Sendable {
   private let writerDrainTimeout: Duration = .seconds(5)
   private let stopDrainTimeout: Duration = .seconds(6)
 
-  private nonisolated func awaitWriterDrain(_ session: WriterSession) async -> Bool {
+  private enum WriterDrainOutcome: Sendable {
+    case signaled
+    case targetSatisfied
+    case timedOut
+  }
+
+  private nonisolated func isDrainSatisfiedByTarget(_ session: WriterSession) -> Bool {
+    let target = session.control.targetSampleTime.load(ordering: .relaxed)
+    let written = session.control.writtenSampleTime.load(ordering: .relaxed)
+    let stopRequested = session.control.stopRequested.load(ordering: .relaxed)
+    return stopRequested && written >= target
+  }
+
+  private nonisolated func awaitWriterDrainOutcome(_ session: WriterSession) async -> WriterDrainOutcome {
     log.info("🧹 awaitWriterDrain start for \(session.fileURL.lastPathComponent, privacy: .public)")
     let clock = ContinuousClock()
     let deadline = clock.now.advanced(by: writerDrainTimeout)
     while clock.now < deadline {
       if Task.isCancelled {
         log.warning("🧹 awaitWriterDrain cancelled for \(session.fileURL.lastPathComponent, privacy: .public)")
-        return false
+        return .timedOut
       }
       if await session.control.drainSignal.isSignaledValue() {
         log.info("🧹 awaitWriterDrain completed for \(session.fileURL.lastPathComponent, privacy: .public)")
-        return true
+        return .signaled
+      }
+      if isDrainSatisfiedByTarget(session) {
+        return .targetSatisfied
       }
       try? await Task.sleep(for: .milliseconds(50))
     }
-    log.error("⏱️ awaitWriterDrain timed out for \(session.fileURL.lastPathComponent, privacy: .public)")
-    return false
+    return isDrainSatisfiedByTarget(session) ? .targetSatisfied : .timedOut
   }
 
   private struct InternalState {
@@ -888,54 +903,86 @@ public final class AIOEngine: Sendable {
   }
 
   @MainActor
-  private func enqueueDrain(for session: WriterSession) {
+  private func prepareDrain(for session: WriterSession, targetSampleTime: Int64, logBuffers: Bool) {
     session.control.stopRequested.store(true, ordering: .relaxed)
     session.control.stopRequestedUptime.store(DispatchTime.now().uptimeNanoseconds, ordering: .relaxed)
-    session.control.targetSampleTime.store(
-      recordingSampleTimeAtomic.load(ordering: .relaxed),
-      ordering: .relaxed
-    )
+    session.control.targetSampleTime.store(targetSampleTime, ordering: .relaxed)
+    if logBuffers {
+      let counts = state.withLock { $0.audioBuffers?.map { $0.count } ?? [] }
+      let written = session.control.writtenSampleTime.load(ordering: .relaxed)
+      log.info(
+        "🧹 Stop target set: target=\(targetSampleTime, privacy: .public) written=\(written, privacy: .public) buffers=\(counts, privacy: .public)"
+      )
+    } else {
+      log.info(
+        "🧹 Stop target set: target=\(targetSampleTime, privacy: .public) (non-current session)"
+      )
+    }
+  }
+
+  @MainActor
+  private func drainWriterSession(_ session: WriterSession, notifyOnFailure: Bool) async {
+    let clock = ContinuousClock()
+    let start = clock.now
+    log.info("🧹 Drain start for \(session.fileURL.lastPathComponent, privacy: .public)")
+    let outcome = await awaitWriterDrainOutcome(session)
+    let elapsed = start.duration(to: clock.now)
+    switch outcome {
+    case .signaled:
+      session.writer.close()
+      let size = fileSizeDescription(for: session.fileURL)
+      log.info(
+        "🧹 Writer drained for \(session.fileURL.lastPathComponent, privacy: .public) (size=\(size, privacy: .public), elapsed=\(elapsed, privacy: .public))"
+      )
+    case .targetSatisfied:
+      session.task.cancel()
+      session.writer.close()
+      let target = session.control.targetSampleTime.load(ordering: .relaxed)
+      let written = session.control.writtenSampleTime.load(ordering: .relaxed)
+      log.info(
+        "🧹 Drain short-circuit: target satisfied for \(session.fileURL.lastPathComponent, privacy: .public) target=\(target, privacy: .public) written=\(written, privacy: .public) elapsed=\(elapsed, privacy: .public)"
+      )
+    case .timedOut:
+      let error = WriterDrainTimeoutError(url: session.fileURL, timeout: writerDrainTimeout)
+      session.task.cancel()
+      session.writer.close()
+      let target = session.control.targetSampleTime.load(ordering: .relaxed)
+      let written = session.control.writtenSampleTime.load(ordering: .relaxed)
+      let lastWriteMs = session.control.lastWriteDurationMillis.load(ordering: .relaxed)
+      let lastWriteAgoMs = Self.uptimeMillisSince(
+        session.control.lastWriteUptime.load(ordering: .relaxed)
+      )
+      let stopAgoMs = Self.uptimeMillisSince(
+        session.control.stopRequestedUptime.load(ordering: .relaxed)
+      )
+      let lastLoopAgoMs = Self.uptimeMillisSince(
+        session.control.lastLoopUptime.load(ordering: .relaxed)
+      )
+      log.error(
+        "⏱️ Writer drain timed out for \(session.fileURL.lastPathComponent, privacy: .public) after \(elapsed, privacy: .public): \(error, privacy: .public) target=\(target, privacy: .public) written=\(written, privacy: .public) lastWriteMs=\(lastWriteMs, privacy: .public) lastWriteAgoMs=\(lastWriteAgoMs, privacy: .public) lastLoopAgoMs=\(lastLoopAgoMs, privacy: .public) stopAgoMs=\(stopAgoMs, privacy: .public)"
+      )
+      recordWriteFailure(ErrorContext(error), url: session.fileURL)
+      if notifyOnFailure {
+        errorSubject.send(
+          AIOError.audioFileFailed(
+            operation: .write,
+            url: session.fileURL,
+            error: ErrorContext(error)
+          )
+        )
+        onRecordingFailed?()
+      }
+    }
+  }
+
+  @MainActor
+  private func enqueueDrain(for session: WriterSession) {
+    let target = recordingSampleTimeAtomic.load(ordering: .relaxed)
+    prepareDrain(for: session, targetSampleTime: target, logBuffers: session.id == writerSession?.id)
     drainingWriterSessions.append(session)
     Task { [weak self] in
       guard let self else { return }
-      let clock = ContinuousClock()
-      let start = clock.now
-      log.info("🧹 Drain start for \(session.fileURL.lastPathComponent, privacy: .public)")
-      let drainResult = await awaitWriterDrain(session)
-      let elapsed = start.duration(to: clock.now)
-      if drainResult {
-        session.writer.close()
-        let size = fileSizeDescription(for: session.fileURL)
-        log.info(
-          "🧹 Writer drained for \(session.fileURL.lastPathComponent, privacy: .public) (size=\(size, privacy: .public), elapsed=\(elapsed, privacy: .public))"
-        )
-      } else {
-        let error = WriterDrainTimeoutError(url: session.fileURL, timeout: writerDrainTimeout)
-        session.task.cancel()
-        session.writer.close()
-        let target = session.control.targetSampleTime.load(ordering: .relaxed)
-        let written = session.control.writtenSampleTime.load(ordering: .relaxed)
-        let lastWriteMs = session.control.lastWriteDurationMillis.load(ordering: .relaxed)
-        let lastWriteAgoMs = Self.uptimeMillisSince(
-          session.control.lastWriteUptime.load(ordering: .relaxed)
-        )
-        let stopAgoMs = Self.uptimeMillisSince(
-          session.control.stopRequestedUptime.load(ordering: .relaxed)
-        )
-        let lastLoopAgoMs = Self.uptimeMillisSince(
-          session.control.lastLoopUptime.load(ordering: .relaxed)
-        )
-        log.error(
-          "⏱️ Writer drain timed out for \(session.fileURL.lastPathComponent, privacy: .public) after \(elapsed, privacy: .public): \(error, privacy: .public) target=\(target, privacy: .public) written=\(written, privacy: .public) lastWriteMs=\(lastWriteMs, privacy: .public) lastWriteAgoMs=\(lastWriteAgoMs, privacy: .public) lastLoopAgoMs=\(lastLoopAgoMs, privacy: .public) stopAgoMs=\(stopAgoMs, privacy: .public)"
-        )
-        await MainActor.run {
-          self.recordWriteFailure(ErrorContext(error), url: session.fileURL)
-          self.errorSubject.send(
-            AIOError.audioFileFailed(operation: .write, url: session.fileURL, error: ErrorContext(error))
-          )
-          self.onRecordingFailed?()
-        }
-      }
+      await self.drainWriterSession(session, notifyOnFailure: true)
       await MainActor.run { self.drainingWriterSessions.removeAll { $0.id == session.id } }
     }
   }
@@ -952,77 +999,22 @@ public final class AIOEngine: Sendable {
     }
     sessions.append(contentsOf: drainingWriterSessions)
 
+    let target = recordingSampleTimeAtomic.load(ordering: .relaxed)
     for session in sessions {
       if Task.isCancelled {
         log.warning("🧹 stopAndDrainAllWriterSessions cancelled before stop request")
         return
       }
       log.info("🧹 Stop requested for writer \(session.fileURL.lastPathComponent, privacy: .public)")
-      session.control.stopRequested.store(true, ordering: .relaxed)
-      session.control.stopRequestedUptime.store(DispatchTime.now().uptimeNanoseconds, ordering: .relaxed)
-      let target = recordingSampleTimeAtomic.load(ordering: .relaxed)
-      session.control.targetSampleTime.store(target, ordering: .relaxed)
-      if session.id == writerSession?.id {
-        let counts = state.withLock { $0.audioBuffers?.map { $0.count } ?? [] }
-        let written = session.control.writtenSampleTime.load(ordering: .relaxed)
-        log.info(
-          "🧹 Stop target set: target=\(target, privacy: .public) written=\(written, privacy: .public) buffers=\(counts, privacy: .public)"
-        )
-      } else {
-        log.info(
-          "🧹 Stop target set: target=\(target, privacy: .public) (non-current session)"
-        )
-      }
+      prepareDrain(for: session, targetSampleTime: target, logBuffers: session.id == writerSession?.id)
     }
     for session in sessions {
       if Task.isCancelled {
         log.warning("🧹 stopAndDrainAllWriterSessions cancelled before drain wait")
         return
       }
-      let clock = ContinuousClock()
-      let start = clock.now
       log.info("🧹 Drain wait start for \(session.fileURL.lastPathComponent, privacy: .public)")
-      let drainResult = await awaitWriterDrain(session)
-      let elapsed = start.duration(to: clock.now)
-      log.info(
-        "🧹 Drain wait finished for \(session.fileURL.lastPathComponent, privacy: .public) result=\(drainResult, privacy: .public)"
-      )
-      if drainResult {
-        let size = fileSizeDescription(for: session.fileURL)
-        log.info(
-          "🧹 Writer drained for \(session.fileURL.lastPathComponent, privacy: .public) (size=\(size, privacy: .public), elapsed=\(elapsed, privacy: .public))"
-        )
-      } else {
-        let error = WriterDrainTimeoutError(url: session.fileURL, timeout: writerDrainTimeout)
-        session.task.cancel()
-        session.writer.close()
-        let target = session.control.targetSampleTime.load(ordering: .relaxed)
-        let written = session.control.writtenSampleTime.load(ordering: .relaxed)
-        let lastWriteMs = session.control.lastWriteDurationMillis.load(ordering: .relaxed)
-        let lastWriteAgoMs = Self.uptimeMillisSince(
-          session.control.lastWriteUptime.load(ordering: .relaxed)
-        )
-        let stopAgoMs = Self.uptimeMillisSince(
-          session.control.stopRequestedUptime.load(ordering: .relaxed)
-        )
-        let lastLoopAgoMs = Self.uptimeMillisSince(
-          session.control.lastLoopUptime.load(ordering: .relaxed)
-        )
-        log.error(
-          "⏱️ Writer drain timed out for \(session.fileURL.lastPathComponent, privacy: .public) after \(elapsed, privacy: .public): \(error, privacy: .public) target=\(target, privacy: .public) written=\(written, privacy: .public) lastWriteMs=\(lastWriteMs, privacy: .public) lastWriteAgoMs=\(lastWriteAgoMs, privacy: .public) lastLoopAgoMs=\(lastLoopAgoMs, privacy: .public) stopAgoMs=\(stopAgoMs, privacy: .public)"
-        )
-        recordWriteFailure(ErrorContext(error), url: session.fileURL)
-        if notifyOnFailure {
-          errorSubject.send(
-            AIOError.audioFileFailed(
-              operation: .write,
-              url: session.fileURL,
-              error: ErrorContext(error)
-            )
-          )
-          onRecordingFailed?()
-        }
-      }
+      await drainWriterSession(session, notifyOnFailure: notifyOnFailure)
     }
 
     writerSession = nil
