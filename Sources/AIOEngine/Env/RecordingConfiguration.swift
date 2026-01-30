@@ -10,16 +10,38 @@
   {
 
 #if os(iOS)
-    public enum OutputDestination: Hashable, Sendable {
+    public enum OutputDestination: Hashable, Sendable, CustomStringConvertible {
       case temporary
       case directory(URL, fileProtection: FileProtectionType? = nil)
       case fileURL(URL, fileProtection: FileProtectionType? = nil)
+
+      public var description: String {
+        switch self {
+        case .temporary:
+          return "temporary"
+        case .directory(let url, let protection):
+          return "directory(\(url.path), protection=\(String(describing: protection)))"
+        case .fileURL(let url, let protection):
+          return "fileURL(\(url.path), protection=\(String(describing: protection)))"
+        }
+      }
     }
 #else
-    public enum OutputDestination: Hashable, Sendable {
+    public enum OutputDestination: Hashable, Sendable, CustomStringConvertible {
       case temporary
       case directory(URL)
       case fileURL(URL)
+
+      public var description: String {
+        switch self {
+        case .temporary:
+          return "temporary"
+        case .directory(let url):
+          return "directory(\(url.path))"
+        case .fileURL(let url):
+          return "fileURL(\(url.path))"
+        }
+      }
     }
 #endif
 
@@ -42,7 +64,7 @@
     }
 
     public var description: String {
-      "\(outputConfiguration.fileFormat): \(inputConfiguration.channels) \(inputConfiguration.sampleRate), \(outputConfiguration.bitDepth) \(outputConfiguration.fileFormat.requiresQuality ? "\(outputConfiguration.quality)" : "")"
+      "\(outputConfiguration.fileFormat): \(inputConfiguration.channels) \(inputConfiguration.sampleRate), \(outputConfiguration.bitDepth) \(outputConfiguration.fileFormat.requiresQuality ? "\(outputConfiguration.quality)" : "") (destination: \(outputDestination))"
     }
 
     public var summary: String {
