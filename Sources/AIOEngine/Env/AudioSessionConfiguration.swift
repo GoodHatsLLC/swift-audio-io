@@ -55,6 +55,30 @@
         prefersInterruptionOnRouteDisconnect: false
       )
     }
+
+    public static var playbackDefault: AudioSessionConfiguration {
+      #if os(iOS)
+        #if targetEnvironment(macCatalyst)
+          let options: AVAudioSession.CategoryOptions = []
+        #else
+          let options: AVAudioSession.CategoryOptions = [
+            .allowAirPlay,
+            .allowBluetoothA2DP,
+          ]
+        #endif
+      #else
+        let options: AVAudioSession.CategoryOptions = []
+      #endif
+
+      return AudioSessionConfiguration(
+        category: .playback,
+        mode: .default,
+        options: options,
+        allowsHapticsAndSystemSoundsDuringRecording: false,
+        prefersNoInterruptionsFromSystemAlerts: false,
+        prefersInterruptionOnRouteDisconnect: false
+      )
+    }
   }
 
   extension AudioSessionConfiguration {
