@@ -1025,8 +1025,12 @@ public final class AIOEngine: Sendable {
       // raise an uncatchable NSException after background transitions; prefer `reset()`.
       self.engine.reset()
     }
-    cancelAllWriterSessions()
-    cleanUp()
+    let hasActiveWriter = writerSession != nil || !drainingWriterSessions.isEmpty
+    if let current = writerSession {
+      enqueueDrain(for: current)
+      writerSession = nil
+    }
+    cleanUp(closeFile: !hasActiveWriter)
   }
 
   @MainActor
@@ -1047,7 +1051,7 @@ public final class AIOEngine: Sendable {
     deactivateAudioSessionIfNeeded(reason: "recording stopped")
   }
 
-  @MainActor private func cleanUp() {
+  @MainActor private func cleanUp(closeFile: Bool = true) {
     let file = state { state in
       defer {
         state.file = nil
@@ -1060,7 +1064,9 @@ public final class AIOEngine: Sendable {
       }
       return state.file
     }
-    file?.close()
+    if closeFile {
+      file?.close()
+    }
     cache.withLock { c in
       c.cachedTapConverter = nil
       c.cachedConverterInputFormat = nil
