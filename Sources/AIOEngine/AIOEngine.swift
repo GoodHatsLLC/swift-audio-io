@@ -408,6 +408,7 @@ public final class AIOEngine: Sendable {
   private let writerDrainTimeout: Duration = .seconds(5)
   private let stopDrainTimeout: Duration = .seconds(6)
   private let receiverPollingInterval: Duration = .milliseconds(20)
+  private let tapErrorCode = ManagedAtomic<Int>(0)
 #if DEBUG
   private struct EngineMetrics: Sendable {
     let tapCallbackCount = ManagedAtomic<Int64>(0)
@@ -425,6 +426,12 @@ public final class AIOEngine: Sendable {
     case signaled
     case targetSatisfied
     case timedOut
+  }
+
+  private enum TapErrorCode: Int, Sendable {
+    case converterMissing = 1
+    case bufferTooSmall = 2
+    case conversionFailed = 3
   }
 
   private nonisolated func isDrainSatisfiedByTarget(_ session: WriterSession) -> Bool {
@@ -464,6 +471,10 @@ public final class AIOEngine: Sendable {
     var audioBuffers: [SPSCRingBuffer<Float>]?
     var receiverBuffers: [SPSCRingBuffer<Float>]?
     var receiverTiming: SPSCRingBuffer<TimingPacket>?
+    var tapConverter: AVAudioConverter?
+    var tapConverterInputFormat: AVAudioFormat?
+    var tapConverterOutputFormat: AVAudioFormat?
+    var tapConvertedBuffer: AVAudioPCMBuffer?
     var isHandlingRouteChange: Bool = false
     var initialInputFormat: AVAudioFormat?
     var lastInputFormat: AVAudioFormat?
@@ -472,6 +483,17 @@ public final class AIOEngine: Sendable {
 
   private nonisolated func placeState<T>(_ path: WritableKeyPath<InternalState, T>, _ field: T) {
     state.withLock { $0[keyPath: path] = field }
+  }
+
+  private nonisolated func recordTapError(_ code: TapErrorCode) {
+    tapErrorCode.store(code.rawValue, ordering: .relaxed)
+  }
+
+  private nonisolated func consumeTapError() -> TapErrorCode? {
+    let raw = tapErrorCode.load(ordering: .relaxed)
+    guard raw != 0, let code = TapErrorCode(rawValue: raw) else { return nil }
+    tapErrorCode.store(0, ordering: .relaxed)
+    return code
   }
 
   /// A Boolean value that indicates whether the engine is currently recording.
@@ -672,14 +694,6 @@ public final class AIOEngine: Sendable {
     }
   }
 
-  struct Cache {
-    var cachedTapConverter: AVAudioConverter?
-    var cachedConverterInputFormat: AVAudioFormat?
-    var cachedConverterOutputFormat: AVAudioFormat?
-    var cachedConvertedBuffer: AVAudioPCMBuffer?
-  }
-
-  private let cache: Mut<Cache> = .init(.init())
   public let bufferReceivers: Synchronized<[any BufferReceiver<Float>]> = .init([])
 
   //  public var eventHandler: (@Sendable (AIO.Event.Interruption) -> Void)?
@@ -981,6 +995,18 @@ public final class AIOEngine: Sendable {
     let onUnderrun: (@Sendable () -> Void)? = nil
     let onDrop: (@Sendable () -> Void)? = nil
 #endif
+    let tapErrorPoll: @Sendable () -> TapErrorCode? = { [weak self] in
+      self?.consumeTapError()
+    }
+    let onTapError: @Sendable (TapErrorCode) -> Void = { [weak self] code in
+      guard let self else { return }
+      let error: AIOError
+      switch code {
+      case .converterMissing, .bufferTooSmall, .conversionFailed:
+        error = .formatConversionFailed
+      }
+      self.errorSubject.send(error)
+    }
     let cadence = receiverPollingInterval
     receiverQueue.async { [control, buffers, timing, processingFormat, bufferReceivers] in
       AIOEngine.receiverLoopSync(
@@ -991,7 +1017,9 @@ public final class AIOEngine: Sendable {
         control: control,
         cadence: cadence,
         onUnderrun: onUnderrun,
-        onDrop: onDrop
+        onDrop: onDrop,
+        tapErrorPoll: tapErrorPoll,
+        onTapError: onTapError
       )
     }
   }
@@ -1266,6 +1294,21 @@ public final class AIOEngine: Sendable {
         Int(ceil(Double(sampleRate) / Double(tapConfiguration.bufferSize))) * 4
       )
       let receiverTiming = SPSCRingBuffer<TimingPacket>(capacity: timingCapacity)
+      let tapFormat = tapConfiguration.inputAVAudioFormat
+      guard let tapConverter = AVAudioConverter(from: tapFormat, to: processingFormat) else {
+        throw AIOError.formatConversionFailed
+      }
+      let tapFrameRatio = processingFormat.sampleRate / tapFormat.sampleRate
+      let maxTapFrames = max(
+        AVAudioFrameCount(ceil(Double(tapConfiguration.bufferSize) * tapFrameRatio)),
+        1
+      )
+      guard let tapConvertedBuffer = AVAudioPCMBuffer(
+        pcmFormat: processingFormat,
+        frameCapacity: maxTapFrames
+      ) else {
+        throw AIOError.formatConversionFailed
+      }
       // Defensive: ensure we never double-install a tap if state got out of sync.
       runOnEngineControlQueue {
         engine.inputNode.removeTap(onBus: tapConfiguration.bus)
@@ -1293,6 +1336,10 @@ public final class AIOEngine: Sendable {
         $0.audioBuffers = audioBuffers
         $0.receiverBuffers = receiverBuffers
         $0.receiverTiming = receiverTiming
+        $0.tapConverter = tapConverter
+        $0.tapConverterInputFormat = tapFormat
+        $0.tapConverterOutputFormat = processingFormat
+        $0.tapConvertedBuffer = tapConvertedBuffer
         $0.installedTapBus = tapConfiguration.bus
         $0.recordingConfiguration = configuration
         $0.initialInputFormat = inputFormat
@@ -1392,6 +1439,7 @@ public final class AIOEngine: Sendable {
 
   @MainActor private func cleanUp(closeFile: Bool = true) {
     stopReceiverLoop()
+    tapErrorCode.store(0, ordering: .relaxed)
     let writer = state { state in
       defer {
         state.recordingWriter = nil
@@ -1400,6 +1448,10 @@ public final class AIOEngine: Sendable {
         state.audioBuffers = nil
         state.receiverBuffers = nil
         state.receiverTiming = nil
+        state.tapConverter = nil
+        state.tapConverterInputFormat = nil
+        state.tapConverterOutputFormat = nil
+        state.tapConvertedBuffer = nil
         state.initialInputFormat = nil
         state.lastInputFormat = nil
         state.isHandlingRouteChange = false
@@ -1408,12 +1460,6 @@ public final class AIOEngine: Sendable {
     }
     if closeFile {
       writer?.close()
-    }
-    cache.withLock { c in
-      c.cachedTapConverter = nil
-      c.cachedConverterInputFormat = nil
-      c.cachedConverterOutputFormat = nil
-      c.cachedConvertedBuffer = nil
     }
     playbackTask = nil
   }
@@ -1433,50 +1479,33 @@ public final class AIOEngine: Sendable {
     let frameLength = buffer.frameLength
     guard frameLength > 0 else { return }
 
-    let converter: AVAudioConverter
     let (
-      cachedTapConverter,
-      cachedConverterInputFormat,
-      cachedConverterOutputFormat
-    ) = cache.withLock { c in
+      audioBuffers,
+      receiverBuffers,
+      timingBuffer,
+      converter,
+      converterInputFormat,
+      converterOutputFormat,
+      convertedBuffer
+    ) = state.withLock { state in
       (
-        c.cachedTapConverter,
-        c.cachedConverterInputFormat,
-        c.cachedConverterOutputFormat
+        state.audioBuffers,
+        state.receiverBuffers,
+        state.receiverTiming,
+        state.tapConverter,
+        state.tapConverterInputFormat,
+        state.tapConverterOutputFormat,
+        state.tapConvertedBuffer
       )
     }
-    if let cachedConverter = cachedTapConverter,
-      let inputFormat = cachedConverterInputFormat,
-      let outputFormat = cachedConverterOutputFormat,
-      inputFormat.isEqual(buffer.format),
-      outputFormat.isEqual(processingFormat)
-    {
-      converter = cachedConverter
-    } else {
-      if rtLoggingEnabled {
-        log.info(
-          """
-              No cached converter available for buffer. One will be created.
-              input buffer: \(buffer.format, privacy: .public)
-              cached input converter: \(cachedConverterInputFormat, privacy: .public)
-              cached output converter: \(cachedConverterOutputFormat, privacy: .public)
-              processingFormat: \(processingFormat, privacy: .public)
-          """)
-      }
-      guard let newConverter = AVAudioConverter(from: buffer.format, to: processingFormat) else {
-        let error = AIOError.formatConversionFailed
-        if rtLoggingEnabled {
-          log.error("Failed to create audio converter: \(error, privacy: .public)")
-        }
-        errorSubject.send(error)
-        return
-      }
-      cache.withLock { c in
-        c.cachedTapConverter = newConverter
-        c.cachedConverterInputFormat = buffer.format
-        c.cachedConverterOutputFormat = processingFormat
-      }
-      converter = newConverter
+    guard let converter,
+      let converterInputFormat,
+      let converterOutputFormat,
+      converterInputFormat.isEqual(buffer.format),
+      converterOutputFormat.isEqual(processingFormat)
+    else {
+      recordTapError(.converterMissing)
+      return
     }
 
     // When the hardware sample rate differs from our processing format, the converter
@@ -1488,23 +1517,12 @@ public final class AIOEngine: Sendable {
       AVAudioFrameCount(ceil(Double(frameLength) * frameRatio)),
       1
     )
-    let convertedBuffer: AVAudioPCMBuffer? = cache.withLock({
-      if let cachedBuffer = $0.cachedConvertedBuffer,
-        cachedBuffer.format.isEqual(processingFormat),
-        cachedBuffer.frameCapacity >= requestedCapacity
-      {
-        return cachedBuffer
-      } else {
-        let newBuffer = AVAudioPCMBuffer(
-          pcmFormat: processingFormat,
-          frameCapacity: requestedCapacity
-        )
-        $0.cachedConvertedBuffer = newBuffer
-        return newBuffer
-      }
-    })
-
     guard let convertedBuffer else {
+      recordTapError(.converterMissing)
+      return
+    }
+    guard convertedBuffer.frameCapacity >= requestedCapacity else {
+      recordTapError(.bufferTooSmall)
       return
     }
     convertedBuffer.frameLength = requestedCapacity
@@ -1515,13 +1533,8 @@ public final class AIOEngine: Sendable {
       return buffer
     }
     guard status != .error else {
-      let error = error ?? NSError(domain: "unknown", code: 666)
-      errorSubject.send(error)
+      recordTapError(.conversionFailed)
       return
-    }
-
-    let (audioBuffers, receiverBuffers, timingBuffer) = state.withLock { state in
-      (state.audioBuffers, state.receiverBuffers, state.receiverTiming)
     }
     guard let audioBuffers else {
       return
@@ -1719,7 +1732,9 @@ public final class AIOEngine: Sendable {
     control: ReceiverControl,
     cadence: Duration,
     onUnderrun: (@Sendable () -> Void)?,
-    onDrop: (@Sendable () -> Void)?
+    onDrop: (@Sendable () -> Void)?,
+    tapErrorPoll: (@Sendable () -> TapErrorCode?)?,
+    onTapError: (@Sendable (TapErrorCode) -> Void)?
   ) {
     let channelCount = min(Int(processingFormat.channelCount), buffers.count)
     guard channelCount > 0 else { return }
@@ -1756,6 +1771,9 @@ public final class AIOEngine: Sendable {
 
     let maxBacklog = 4
     while !control.cancelRequested.load(ordering: .relaxed) {
+      if let tapErrorPoll, let onTapError, let code = tapErrorPoll() {
+        onTapError(code)
+      }
       var backlog = timing.availableToRead
       while backlog > maxBacklog && !control.cancelRequested.load(ordering: .relaxed) {
         let droppedTimingRead = timing.read(into: timingScratch)
@@ -2973,6 +2991,25 @@ public final class AIOEngine: Sendable {
           "Tap format is invalid (channels: \(tapFormat.channelCount), sampleRate: \(tapFormat.sampleRate))"
       )
     }
+    guard let tapConverter = AVAudioConverter(from: tapFormat, to: processingFormat) else {
+      throw AIOError.formatConversionFailed
+    }
+    let tapFrameRatio = processingFormat.sampleRate / tapFormat.sampleRate
+    let maxTapFrames = max(
+      AVAudioFrameCount(ceil(Double(tapConfiguration.bufferSize) * tapFrameRatio)),
+      1
+    )
+    guard let tapConvertedBuffer = AVAudioPCMBuffer(
+      pcmFormat: processingFormat,
+      frameCapacity: maxTapFrames
+    ) else {
+      throw AIOError.formatConversionFailed
+    }
+
+    state.tapConverter = tapConverter
+    state.tapConverterInputFormat = tapFormat
+    state.tapConverterOutputFormat = processingFormat
+    state.tapConvertedBuffer = tapConvertedBuffer
 
     log.info(
       """
