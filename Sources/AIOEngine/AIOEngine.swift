@@ -62,6 +62,13 @@ private typealias OutputFileProtection = Never
 /// - ``handleInterruption(type:options:)``
 ///
 private let log = SystemLog.make()
+#if DEBUG
+private let rtLoggingEnabled: Bool = {
+  ProcessInfo.processInfo.environment["AIO_RT_LOGS"] == "1"
+}()
+#else
+private let rtLoggingEnabled = false
+#endif
 
 private struct EmptyAudioFileError: LocalizedError, Sendable {
   let url: URL
@@ -379,6 +386,15 @@ public final class AIOEngine: Sendable {
   private let recordingSampleTimeAtomic = ManagedAtomic<Int64>(0)
   private let writerDrainTimeout: Duration = .seconds(5)
   private let stopDrainTimeout: Duration = .seconds(6)
+#if DEBUG
+  private struct EngineMetrics: Sendable {
+    let tapCallbackCount = ManagedAtomic<Int64>(0)
+    let tapCallbackMaxNanos = ManagedAtomic<UInt64>(0)
+    let writerUnderruns = ManagedAtomic<Int64>(0)
+    let writerStallCount = ManagedAtomic<Int64>(0)
+  }
+  private let metrics = EngineMetrics()
+#endif
 
   private enum WriterDrainOutcome: Sendable {
     case signaled
@@ -1305,12 +1321,19 @@ public final class AIOEngine: Sendable {
     playbackTask = nil
   }
 
+  // Threading model for the audio pipeline:
+  // - Tap callback (processAudio): RT thread, must not block, allocate, or log.
+  // - Writer loop: writerQueue, file I/O only.
+  // - Engine control: engineControlQueue for graph mutations.
   nonisolated private func processAudio(
     buffer: AVAudioPCMBuffer,
     time: AVAudioTime?,
     to processingFormat: AVAudioFormat,
     bufferReceivers: Synchronized<[any BufferReceiver<Float>]>
   ) {
+#if DEBUG
+    let tapStart = DispatchTime.now().uptimeNanoseconds
+#endif
     let frameLength = buffer.frameLength
     guard frameLength > 0 else { return }
 
@@ -1334,17 +1357,21 @@ public final class AIOEngine: Sendable {
     {
       converter = cachedConverter
     } else {
-      log.info(
-        """
-            No cached converter available for buffer. One will be created.
-            input buffer: \(buffer.format, privacy: .public)
-            cached input converter: \(cachedConverterInputFormat, privacy: .public)
-            cached output converter: \(cachedConverterOutputFormat, privacy: .public)
-            processingFormat: \(processingFormat, privacy: .public)
-        """)
+      if rtLoggingEnabled {
+        log.info(
+          """
+              No cached converter available for buffer. One will be created.
+              input buffer: \(buffer.format, privacy: .public)
+              cached input converter: \(cachedConverterInputFormat, privacy: .public)
+              cached output converter: \(cachedConverterOutputFormat, privacy: .public)
+              processingFormat: \(processingFormat, privacy: .public)
+          """)
+      }
       guard let newConverter = AVAudioConverter(from: buffer.format, to: processingFormat) else {
         let error = AIOError.formatConversionFailed
-        log.error("Failed to create audio converter: \(error, privacy: .public)")
+        if rtLoggingEnabled {
+          log.error("Failed to create audio converter: \(error, privacy: .public)")
+        }
         errorSubject.send(error)
         return
       }
@@ -1404,9 +1431,11 @@ public final class AIOEngine: Sendable {
     // Enqueue to ring buffers
     let channelCount = Int(convertedBuffer.format.channelCount)
     guard channelCount <= audioBuffers.count else {
-      log.error(
-        "Channel count mismatch: \(channelCount, privacy: .public) vs \(audioBuffers.count, privacy: .public)"
-      )
+      if rtLoggingEnabled {
+        log.error(
+          "Channel count mismatch: \(channelCount, privacy: .public) vs \(audioBuffers.count, privacy: .public)"
+        )
+      }
       return
     }
 
@@ -1427,9 +1456,11 @@ public final class AIOEngine: Sendable {
 
     for i in 0..<channelCount {
       guard let channelData = convertedBuffer.floatChannelData?[i] else {
-        log.error(
-          "Failed to access channel data for channel \(i, privacy: .public)"
-        )
+        if rtLoggingEnabled {
+          log.error(
+            "Failed to access channel data for channel \(i, privacy: .public)"
+          )
+        }
         continue
       }
       let frameLength = Int(convertedBuffer.frameLength)
@@ -1450,6 +1481,14 @@ public final class AIOEngine: Sendable {
       by: Int64(convertedBuffer.frameLength),
       ordering: .relaxed
     )
+#if DEBUG
+    metrics.tapCallbackCount.wrappingIncrement(ordering: .relaxed)
+    let tapElapsed = DispatchTime.now().uptimeNanoseconds &- tapStart
+    let previousMax = metrics.tapCallbackMaxNanos.load(ordering: .relaxed)
+    if tapElapsed > previousMax {
+      metrics.tapCallbackMaxNanos.store(tapElapsed, ordering: .relaxed)
+    }
+#endif
   }
 
   private static func writerLoopSync(
@@ -1490,6 +1529,9 @@ public final class AIOEngine: Sendable {
           }
         }
         if framesRead == 0 {
+#if DEBUG
+          metrics.writerUnderruns.wrappingIncrement(ordering: .relaxed)
+#endif
           if stopRequested, stopRequestedAt == nil {
             stopRequestedAt = clock.now
             log.info(
@@ -1515,6 +1557,9 @@ public final class AIOEngine: Sendable {
             let elapsed = stopRequestedAt.duration(to: clock.now)
             if elapsed > .seconds(1), lastStallLog.duration(to: clock.now) > .seconds(1) {
               lastStallLog = clock.now
+#if DEBUG
+              metrics.writerStallCount.wrappingIncrement(ordering: .relaxed)
+#endif
               let counts = audioBuffers.map { $0.count }
               let minAvail = minimumAvailableFrames(
                 channelCount: Int(format.channelCount),
