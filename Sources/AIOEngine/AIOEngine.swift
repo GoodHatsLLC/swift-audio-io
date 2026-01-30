@@ -220,6 +220,26 @@ private struct WriterSession: Sendable {
   let fileURL: URL
 }
 
+private final class ReceiverControl: @unchecked Sendable {
+  let cancelRequested = ManagedAtomic<Bool>(false)
+}
+
+private struct ReceiverSession: Sendable {
+  let id: UUID
+  let control: ReceiverControl
+  let buffers: [RingBuffer<Float>]
+  let timing: RingBuffer<TimingPacket>
+  let processingFormat: AVAudioFormat
+}
+
+private struct TimingPacket: Sendable {
+  let startSampleTime: Int64
+  let frameCount: Int
+  let hostTime: UInt64?
+  let sourceSampleTime: Int64?
+  let sourceSampleRate: Double?
+}
+
 @Observable
 public final class AIOEngine: Sendable {
   /// Errors that can occur during audio engine operations.
@@ -382,16 +402,19 @@ public final class AIOEngine: Sendable {
   private nonisolated let player = AVAudioPlayerNode()
   private let engineControlQueue = DispatchQueue(label: "AIOEngine.engine-control", qos: .default)
   private let writerQueue = DispatchQueue(label: "AIOEngine.writer", qos: .userInitiated)
+  private let receiverQueue = DispatchQueue(label: "AIOEngine.receiver", qos: .userInitiated)
 
   private let recordingSampleTimeAtomic = ManagedAtomic<Int64>(0)
   private let writerDrainTimeout: Duration = .seconds(5)
   private let stopDrainTimeout: Duration = .seconds(6)
+  private let receiverPollingInterval: Duration = .milliseconds(20)
 #if DEBUG
   private struct EngineMetrics: Sendable {
     let tapCallbackCount = ManagedAtomic<Int64>(0)
     let tapCallbackMaxNanos = ManagedAtomic<UInt64>(0)
     let writerUnderruns = ManagedAtomic<Int64>(0)
     let writerStallCount = ManagedAtomic<Int64>(0)
+    let receiverUnderruns = ManagedAtomic<Int64>(0)
   }
   private let metrics = EngineMetrics()
 #endif
@@ -437,6 +460,8 @@ public final class AIOEngine: Sendable {
     var playbackInstance: PlaybackInstance?
     var installedTapBus: Int?
     var audioBuffers: [RingBuffer<Float>]?
+    var receiverBuffers: [RingBuffer<Float>]?
+    var receiverTiming: RingBuffer<TimingPacket>?
     var isHandlingRouteChange: Bool = false
     var initialInputFormat: AVAudioFormat?
     var lastInputFormat: AVAudioFormat?
@@ -473,6 +498,7 @@ public final class AIOEngine: Sendable {
   @MainActor private var lastRecordingConfiguration: RecordingConfiguration?
   @MainActor private var pendingRecordingRestart: RecordingConfiguration?
   @MainActor private var pendingPlaybackResume: PlaybackResume?
+  @MainActor private var receiverSession: ReceiverSession?
 
   /// Called when the engine fails to reconcile the desired recording state
   /// with the actual state after the configured timeout.
@@ -851,7 +877,9 @@ public final class AIOEngine: Sendable {
         lastRecordingConfiguration = configuration
         try warm(configuration: configuration)
 
-        let (buffers, writer, url) = state { ($0.audioBuffers, $0.recordingWriter, $0.recordingURL) }
+        let (buffers, writer, url, receiverBuffers, receiverTiming) = state {
+          ($0.audioBuffers, $0.recordingWriter, $0.recordingURL, $0.receiverBuffers, $0.receiverTiming)
+        }
         guard let buffers = buffers,
           let processingFormat = configuration.processingFormat,
           let writeWriter = writer,
@@ -870,6 +898,13 @@ public final class AIOEngine: Sendable {
         let fileFormat = configuration.outputConfiguration.fileFormat.rawValue
         onRecordingStarted?(url, fileFormat)
         startFileWriteLoop(flushing: buffers, of: processingFormat, to: writeWriter)
+        if let receiverBuffers, let receiverTiming {
+          startReceiverLoop(
+            buffers: receiverBuffers,
+            timing: receiverTiming,
+            processingFormat: processingFormat
+          )
+        }
         self.isRecording = true
       }
     } catch let error as AIOError {
@@ -916,6 +951,48 @@ public final class AIOEngine: Sendable {
     }
     log.info("📝 Writer started for \(writer.fileURL.lastPathComponent, privacy: .public)")
 
+  }
+
+  @MainActor private func startReceiverLoop(
+    buffers: [RingBuffer<Float>],
+    timing: RingBuffer<TimingPacket>,
+    processingFormat: AVAudioFormat
+  ) {
+    stopReceiverLoop()
+    let control = ReceiverControl()
+    let session = ReceiverSession(
+      id: UUID(),
+      control: control,
+      buffers: buffers,
+      timing: timing,
+      processingFormat: processingFormat
+    )
+    receiverSession = session
+#if DEBUG
+    let onUnderrun: @Sendable () -> Void = { [metrics] in
+      metrics.receiverUnderruns.wrappingIncrement(ordering: .relaxed)
+    }
+#else
+    let onUnderrun: (@Sendable () -> Void)? = nil
+#endif
+    let cadence = receiverPollingInterval
+    receiverQueue.async { [control, buffers, timing, processingFormat, bufferReceivers] in
+      AIOEngine.receiverLoopSync(
+        buffers: buffers,
+        timing: timing,
+        processingFormat: processingFormat,
+        bufferReceivers: bufferReceivers,
+        control: control,
+        cadence: cadence,
+        onUnderrun: onUnderrun
+      )
+    }
+  }
+
+  @MainActor private func stopReceiverLoop() {
+    guard let session = receiverSession else { return }
+    session.control.cancelRequested.store(true, ordering: .relaxed)
+    receiverSession = nil
   }
 
   @MainActor
@@ -1165,6 +1242,10 @@ public final class AIOEngine: Sendable {
         sampleRate: sampleRate,
         channelCount: channelCount
       )
+      let receiverBuffers = Self.makeAudioBuffers(
+        sampleRate: sampleRate,
+        channelCount: channelCount
+      )
 
       guard let tapConfiguration = configuration.tapConfiguration(bus: 0, input: inputFormat)
       else {
@@ -1173,6 +1254,11 @@ public final class AIOEngine: Sendable {
       guard tapConfiguration.bufferSize > 0 else {
         throw AIOError.invalidRecordingConfiguration(details: "Tap bufferSize is 0")
       }
+      let timingCapacity = max(
+        64,
+        Int(ceil(Double(sampleRate) / Double(tapConfiguration.bufferSize))) * 4
+      )
+      let receiverTiming = RingBuffer<TimingPacket>(capacity: timingCapacity)
       // Defensive: ensure we never double-install a tap if state got out of sync.
       runOnEngineControlQueue {
         engine.inputNode.removeTap(onBus: tapConfiguration.bus)
@@ -1184,12 +1270,11 @@ public final class AIOEngine: Sendable {
           onBus: tapConfiguration.bus,
           bufferSize: tapConfiguration.bufferSize,
           format: tapConfiguration.inputAVAudioFormat
-        ) { @Sendable [bufferReceivers] buffer, time in
+        ) { @Sendable buffer, time in
           self.processAudio(
             buffer: buffer,
             time: time,
-            to: processingFormat,
-            bufferReceivers: bufferReceivers
+            to: processingFormat
           )
         }
         engine.prepare()
@@ -1199,6 +1284,8 @@ public final class AIOEngine: Sendable {
         $0.recordingWriter = writer
         $0.recordingURL = url
         $0.audioBuffers = audioBuffers
+        $0.receiverBuffers = receiverBuffers
+        $0.receiverTiming = receiverTiming
         $0.installedTapBus = tapConfiguration.bus
         $0.recordingConfiguration = configuration
         $0.initialInputFormat = inputFormat
@@ -1297,12 +1384,15 @@ public final class AIOEngine: Sendable {
   }
 
   @MainActor private func cleanUp(closeFile: Bool = true) {
+    stopReceiverLoop()
     let writer = state { state in
       defer {
         state.recordingWriter = nil
         state.recordingURL = nil
         state.recordingConfiguration = nil
         state.audioBuffers = nil
+        state.receiverBuffers = nil
+        state.receiverTiming = nil
         state.initialInputFormat = nil
         state.lastInputFormat = nil
         state.isHandlingRouteChange = false
@@ -1328,8 +1418,7 @@ public final class AIOEngine: Sendable {
   nonisolated private func processAudio(
     buffer: AVAudioPCMBuffer,
     time: AVAudioTime?,
-    to processingFormat: AVAudioFormat,
-    bufferReceivers: Synchronized<[any BufferReceiver<Float>]>
+    to processingFormat: AVAudioFormat
   ) {
 #if DEBUG
     let tapStart = DispatchTime.now().uptimeNanoseconds
@@ -1424,7 +1513,10 @@ public final class AIOEngine: Sendable {
       return
     }
 
-    guard let audioBuffers = state.withLock({ $0.audioBuffers }) else {
+    let (audioBuffers, receiverBuffers, timingBuffer) = state.withLock { state in
+      (state.audioBuffers, state.receiverBuffers, state.receiverTiming)
+    }
+    guard let audioBuffers else {
       return
     }
 
@@ -1446,14 +1538,6 @@ public final class AIOEngine: Sendable {
       (time?.isSampleTimeValid ?? false) ? time.map { Int64($0.sampleTime) } : nil
     let sourceSampleRate: Double? =
       (time?.isSampleTimeValid ?? false) ? time?.sampleRate : nil
-    let receiverTiming = BufferTiming(
-      sampleTime: processingStartSampleTime,
-      sampleRate: processingFormat.sampleRate,
-      hostTime: sourceHostTime,
-      sourceSampleTime: sourceSampleTime,
-      sourceSampleRate: sourceSampleRate
-    )
-
     for i in 0..<channelCount {
       guard let channelData = convertedBuffer.floatChannelData?[i] else {
         if rtLoggingEnabled {
@@ -1465,15 +1549,21 @@ public final class AIOEngine: Sendable {
       }
       let frameLength = Int(convertedBuffer.frameLength)
       audioBuffers[i].write(UnsafeBufferPointer(start: channelData, count: frameLength))
+      if let receiverBuffers, i < receiverBuffers.count {
+        receiverBuffers[i].write(UnsafeBufferPointer(start: channelData, count: frameLength))
+      }
+    }
 
-      // Feed data to visualization engine (non-blocking)
-      if i == 0 {
-        bufferReceivers({ $0 }).forEach {
-          $0.processBuffer(
-            UnsafeBufferPointer(start: channelData, count: frameLength),
-            timing: receiverTiming
-          )
-        }
+    if let receiverTimingBuffer = timingBuffer {
+      var packet = TimingPacket(
+        startSampleTime: processingStartSampleTime,
+        frameCount: Int(convertedBuffer.frameLength),
+        hostTime: sourceHostTime,
+        sourceSampleTime: sourceSampleTime,
+        sourceSampleRate: sourceSampleRate
+      )
+      withUnsafePointer(to: &packet) { pointer in
+        receiverTimingBuffer.write(UnsafeBufferPointer(start: pointer, count: 1))
       }
     }
 
@@ -1582,6 +1672,87 @@ public final class AIOEngine: Sendable {
     }
     log.info("🧹 writerLoop exiting for \(writer.fileURL.lastPathComponent, privacy: .public)")
     Task { await control.drainSignal.signal() }
+  }
+
+  private static func receiverLoopSync(
+    buffers: [RingBuffer<Float>],
+    timing: RingBuffer<TimingPacket>,
+    processingFormat: AVAudioFormat,
+    bufferReceivers: Synchronized<[any BufferReceiver<Float>]>,
+    control: ReceiverControl,
+    cadence: Duration,
+    onUnderrun: (@Sendable () -> Void)?
+  ) {
+    let channelCount = min(Int(processingFormat.channelCount), buffers.count)
+    guard channelCount > 0 else { return }
+
+    let timingScratch = UnsafeMutableBufferPointer<TimingPacket>.allocate(capacity: 1)
+    defer { timingScratch.deallocate() }
+
+    var scratchCapacity = 0
+    var scratchBuffers: [UnsafeMutableBufferPointer<Float>] = []
+    func ensureScratchCapacity(_ needed: Int) {
+      guard needed > scratchCapacity else { return }
+      for buffer in scratchBuffers {
+        buffer.baseAddress?.deallocate()
+      }
+      scratchBuffers = (0..<channelCount).map { _ in
+        let pointer = UnsafeMutablePointer<Float>.allocate(capacity: needed)
+        return UnsafeMutableBufferPointer(start: pointer, count: needed)
+      }
+      scratchCapacity = needed
+    }
+    defer {
+      for buffer in scratchBuffers {
+        buffer.baseAddress?.deallocate()
+      }
+    }
+
+    let cadenceComponents = cadence.components
+    let sleepInterval =
+      max(
+        0.001,
+        Double(cadenceComponents.seconds)
+          + (Double(cadenceComponents.attoseconds) / 1_000_000_000_000_000_000)
+      )
+
+    while !control.cancelRequested.load(ordering: .relaxed) {
+      let timingRead = timing.read(into: timingScratch)
+      guard timingRead > 0 else {
+        Thread.sleep(forTimeInterval: sleepInterval)
+        continue
+      }
+      let packet = timingScratch[0]
+      guard packet.frameCount > 0 else { continue }
+
+      ensureScratchCapacity(packet.frameCount)
+      var actualFrames = packet.frameCount
+      for index in 0..<channelCount {
+        let destination = UnsafeMutableBufferPointer(
+          start: scratchBuffers[index].baseAddress,
+          count: packet.frameCount
+        )
+        let read = buffers[index].read(into: destination)
+        actualFrames = min(actualFrames, read)
+      }
+      guard actualFrames > 0, actualFrames == packet.frameCount else {
+        onUnderrun?()
+        continue
+      }
+      guard let base = scratchBuffers.first?.baseAddress else { continue }
+
+      let timing = BufferTiming(
+        sampleTime: packet.startSampleTime,
+        sampleRate: processingFormat.sampleRate,
+        hostTime: packet.hostTime,
+        sourceSampleTime: packet.sourceSampleTime,
+        sourceSampleRate: packet.sourceSampleRate
+      )
+      let bufferPointer = UnsafeBufferPointer(start: base, count: actualFrames)
+      bufferReceivers({ $0 }).forEach {
+        $0.processBuffer(bufferPointer, timing: timing)
+      }
+    }
   }
 
   private struct WriteResult: Sendable {
@@ -2743,15 +2914,11 @@ public final class AIOEngine: Sendable {
         onBus: tapConfiguration.bus,
         bufferSize: tapConfiguration.bufferSize,
         format: tapFormat
-      ) {
-        @Sendable [bufferReceivers]
-        buffer,
-        time in
+      ) { @Sendable buffer, time in
         self.processAudio(
           buffer: buffer,
           time: time,
-          to: processingFormat,
-          bufferReceivers: bufferReceivers
+          to: processingFormat
         )
       }
       try self.engine.start()
