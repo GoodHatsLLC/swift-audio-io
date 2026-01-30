@@ -1,5 +1,6 @@
 #if !os(macOS) || targetEnvironment(macCatalyst)
 @preconcurrency import AVFoundation
+import AudioToolbox
 import AsyncAlgorithms
 import Atomics
 import Dispatch
@@ -78,6 +79,90 @@ private struct MissingAudioFileError: LocalizedError, Sendable {
   }
 }
 
+private enum WriterBackend: Sendable {
+  case avAudioFile
+  case extAudioFile
+}
+
+private protocol RecordingFileWriter: Sendable {
+  var fileURL: URL { get }
+  func write(_ buffer: AVAudioPCMBuffer) throws
+  func close()
+}
+
+private final class AVAudioFileWriter: @unchecked Sendable, RecordingFileWriter {
+  let file: AVAudioFile
+  let fileURL: URL
+
+  init(file: AVAudioFile) {
+    self.file = file
+    self.fileURL = file.url
+  }
+
+  func write(_ buffer: AVAudioPCMBuffer) throws {
+    try file.write(from: buffer)
+  }
+
+  func close() {
+    file.close()
+  }
+}
+
+private final class ExtAudioFileWriter: @unchecked Sendable, RecordingFileWriter {
+  let fileURL: URL
+  private var file: ExtAudioFileRef?
+
+  init(
+    url: URL,
+    fileType: AudioFileTypeID,
+    outputFormat: AVAudioFormat,
+    clientFormat: AVAudioFormat
+  ) throws {
+    self.fileURL = url
+    var asbd = outputFormat.streamDescription.pointee
+    var newFile: ExtAudioFileRef?
+    let status = ExtAudioFileCreateWithURL(
+      url as CFURL,
+      fileType,
+      &asbd,
+      nil,
+      AudioFileFlags.eraseFile.rawValue,
+      &newFile
+    )
+    guard status == noErr, let created = newFile else {
+      throw NSError(domain: NSOSStatusErrorDomain, code: Int(status), userInfo: nil)
+    }
+    file = created
+    var clientASBD = clientFormat.streamDescription.pointee
+    let propertySize = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
+    let setStatus = ExtAudioFileSetProperty(
+      created,
+      kExtAudioFileProperty_ClientDataFormat,
+      propertySize,
+      &clientASBD
+    )
+    guard setStatus == noErr else {
+      throw NSError(domain: NSOSStatusErrorDomain, code: Int(setStatus), userInfo: nil)
+    }
+  }
+
+  func write(_ buffer: AVAudioPCMBuffer) throws {
+    guard let file else { return }
+    let frames = buffer.frameLength
+    let status = ExtAudioFileWrite(file, frames, buffer.audioBufferList)
+    guard status == noErr else {
+      throw NSError(domain: NSOSStatusErrorDomain, code: Int(status), userInfo: nil)
+    }
+  }
+
+  func close() {
+    if let file {
+      ExtAudioFileDispose(file)
+      self.file = nil
+    }
+  }
+}
+
 private struct WriterDrainTimeoutError: LocalizedError, Sendable {
   let url: URL
   let timeout: Duration
@@ -116,13 +201,19 @@ private actor WriterDrainSignal {
 private final class WriterControl: @unchecked Sendable {
   let stopRequested = ManagedAtomic<Bool>(false)
   let drainSignal = WriterDrainSignal()
+  let writtenSampleTime = ManagedAtomic<Int64>(0)
+  let targetSampleTime = ManagedAtomic<Int64>(0)
+  let lastWriteDurationMillis = ManagedAtomic<Int64>(0)
+  let lastWriteUptime = ManagedAtomic<UInt64>(0)
+  let stopRequestedUptime = ManagedAtomic<UInt64>(0)
+  let lastLoopUptime = ManagedAtomic<UInt64>(0)
 }
 
 private struct WriterSession: Sendable {
   let id: UUID
   let task: Task<Void, Never>
   let control: WriterControl
-  let file: AVAudioFile
+  let writer: RecordingFileWriter
   let fileURL: URL
 }
 
@@ -311,8 +402,8 @@ public final class AIOEngine: Sendable {
     return false
   }
 
-  struct InternalState {
-    var file: AVAudioFile?
+  private struct InternalState {
+    var recordingWriter: RecordingFileWriter?
     var recordingURL: URL?
     var recordingConfiguration: RecordingConfiguration?
     var playbackInstance: PlaybackInstance?
@@ -324,7 +415,7 @@ public final class AIOEngine: Sendable {
   }
   private let state: Synchronized<InternalState> = .init(.init())
 
-  nonisolated func placeState<T>(_ path: WritableKeyPath<InternalState, T>, _ field: T) {
+  private nonisolated func placeState<T>(_ path: WritableKeyPath<InternalState, T>, _ field: T) {
     state.withLock { $0[keyPath: path] = field }
   }
 
@@ -344,6 +435,8 @@ public final class AIOEngine: Sendable {
 
   /// Preferred audio session category/mode/options for this engine.
   @MainActor public var sessionConfiguration: AudioSessionConfiguration = .recorderDefault
+  /// Backend used for audio file writing.
+  @MainActor private var writerBackend: WriterBackend = .extAudioFile
   /// Whether the engine should deactivate the audio session when it becomes idle.
   ///
   /// Leave this `false` when a higher-level manager owns session lifecycle.
@@ -730,11 +823,11 @@ public final class AIOEngine: Sendable {
         lastRecordingConfiguration = configuration
         try warm(configuration: configuration)
 
-        let (buffers, writefile) = state { ($0.audioBuffers, $0.file) }
+        let (buffers, writer, url) = state { ($0.audioBuffers, $0.recordingWriter, $0.recordingURL) }
         guard let buffers = buffers,
           let processingFormat = configuration.processingFormat,
-          let writeFile = writefile,
-          let url = writefile?.url
+          let writeWriter = writer,
+          let url = url
         else {
           throw AIOError.invalidRecordingConfiguration(
             details: "state after warm(configuration:) was invalid")
@@ -748,7 +841,7 @@ public final class AIOEngine: Sendable {
         }
         let fileFormat = configuration.outputConfiguration.fileFormat.rawValue
         onRecordingStarted?(url, fileFormat)
-        startFileWriteLoop(flushing: buffers, of: processingFormat, to: writeFile)
+        startFileWriteLoop(flushing: buffers, of: processingFormat, to: writeWriter)
         self.isRecording = true
       }
     } catch let error as AIOError {
@@ -761,15 +854,15 @@ public final class AIOEngine: Sendable {
   @MainActor private func startFileWriteLoop(
     flushing buffers: [RingBuffer<Float>],
     of processingFormat: AVAudioFormat,
-    to file: AVAudioFile
+    to writer: RecordingFileWriter
   ) {
     let control = WriterControl()
     let errorHandler: @Sendable (ErrorContext) -> Void = { [weak self] error in
       guard let self else { return }
       Task { @MainActor in
-        self.recordWriteFailure(error, url: file.url)
+        self.recordWriteFailure(error, url: writer.fileURL)
         self.errorSubject.send(
-          AIOError.audioFileFailed(operation: .write, url: file.url, error: error)
+          AIOError.audioFileFailed(operation: .write, url: writer.fileURL, error: error)
         )
         self.onRecordingFailed?()
       }
@@ -778,7 +871,7 @@ public final class AIOEngine: Sendable {
       id: UUID(),
       task: Task.detached(priority: .userInitiated) {
         await AIOEngine.writerLoop(
-          file: file,
+          writer: writer,
           format: processingFormat,
           audioBuffers: buffers,
           control: control,
@@ -786,17 +879,22 @@ public final class AIOEngine: Sendable {
         )
       },
       control: control,
-      file: file,
-      fileURL: file.url
+      writer: writer,
+      fileURL: writer.fileURL
     )
     writerSession = session
-    log.info("📝 Writer started for \(file.url.lastPathComponent, privacy: .public)")
+    log.info("📝 Writer started for \(writer.fileURL.lastPathComponent, privacy: .public)")
 
   }
 
   @MainActor
   private func enqueueDrain(for session: WriterSession) {
     session.control.stopRequested.store(true, ordering: .relaxed)
+    session.control.stopRequestedUptime.store(DispatchTime.now().uptimeNanoseconds, ordering: .relaxed)
+    session.control.targetSampleTime.store(
+      recordingSampleTimeAtomic.load(ordering: .relaxed),
+      ordering: .relaxed
+    )
     drainingWriterSessions.append(session)
     Task { [weak self] in
       guard let self else { return }
@@ -806,7 +904,7 @@ public final class AIOEngine: Sendable {
       let drainResult = await awaitWriterDrain(session)
       let elapsed = start.duration(to: clock.now)
       if drainResult {
-        session.file.close()
+        session.writer.close()
         let size = fileSizeDescription(for: session.fileURL)
         log.info(
           "🧹 Writer drained for \(session.fileURL.lastPathComponent, privacy: .public) (size=\(size, privacy: .public), elapsed=\(elapsed, privacy: .public))"
@@ -814,9 +912,21 @@ public final class AIOEngine: Sendable {
       } else {
         let error = WriterDrainTimeoutError(url: session.fileURL, timeout: writerDrainTimeout)
         session.task.cancel()
-        session.file.close()
+        session.writer.close()
+        let target = session.control.targetSampleTime.load(ordering: .relaxed)
+        let written = session.control.writtenSampleTime.load(ordering: .relaxed)
+        let lastWriteMs = session.control.lastWriteDurationMillis.load(ordering: .relaxed)
+        let lastWriteAgoMs = Self.uptimeMillisSince(
+          session.control.lastWriteUptime.load(ordering: .relaxed)
+        )
+        let stopAgoMs = Self.uptimeMillisSince(
+          session.control.stopRequestedUptime.load(ordering: .relaxed)
+        )
+        let lastLoopAgoMs = Self.uptimeMillisSince(
+          session.control.lastLoopUptime.load(ordering: .relaxed)
+        )
         log.error(
-          "⏱️ Writer drain timed out for \(session.fileURL.lastPathComponent, privacy: .public) after \(elapsed, privacy: .public): \(error, privacy: .public)"
+          "⏱️ Writer drain timed out for \(session.fileURL.lastPathComponent, privacy: .public) after \(elapsed, privacy: .public): \(error, privacy: .public) target=\(target, privacy: .public) written=\(written, privacy: .public) lastWriteMs=\(lastWriteMs, privacy: .public) lastWriteAgoMs=\(lastWriteAgoMs, privacy: .public) lastLoopAgoMs=\(lastLoopAgoMs, privacy: .public) stopAgoMs=\(stopAgoMs, privacy: .public)"
         )
         await MainActor.run {
           self.recordWriteFailure(ErrorContext(error), url: session.fileURL)
@@ -849,6 +959,20 @@ public final class AIOEngine: Sendable {
       }
       log.info("🧹 Stop requested for writer \(session.fileURL.lastPathComponent, privacy: .public)")
       session.control.stopRequested.store(true, ordering: .relaxed)
+      session.control.stopRequestedUptime.store(DispatchTime.now().uptimeNanoseconds, ordering: .relaxed)
+      let target = recordingSampleTimeAtomic.load(ordering: .relaxed)
+      session.control.targetSampleTime.store(target, ordering: .relaxed)
+      if session.id == writerSession?.id {
+        let counts = state.withLock { $0.audioBuffers?.map { $0.count } ?? [] }
+        let written = session.control.writtenSampleTime.load(ordering: .relaxed)
+        log.info(
+          "🧹 Stop target set: target=\(target, privacy: .public) written=\(written, privacy: .public) buffers=\(counts, privacy: .public)"
+        )
+      } else {
+        log.info(
+          "🧹 Stop target set: target=\(target, privacy: .public) (non-current session)"
+        )
+      }
     }
     for session in sessions {
       if Task.isCancelled {
@@ -871,9 +995,21 @@ public final class AIOEngine: Sendable {
       } else {
         let error = WriterDrainTimeoutError(url: session.fileURL, timeout: writerDrainTimeout)
         session.task.cancel()
-        session.file.close()
+        session.writer.close()
+        let target = session.control.targetSampleTime.load(ordering: .relaxed)
+        let written = session.control.writtenSampleTime.load(ordering: .relaxed)
+        let lastWriteMs = session.control.lastWriteDurationMillis.load(ordering: .relaxed)
+        let lastWriteAgoMs = Self.uptimeMillisSince(
+          session.control.lastWriteUptime.load(ordering: .relaxed)
+        )
+        let stopAgoMs = Self.uptimeMillisSince(
+          session.control.stopRequestedUptime.load(ordering: .relaxed)
+        )
+        let lastLoopAgoMs = Self.uptimeMillisSince(
+          session.control.lastLoopUptime.load(ordering: .relaxed)
+        )
         log.error(
-          "⏱️ Writer drain timed out for \(session.fileURL.lastPathComponent, privacy: .public) after \(elapsed, privacy: .public): \(error, privacy: .public)"
+          "⏱️ Writer drain timed out for \(session.fileURL.lastPathComponent, privacy: .public) after \(elapsed, privacy: .public): \(error, privacy: .public) target=\(target, privacy: .public) written=\(written, privacy: .public) lastWriteMs=\(lastWriteMs, privacy: .public) lastWriteAgoMs=\(lastWriteAgoMs, privacy: .public) lastLoopAgoMs=\(lastLoopAgoMs, privacy: .public) stopAgoMs=\(stopAgoMs, privacy: .public)"
         )
         recordWriteFailure(ErrorContext(error), url: session.fileURL)
         if notifyOnFailure {
@@ -904,7 +1040,7 @@ public final class AIOEngine: Sendable {
     }
     writerSession = nil
     drainingWriterSessions.removeAll()
-    log.info("🧹 stopAndDrainAllWriterSessions completed")
+    log.info("🧹 cancelAllWriterSessions completed")
   }
 
   @MainActor
@@ -951,11 +1087,6 @@ public final class AIOEngine: Sendable {
     log.info("engine requires warming")
     do {
 
-      guard let fileSettings = configuration.fileSettings else {
-        throw AIOError.invalidRecordingConfiguration(
-          details: "(file format settings)"
-        )
-      }
       // Configure audio session
       try configureAudioSession(for: configuration)
 
@@ -964,14 +1095,8 @@ public final class AIOEngine: Sendable {
         allowExplicitFile: true
       )
 
-      let file: AVAudioFile
-      do {
-        file = try AVAudioFile(forWriting: url, settings: fileSettings)
-        applyFileProtectionIfNeeded(protection, to: url)
-      } catch {
-        throw AIOError.audioFileFailed(
-          operation: .openForWriting, url: url, error: ErrorContext(error))
-      }
+      let writer = try makeRecordingWriter(url: url, configuration: configuration)
+      applyFileProtectionIfNeeded(protection, to: url)
 
       let inputFormat = runOnEngineControlQueue { engine.inputNode.outputFormat(forBus: 0) }
 
@@ -1056,7 +1181,6 @@ public final class AIOEngine: Sendable {
         engine.inputNode.removeTap(onBus: tapConfiguration.bus)
       }
       recordingSampleTimeAtomic.store(0, ordering: .relaxed)
-      state.withLock { $0.audioBuffers = audioBuffers }
       // Install tap
       runOnEngineControlQueue {
         engine.inputNode.installTap(
@@ -1075,7 +1199,7 @@ public final class AIOEngine: Sendable {
       }
 
       state {
-        $0.file = file
+        $0.recordingWriter = writer
         $0.recordingURL = url
         $0.audioBuffers = audioBuffers
         $0.installedTapBus = tapConfiguration.bus
@@ -1176,9 +1300,9 @@ public final class AIOEngine: Sendable {
   }
 
   @MainActor private func cleanUp(closeFile: Bool = true) {
-    let file = state { state in
+    let writer = state { state in
       defer {
-        state.file = nil
+        state.recordingWriter = nil
         state.recordingURL = nil
         state.recordingConfiguration = nil
         state.audioBuffers = nil
@@ -1186,10 +1310,10 @@ public final class AIOEngine: Sendable {
         state.lastInputFormat = nil
         state.isHandlingRouteChange = false
       }
-      return state.file
+      return state.recordingWriter
     }
     if closeFile {
-      file?.close()
+      writer?.close()
     }
     cache.withLock { c in
       c.cachedTapConverter = nil
@@ -1348,7 +1472,7 @@ public final class AIOEngine: Sendable {
   }
 
   private static func writerLoop(
-    file: AVAudioFile,
+    writer: RecordingFileWriter,
     format: AVAudioFormat,
     audioBuffers: [RingBuffer<Float>],
     control: WriterControl,
@@ -1358,21 +1482,41 @@ public final class AIOEngine: Sendable {
     let clock = ContinuousClock()
     var stopRequestedAt: ContinuousClock.Instant?
     var lastStallLog = clock.now
+    var writtenSampleTime: Int64 = 0
 
     while true {
       if Task.isCancelled { break }
+      control.lastLoopUptime.store(DispatchTime.now().uptimeNanoseconds, ordering: .relaxed)
       let result = flushChunk(
         size: bufferSize,
         from: audioBuffers,
         in: format,
-        to: file
+        to: writer
       )
       switch result {
-      case .success(let framesRead):
+      case .success(let writeResult):
+        let framesRead = writeResult.framesRead
+        let didWrite = writeResult.writeDuration != nil
+        if didWrite, framesRead > 0 {
+          writtenSampleTime &+= Int64(framesRead)
+          control.writtenSampleTime.store(writtenSampleTime, ordering: .relaxed)
+          control.lastWriteUptime.store(DispatchTime.now().uptimeNanoseconds, ordering: .relaxed)
+          let duration = writeResult.writeDuration ?? .zero
+          control.lastWriteDurationMillis.store(Self.durationMillis(duration), ordering: .relaxed)
+        }
+        let stopRequested = control.stopRequested.load(ordering: .relaxed)
+        if stopRequested {
+          let target = control.targetSampleTime.load(ordering: .relaxed)
+          if writtenSampleTime >= target {
+            break
+          }
+        }
         if framesRead == 0 {
-          let stopRequested = control.stopRequested.load(ordering: .relaxed)
           if stopRequested, stopRequestedAt == nil {
             stopRequestedAt = clock.now
+            log.info(
+              "🧹 Writer stop requested: target=\(control.targetSampleTime.load(ordering: .relaxed), privacy: .public) written=\(writtenSampleTime, privacy: .public) file=\(writer.fileURL.lastPathComponent, privacy: .public)"
+            )
           }
           if stopRequested,
             minimumAvailableFrames(
@@ -1382,6 +1526,12 @@ public final class AIOEngine: Sendable {
             ) == 0
           {
             break
+          }
+          if stopRequested {
+            let target = control.targetSampleTime.load(ordering: .relaxed)
+            if writtenSampleTime >= target {
+              break
+            }
           }
           if stopRequested, let stopRequestedAt {
             let elapsed = stopRequestedAt.duration(to: clock.now)
@@ -1407,16 +1557,21 @@ public final class AIOEngine: Sendable {
         break
       }
     }
-    log.info("🧹 writerLoop exiting for \(file.url.lastPathComponent, privacy: .public)")
+    log.info("🧹 writerLoop exiting for \(writer.fileURL.lastPathComponent, privacy: .public)")
     await control.drainSignal.signal()
+  }
+
+  private struct WriteResult: Sendable {
+    let framesRead: Int
+    let writeDuration: Duration?
   }
 
   private static func flushChunk(
     size bufferSize: Int,
     from audioBuffers: [RingBuffer<Float>],
     in audioFormat: AVAudioFormat,
-    to file: AVAudioFile
-  ) -> Result<Int, Error> {
+    to writer: RecordingFileWriter
+  ) -> Result<WriteResult, Error> {
     let channelCount = Int(audioFormat.channelCount)
     let framesToRead = minimumAvailableFrames(
       channelCount: channelCount,
@@ -1425,7 +1580,7 @@ public final class AIOEngine: Sendable {
     )
 
     guard framesToRead > 0 else {
-      return .success(0)
+      return .success(.init(framesRead: 0, writeDuration: nil))
     }
 
     guard
@@ -1434,7 +1589,7 @@ public final class AIOEngine: Sendable {
         frameCapacity: AVAudioFrameCount(bufferSize)
       )
     else {
-      return .success(0)
+      return .success(.init(framesRead: 0, writeDuration: nil))
     }
 
     var actualFrames = framesToRead
@@ -1442,32 +1597,39 @@ public final class AIOEngine: Sendable {
     for i in 0..<channelCount {
       guard let channelData = pcmBuffer.floatChannelData?[i] else {
         actualFrames = 0
-        return .success(0)
+        return .success(.init(framesRead: 0, writeDuration: nil))
       }
       let readSize = audioBuffers[i].read(
         into: UnsafeMutableBufferPointer(start: channelData, count: framesToRead))
       actualFrames = min(actualFrames, readSize)
     }
 
-    guard actualFrames > 0 else { return .success(framesToRead) }
+    guard actualFrames > 0 else {
+      return .success(.init(framesRead: 0, writeDuration: nil))
+    }
     pcmBuffer.frameLength = AVAudioFrameCount(actualFrames)
 
     do {
       let clock = ContinuousClock()
+      log.info(
+        "🧹 Write start: frames=\(actualFrames, privacy: .public) file=\(writer.fileURL.lastPathComponent, privacy: .public)"
+      )
       let start = clock.now
-      try file.write(from: pcmBuffer)
+      try writer.write(pcmBuffer)
       let elapsed = start.duration(to: clock.now)
+      log.info(
+        "🧹 Write finished: elapsed=\(elapsed, privacy: .public) frames=\(actualFrames, privacy: .public) file=\(writer.fileURL.lastPathComponent, privacy: .public)"
+      )
       if elapsed > .milliseconds(200) {
         log.warning(
-          "🐢 Slow write: \(elapsed, privacy: .public) frames=\(actualFrames, privacy: .public) file=\(file.url.lastPathComponent, privacy: .public)"
+          "🐢 Slow write: \(elapsed, privacy: .public) frames=\(actualFrames, privacy: .public) file=\(writer.fileURL.lastPathComponent, privacy: .public)"
         )
       }
+      return .success(.init(framesRead: actualFrames, writeDuration: elapsed))
     } catch {
       log.error("error flushing chunk: \(error, privacy: .public)")
       return .failure(error)
     }
-    return .success(actualFrames)
-
   }
 
   private static func minimumAvailableFrames(
@@ -1483,6 +1645,20 @@ public final class AIOEngine: Sendable {
       if minimum == 0 { break }
     }
     return minimum
+  }
+
+  private static func durationMillis(_ duration: Duration) -> Int64 {
+    let components = duration.components
+    let secondsMillis = components.seconds * 1_000
+    let attosecondsMillis = components.attoseconds / 1_000_000_000_000_000
+    return secondsMillis + attosecondsMillis
+  }
+
+  private static func uptimeMillisSince(_ uptime: UInt64) -> Int64 {
+    guard uptime > 0 else { return -1 }
+    let now = DispatchTime.now().uptimeNanoseconds
+    guard now >= uptime else { return 0 }
+    return Int64((now - uptime) / 1_000_000)
   }
 
   /// Stops the current recording and returns the URL of the recorded file.
@@ -1559,24 +1735,13 @@ public final class AIOEngine: Sendable {
       throw AIOError.notRecording
     }
 
-    // Get file settings from configuration
-    guard let fileSettings = configuration.fileSettings else {
-      throw AIOError.invalidRecordingConfiguration(details: "file format settings")
-    }
-
     // Create new file with fresh filename
     let (newURL, protection) = try resolveOutputURL(
       for: configuration,
       allowExplicitFile: false
     )
-    let newFile: AVAudioFile
-    do {
-      newFile = try AVAudioFile(forWriting: newURL, settings: fileSettings)
-      applyFileProtectionIfNeeded(protection, to: newURL)
-    } catch {
-      throw AIOError.audioFileFailed(
-        operation: .openForWriting, url: newURL, error: ErrorContext(error))
-    }
+    let newWriter = try makeRecordingWriter(url: newURL, configuration: configuration)
+    applyFileProtectionIfNeeded(protection, to: newURL)
 
     let sampleRate = Int(processingFormat.sampleRate)
     let channelCount = Int(processingFormat.channelCount)
@@ -1592,16 +1757,16 @@ public final class AIOEngine: Sendable {
     if let currentWriter = writerSession {
       enqueueDrain(for: currentWriter)
     } else {
-      state.file?.close()
+      state.recordingWriter?.close()
     }
 
     // Update state with new file
-    state.file = newFile
+    state.recordingWriter = newWriter
     state.recordingURL = newURL
     state.audioBuffers = newBuffers
 
     // Start new writer loop for the new file
-    startFileWriteLoop(flushing: newBuffers, of: processingFormat, to: newFile)
+    startFileWriteLoop(flushing: newBuffers, of: processingFormat, to: newWriter)
 
     // Notify of new file (for crash detection tracking)
     let fileFormat = configuration.outputConfiguration.fileFormat.rawValue
@@ -2245,10 +2410,9 @@ public final class AIOEngine: Sendable {
 
     guard let currentConfig = state.recordingConfiguration,
       let processingFormat = currentConfig.processingFormat,
-      let file = state.file,
       let initialFormat = state.initialInputFormat
     else {
-      log.error("Missing configuration or file during route change")
+      log.error("Missing configuration during route change")
       return
     }
     let previousFormat = state.lastInputFormat ?? initialFormat
@@ -2266,8 +2430,7 @@ public final class AIOEngine: Sendable {
       do {
         try reconfigureTapForNewRoute(
           newInputFormat: newInputFormat,
-          processingFormat: processingFormat,
-          file: file
+          processingFormat: processingFormat
         )
 
         // Notify about quality change if channels or sample rate differ
@@ -2497,8 +2660,7 @@ public final class AIOEngine: Sendable {
   /// Reconfigure the audio tap for a new route
   private func reconfigureTapForNewRoute(
     newInputFormat: AVAudioFormat,
-    processingFormat: AVAudioFormat,
-    file: AVAudioFile
+    processingFormat: AVAudioFormat
   ) throws(AIOError) {
     // Remove old tap and stop engine before reconfiguring.
     let currentInputFormat = runOnEngineControlQueue { [weak self] in
@@ -2800,6 +2962,57 @@ extension AIOEngine: BufferEmitter {
       return resolved
     }
 #endif
+  }
+
+  private nonisolated func audioFileTypeID(for format: FileFormat) -> AudioFileTypeID {
+    switch format {
+    case .aac: return kAudioFileM4AType
+    case .adts: return kAudioFileAAC_ADTSType
+    case .wav: return kAudioFileWAVEType
+    case .aiff: return kAudioFileAIFFType
+    case .caf: return kAudioFileCAFType
+    case .flac: return kAudioFileFLACType
+    }
+  }
+
+  @MainActor
+  private func makeRecordingWriter(
+    url: URL,
+    configuration: RecordingConfiguration
+  ) throws(AIOError) -> RecordingFileWriter {
+    guard let fileSettings = configuration.fileSettings else {
+      throw AIOError.invalidRecordingConfiguration(details: "(file format settings)")
+    }
+    guard let processingFormat = configuration.processingFormat else {
+      throw AIOError.invalidRecordingConfiguration(details: "processing format")
+    }
+    switch writerBackend {
+    case .avAudioFile:
+      do {
+        let file = try AVAudioFile(forWriting: url, settings: fileSettings)
+        return AVAudioFileWriter(file: file)
+      } catch {
+        throw AIOError.audioFileFailed(
+          operation: .openForWriting, url: url, error: ErrorContext(error)
+        )
+      }
+    case .extAudioFile:
+      guard let outputFormat = AVAudioFormat(settings: fileSettings) else {
+        throw AIOError.invalidRecordingConfiguration(details: "file format settings")
+      }
+      do {
+        return try ExtAudioFileWriter(
+          url: url,
+          fileType: audioFileTypeID(for: configuration.outputConfiguration.fileFormat),
+          outputFormat: outputFormat,
+          clientFormat: processingFormat
+        )
+      } catch {
+        throw AIOError.audioFileFailed(
+          operation: .openForWriting, url: url, error: ErrorContext(error)
+        )
+      }
+    }
   }
 
   @MainActor
