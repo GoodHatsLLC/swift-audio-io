@@ -78,6 +78,15 @@ private struct MissingAudioFileError: LocalizedError, Sendable {
   }
 }
 
+private struct WriterDrainTimeoutError: LocalizedError, Sendable {
+  let url: URL
+  let timeout: Duration
+
+  var errorDescription: String? {
+    "Writer drain timed out after \(timeout.seconds) seconds for \(url.lastPathComponent)"
+  }
+}
+
 private actor WriterDrainSignal {
   private var isSignaled = false
   private var continuations: [CheckedContinuation<Void, Never>] = []
@@ -278,20 +287,19 @@ public final class AIOEngine: Sendable {
   private let recordingSampleTimeAtomic = ManagedAtomic<Int64>(0)
   private let writerDrainTimeout: Duration = .seconds(5)
 
-  private nonisolated func awaitWriterDrain(
-    _ session: WriterSession
-  ) async -> Result<Void, TimeoutOnlyError> {
-    let waitTask = Task.detached(priority: .userInitiated) {
-      await session.task.value
-    }
-    do {
-      try await withTimeout(of: writerDrainTimeout) {
-        _ = await waitTask.value
+  private nonisolated func awaitWriterDrain(_ session: WriterSession) async -> Bool {
+    await withTaskGroup(of: Bool.self) { group in
+      group.addTask { [self] in
+        await session.task.value
+        return true
       }
-      return .success(())
-    } catch let error as TimeoutOnlyError {
-      waitTask.cancel()
-      return .failure(error)
+      group.addTask { [self] in
+        try? await Task.sleep(for: self.writerDrainTimeout)
+        return false
+      }
+      let result = await group.next() ?? false
+      group.cancelAll()
+      return result
     }
   }
 
@@ -786,16 +794,18 @@ public final class AIOEngine: Sendable {
       guard let self else { return }
       let clock = ContinuousClock()
       let start = clock.now
-      let drainResult = await awaitWriterDrain(session)
+      let drainResult = await Task.detached(priority: .userInitiated) { [self] in
+        await self.awaitWriterDrain(session)
+      }.value
       let elapsed = start.duration(to: clock.now)
-      switch drainResult {
-      case .success:
+      if drainResult {
         session.file.close()
         let size = fileSizeDescription(for: session.fileURL)
         log.info(
           "🧹 Writer drained for \(session.fileURL.lastPathComponent, privacy: .public) (size=\(size, privacy: .public), elapsed=\(elapsed, privacy: .public))"
         )
-      case .failure(let error):
+      } else {
+        let error = WriterDrainTimeoutError(url: session.fileURL, timeout: writerDrainTimeout)
         session.task.cancel()
         session.file.close()
         log.error(
@@ -827,15 +837,17 @@ public final class AIOEngine: Sendable {
     for session in sessions {
       let clock = ContinuousClock()
       let start = clock.now
-      let drainResult = await awaitWriterDrain(session)
+      let drainResult = await Task.detached(priority: .userInitiated) { [self] in
+        await self.awaitWriterDrain(session)
+      }.value
       let elapsed = start.duration(to: clock.now)
-      switch drainResult {
-      case .success:
+      if drainResult {
         let size = fileSizeDescription(for: session.fileURL)
         log.info(
           "🧹 Writer drained for \(session.fileURL.lastPathComponent, privacy: .public) (size=\(size, privacy: .public), elapsed=\(elapsed, privacy: .public))"
         )
-      case .failure(let error):
+      } else {
+        let error = WriterDrainTimeoutError(url: session.fileURL, timeout: writerDrainTimeout)
         session.task.cancel()
         session.file.close()
         log.error(
