@@ -220,7 +220,7 @@ private struct WriterSession: Sendable {
   let fileURL: URL
 }
 
-private final class ReceiverControl: @unchecked Sendable {
+final class ReceiverControl: @unchecked Sendable {
   let cancelRequested = ManagedAtomic<Bool>(false)
 }
 
@@ -232,7 +232,7 @@ private struct ReceiverSession: Sendable {
   let processingFormat: AVAudioFormat
 }
 
-private struct TimingPacket: Sendable {
+struct TimingPacket: Sendable {
   let startSampleTime: Int64
   let frameCount: Int
   let hostTime: UInt64?
@@ -1736,7 +1736,7 @@ public final class AIOEngine: Sendable {
     Task { await control.drainSignal.signal() }
   }
 
-  private static func receiverLoopSync(
+  static func receiverLoopSync(
     buffers: [SPSCRingBuffer<Float>],
     timing: SPSCRingBuffer<TimingPacket>,
     processingFormat: AVAudioFormat,
