@@ -408,6 +408,7 @@ public final class AIOEngine: Sendable {
   private let writerDrainTimeout: Duration = .seconds(5)
   private let stopDrainTimeout: Duration = .seconds(6)
   private let receiverPollingInterval: Duration = .milliseconds(20)
+  private let maxBufferSeconds: Double = 2.0
   private let tapErrorCode = ManagedAtomic<Int>(0)
 #if DEBUG
   private struct EngineMetrics: Sendable {
@@ -1273,11 +1274,11 @@ public final class AIOEngine: Sendable {
         throw AIOError.hardwareNotSupported
       }
 
-      let audioBuffers = Self.makeAudioBuffers(
+      let audioBuffers = makeAudioBuffers(
         sampleRate: sampleRate,
         channelCount: channelCount
       )
-      let receiverBuffers = Self.makeAudioBuffers(
+      let receiverBuffers = makeAudioBuffers(
         sampleRate: sampleRate,
         channelCount: channelCount
       )
@@ -1361,12 +1362,19 @@ public final class AIOEngine: Sendable {
     }
   }
 
-  private static func makeAudioBuffers(
+  private func makeAudioBuffers(
     sampleRate: Int,
     channelCount: Int
   ) -> [SPSCRingBuffer<Float>] {
-    (0..<channelCount).map { _ in
-      SPSCRingBuffer<Float>(capacity: sampleRate * channelCount * 2)  // 2 seconds of buffer
+    let cappedChannels = min(channelCount, 2)
+    if channelCount > cappedChannels {
+      log.warning(
+        "Clamping channel count from \(channelCount, privacy: .public) to \(cappedChannels, privacy: .public)"
+      )
+    }
+    let capacity = max(1, Int(Double(sampleRate) * maxBufferSeconds))
+    return (0..<cappedChannels).map { _ in
+      SPSCRingBuffer<Float>(capacity: capacity)
     }
   }
 
@@ -1542,17 +1550,16 @@ public final class AIOEngine: Sendable {
 
     // Enqueue to ring buffers
     let channelCount = Int(convertedBuffer.format.channelCount)
-    guard channelCount <= audioBuffers.count else {
-      if rtLoggingEnabled {
-        log.error(
-          "Channel count mismatch: \(channelCount, privacy: .public) vs \(audioBuffers.count, privacy: .public)"
-        )
-      }
-      return
+    let effectiveChannelCount = min(channelCount, audioBuffers.count)
+    guard effectiveChannelCount > 0 else { return }
+    if channelCount > audioBuffers.count, rtLoggingEnabled {
+      log.error(
+        "Channel count mismatch: \(channelCount, privacy: .public) vs \(audioBuffers.count, privacy: .public)"
+      )
     }
     let frameLength = Int(convertedBuffer.frameLength)
     let writerAvailable = minimumAvailableWriteFrames(
-      channelCount: channelCount,
+      channelCount: effectiveChannelCount,
       audioBuffers: audioBuffers,
       limit: frameLength
     )
@@ -1562,7 +1569,7 @@ public final class AIOEngine: Sendable {
       let timingHasCapacity = timingBuffer.availableToWrite >= 1
       receiverCanWrite = timingHasCapacity
         && minimumAvailableWriteFrames(
-          channelCount: channelCount,
+          channelCount: effectiveChannelCount,
           audioBuffers: receiverBuffers,
           limit: frameLength
         ) >= frameLength
@@ -1586,7 +1593,7 @@ public final class AIOEngine: Sendable {
     let sourceSampleRate: Double? =
       (time?.isSampleTimeValid ?? false) ? time?.sampleRate : nil
     if writerCanWrite || receiverCanWrite {
-      for i in 0..<channelCount {
+      for i in 0..<effectiveChannelCount {
         guard let channelData = convertedBuffer.floatChannelData?[i] else {
           if rtLoggingEnabled {
             log.error(
@@ -2015,7 +2022,7 @@ public final class AIOEngine: Sendable {
       throw AIOError.invalidRecordingConfiguration(details: "Invalid processing format")
     }
 
-    let newBuffers = Self.makeAudioBuffers(
+    let newBuffers = makeAudioBuffers(
       sampleRate: sampleRate,
       channelCount: channelCount
     )
