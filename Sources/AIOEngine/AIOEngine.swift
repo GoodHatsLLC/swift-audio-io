@@ -286,6 +286,7 @@ public final class AIOEngine: Sendable {
 
   private let recordingSampleTimeAtomic = ManagedAtomic<Int64>(0)
   private let writerDrainTimeout: Duration = .seconds(5)
+  private let stopDrainTimeout: Duration = .seconds(6)
 
   private nonisolated func awaitWriterDrain(_ session: WriterSession) async -> Bool {
     await withTaskGroup(of: Bool.self) { group in
@@ -302,6 +303,8 @@ public final class AIOEngine: Sendable {
       group.cancelAll()
       if !result {
         log.error("⏱️ awaitWriterDrain timed out for \(session.fileURL.lastPathComponent, privacy: .public)")
+      } else {
+        log.info("🧹 awaitWriterDrain completed for \(session.fileURL.lastPathComponent, privacy: .public)")
       }
       return result
     }
@@ -830,6 +833,10 @@ public final class AIOEngine: Sendable {
 
   @MainActor
   private func stopAndDrainAllWriterSessions() async {
+    if Task.isCancelled {
+      log.warning("🧹 stopAndDrainAllWriterSessions cancelled before start")
+      return
+    }
     var sessions: [WriterSession] = []
     if let current = writerSession {
       sessions.append(current)
@@ -837,10 +844,18 @@ public final class AIOEngine: Sendable {
     sessions.append(contentsOf: drainingWriterSessions)
 
     for session in sessions {
+      if Task.isCancelled {
+        log.warning("🧹 stopAndDrainAllWriterSessions cancelled before stop request")
+        return
+      }
       log.info("🧹 Stop requested for writer \(session.fileURL.lastPathComponent, privacy: .public)")
       session.control.stopRequested.store(true, ordering: .relaxed)
     }
     for session in sessions {
+      if Task.isCancelled {
+        log.warning("🧹 stopAndDrainAllWriterSessions cancelled before drain wait")
+        return
+      }
       let clock = ContinuousClock()
       let start = clock.now
       log.info("🧹 Drain wait start for \(session.fileURL.lastPathComponent, privacy: .public)")
@@ -848,6 +863,9 @@ public final class AIOEngine: Sendable {
         await self.awaitWriterDrain(session)
       }.value
       let elapsed = start.duration(to: clock.now)
+      log.info(
+        "🧹 Drain wait finished for \(session.fileURL.lastPathComponent, privacy: .public) result=\(drainResult, privacy: .public)"
+      )
       if drainResult {
         let size = fileSizeDescription(for: session.fileURL)
         log.info(
@@ -883,6 +901,7 @@ public final class AIOEngine: Sendable {
     }
     writerSession = nil
     drainingWriterSessions.removeAll()
+    log.info("🧹 stopAndDrainAllWriterSessions completed")
   }
 
   @MainActor
@@ -1124,7 +1143,30 @@ public final class AIOEngine: Sendable {
       self.engine.stop()
     }
     log.info("🛑 gracefulStop draining writer sessions")
-    await stopAndDrainAllWriterSessions()
+    let drainCompleted = await withTaskGroup(of: Bool.self) { group in
+      group.addTask { [self] in
+        await self.stopAndDrainAllWriterSessions()
+        return true
+      }
+      group.addTask { [self] in
+        try? await Task.sleep(for: self.stopDrainTimeout)
+        return false
+      }
+      let result = await group.next() ?? false
+      group.cancelAll()
+      return result
+    }
+    if !drainCompleted {
+      let url = state.recordingURL ?? URL(fileURLWithPath: "unknown")
+      let error = WriterDrainTimeoutError(url: url, timeout: stopDrainTimeout)
+      log.error("⏱️ stopAndDrainAllWriterSessions timed out: \(error, privacy: .public)")
+      cancelAllWriterSessions()
+      recordWriteFailure(ErrorContext(error), url: url)
+      errorSubject.send(
+        AIOError.audioFileFailed(operation: .write, url: url, error: ErrorContext(error))
+      )
+      onRecordingFailed?()
+    }
     log.info("🛑 gracefulStop cleanup starting")
     cleanUp()
     isRecording = false
