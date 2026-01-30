@@ -1495,22 +1495,31 @@ public final class AIOEngine: Sendable {
     log.info("🛑 stopRecording requested for \(url.lastPathComponent, privacy: .public)")
     await gracefulStop()
     log.info("🛑 stopRecording finished gracefulStop for \(url.lastPathComponent, privacy: .public)")
-    if let failure = consumeWriteFailure() {
-      throw AIOError.audioFileFailed(operation: .write, url: failure.url, error: failure.error)
-    }
-    if !FileManager.default.fileExists(atPath: url.path) {
+    let fileExists = FileManager.default.fileExists(atPath: url.path)
+    let fileSize = fileSizeValue(for: url)
+    let failure = consumeWriteFailure()
+    if !fileExists {
       throw AIOError.audioFileFailed(
         operation: .write,
         url: url,
         error: ErrorContext(MissingAudioFileError(url: url))
       )
     }
-    if let size = fileSizeValue(for: url), size == 0 {
+    if let size = fileSize, size == 0 {
       throw AIOError.audioFileFailed(
         operation: .write,
         url: url,
         error: ErrorContext(EmptyAudioFileError(url: url))
       )
+    }
+    if let failure {
+      if isWriterDrainTimeout(failure), fileExists, (fileSize ?? 0) > 0 {
+        log.warning(
+          "⚠️ Writer drain timed out but file exists with data; continuing stop for \(url.lastPathComponent, privacy: .public)"
+        )
+      } else {
+        throw AIOError.audioFileFailed(operation: .write, url: failure.url, error: failure.error)
+      }
     }
     let finalSize = fileSizeDescription(for: url)
     log.info(
@@ -1518,6 +1527,11 @@ public final class AIOEngine: Sendable {
     )
     onRecordingCompleted?()
     return url
+  }
+
+  private nonisolated func isWriterDrainTimeout(_ failure: WriteFailure) -> Bool {
+    failure.error.domain.contains("WriterDrainTimeoutError")
+      || failure.error.message.localizedCaseInsensitiveContains("writer drain timed out")
   }
 
   /// Rotates the recording to a new file without interrupting audio capture.
