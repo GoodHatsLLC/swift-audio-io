@@ -831,7 +831,7 @@ public final class AIOEngine: Sendable {
   }
 
   @MainActor
-  private func stopAndDrainAllWriterSessions() async {
+  private func stopAndDrainAllWriterSessions(notifyOnFailure: Bool) async {
     if Task.isCancelled {
       log.warning("🧹 stopAndDrainAllWriterSessions cancelled before start")
       return
@@ -876,10 +876,16 @@ public final class AIOEngine: Sendable {
           "⏱️ Writer drain timed out for \(session.fileURL.lastPathComponent, privacy: .public) after \(elapsed, privacy: .public): \(error, privacy: .public)"
         )
         recordWriteFailure(ErrorContext(error), url: session.fileURL)
-        errorSubject.send(
-          AIOError.audioFileFailed(operation: .write, url: session.fileURL, error: ErrorContext(error))
-        )
-        onRecordingFailed?()
+        if notifyOnFailure {
+          errorSubject.send(
+            AIOError.audioFileFailed(
+              operation: .write,
+              url: session.fileURL,
+              error: ErrorContext(error)
+            )
+          )
+          onRecordingFailed?()
+        }
       }
     }
 
@@ -1142,7 +1148,7 @@ public final class AIOEngine: Sendable {
     log.info("🛑 gracefulStop draining writer sessions")
     let drainCompleted = await withTaskGroup(of: Bool.self) { group in
       group.addTask { [self] in
-        await self.stopAndDrainAllWriterSessions()
+        await self.stopAndDrainAllWriterSessions(notifyOnFailure: false)
         return true
       }
       group.addTask { [self] in
@@ -1159,10 +1165,6 @@ public final class AIOEngine: Sendable {
       log.error("⏱️ stopAndDrainAllWriterSessions timed out: \(error, privacy: .public)")
       cancelAllWriterSessions()
       recordWriteFailure(ErrorContext(error), url: url)
-      errorSubject.send(
-        AIOError.audioFileFailed(operation: .write, url: url, error: ErrorContext(error))
-      )
-      onRecordingFailed?()
     }
     log.info("🛑 gracefulStop cleanup starting")
     cleanUp()
