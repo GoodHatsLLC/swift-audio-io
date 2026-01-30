@@ -2,6 +2,7 @@
   import AVFoundation
   import Foundation
   import Testing
+  import Tools
 
   @_spi(TESTING) import AIOEngine
 
@@ -12,17 +13,13 @@
       let engine = AIOEngine()
       let configuration = makeConfiguration()
 
-      let url = try await MainActor.run {
-        try engine.startTestRecording(configuration: configuration)
-      }
+      let url = try await engine.startTestRecording(configuration: configuration)
       defer { try? FileManager.default.removeItem(at: url) }
 
       let samples = (0..<480).map { Float($0) / 480.0 }
       engine.injectTestAudio(channels: [samples])
 
-      let stoppedURL = try await MainActor.run {
-        try engine.stopRecording()
-      }
+      let stoppedURL = try await engine.stopRecording()
       try #require(stoppedURL == url)
 
       let size = try #require(url.resourceValues(forKeys: [.fileSizeKey]).fileSize)
@@ -35,11 +32,12 @@
       let configuration = makeConfiguration()
       let receiver = CapturingReceiver()
 
-      engine.attachBufferReceiver(receiver)
+      await engine.attachBufferReceiver(receiver)
 
-      let url = try await MainActor.run {
-        try engine.startTestRecording(configuration: configuration, enableReceivers: true)
-      }
+      let url = try await engine.startTestRecording(
+        configuration: configuration,
+        enableReceivers: true
+      )
       defer { try? FileManager.default.removeItem(at: url) }
 
       let samples = (0..<128).map { Float($0) / 128.0 }
@@ -56,7 +54,7 @@
       #expect(snapshot.values == samples)
       #expect(snapshot.timing?.sampleTime == 0)
 
-      _ = try await MainActor.run { try engine.stopRecording() }
+      _ = try await engine.stopRecording()
     }
 
     @Test
@@ -64,24 +62,18 @@
       let engine = AIOEngine()
       let configuration = makeConfiguration()
 
-      let firstURL = try await MainActor.run {
-        try engine.startTestRecording(configuration: configuration)
-      }
+      let firstURL = try await engine.startTestRecording(configuration: configuration)
       defer { try? FileManager.default.removeItem(at: firstURL) }
 
       engine.injectTestAudio(channels: [ramp(count: 256)])
 
-      let rotatedURL = try await MainActor.run {
-        try engine.rotateRecordingFile()
-      }
+      let rotatedURL = try await engine.rotateRecordingFile()
       defer { try? FileManager.default.removeItem(at: rotatedURL) }
       #expect(rotatedURL == firstURL)
 
       engine.injectTestAudio(channels: [ramp(count: 256)])
 
-      let finalURL = try await MainActor.run {
-        try engine.stopRecording()
-      }
+      let finalURL = try await engine.stopRecording()
       defer { try? FileManager.default.removeItem(at: finalURL) }
 
       let rotatedSize = try #require(rotatedURL.resourceValues(forKeys: [.fileSizeKey]).fileSize)
@@ -96,9 +88,7 @@
       let engine = AIOEngine()
       let configuration = makeConfiguration()
 
-      let url = try await MainActor.run {
-        try engine.startTestRecording(configuration: configuration)
-      }
+      let url = try await engine.startTestRecording(configuration: configuration)
       defer { try? FileManager.default.removeItem(at: url) }
 
       engine.injectTestAudio(channels: [ramp(count: 256)])
@@ -106,13 +96,13 @@
       await engine.handleInterruption(type: .began, options: nil)
 
       let start = ContinuousClock.now
-      while await MainActor.run({ engine.isRecording }),
+      while await engine.isRecording,
         ContinuousClock.now - start < .seconds(1)
       {
         try? await Task.sleep(for: .milliseconds(10))
       }
 
-      let isRecording = await MainActor.run { engine.isRecording }
+      let isRecording = await engine.isRecording
       #expect(isRecording == false)
 
       let size = try #require(url.resourceValues(forKeys: [.fileSizeKey]).fileSize)
