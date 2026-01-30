@@ -227,8 +227,8 @@ private final class ReceiverControl: @unchecked Sendable {
 private struct ReceiverSession: Sendable {
   let id: UUID
   let control: ReceiverControl
-  let buffers: [RingBuffer<Float>]
-  let timing: RingBuffer<TimingPacket>
+  let buffers: [SPSCRingBuffer<Float>]
+  let timing: SPSCRingBuffer<TimingPacket>
   let processingFormat: AVAudioFormat
 }
 
@@ -415,6 +415,8 @@ public final class AIOEngine: Sendable {
     let writerUnderruns = ManagedAtomic<Int64>(0)
     let writerStallCount = ManagedAtomic<Int64>(0)
     let receiverUnderruns = ManagedAtomic<Int64>(0)
+    let writerDrops = ManagedAtomic<Int64>(0)
+    let receiverDrops = ManagedAtomic<Int64>(0)
   }
   private let metrics = EngineMetrics()
 #endif
@@ -459,9 +461,9 @@ public final class AIOEngine: Sendable {
     var recordingConfiguration: RecordingConfiguration?
     var playbackInstance: PlaybackInstance?
     var installedTapBus: Int?
-    var audioBuffers: [RingBuffer<Float>]?
-    var receiverBuffers: [RingBuffer<Float>]?
-    var receiverTiming: RingBuffer<TimingPacket>?
+    var audioBuffers: [SPSCRingBuffer<Float>]?
+    var receiverBuffers: [SPSCRingBuffer<Float>]?
+    var receiverTiming: SPSCRingBuffer<TimingPacket>?
     var isHandlingRouteChange: Bool = false
     var initialInputFormat: AVAudioFormat?
     var lastInputFormat: AVAudioFormat?
@@ -915,7 +917,7 @@ public final class AIOEngine: Sendable {
   }
 
   @MainActor private func startFileWriteLoop(
-    flushing buffers: [RingBuffer<Float>],
+    flushing buffers: [SPSCRingBuffer<Float>],
     of processingFormat: AVAudioFormat,
     to writer: RecordingFileWriter
   ) {
@@ -954,8 +956,8 @@ public final class AIOEngine: Sendable {
   }
 
   @MainActor private func startReceiverLoop(
-    buffers: [RingBuffer<Float>],
-    timing: RingBuffer<TimingPacket>,
+    buffers: [SPSCRingBuffer<Float>],
+    timing: SPSCRingBuffer<TimingPacket>,
     processingFormat: AVAudioFormat
   ) {
     stopReceiverLoop()
@@ -972,8 +974,12 @@ public final class AIOEngine: Sendable {
     let onUnderrun: @Sendable () -> Void = { [metrics] in
       metrics.receiverUnderruns.wrappingIncrement(ordering: .relaxed)
     }
+    let onDrop: @Sendable () -> Void = { [metrics] in
+      metrics.receiverDrops.wrappingIncrement(ordering: .relaxed)
+    }
 #else
     let onUnderrun: (@Sendable () -> Void)? = nil
+    let onDrop: (@Sendable () -> Void)? = nil
 #endif
     let cadence = receiverPollingInterval
     receiverQueue.async { [control, buffers, timing, processingFormat, bufferReceivers] in
@@ -984,7 +990,8 @@ public final class AIOEngine: Sendable {
         bufferReceivers: bufferReceivers,
         control: control,
         cadence: cadence,
-        onUnderrun: onUnderrun
+        onUnderrun: onUnderrun,
+        onDrop: onDrop
       )
     }
   }
@@ -1000,7 +1007,7 @@ public final class AIOEngine: Sendable {
     session.control.stopRequested.store(true, ordering: .relaxed)
     session.control.targetSampleTime.store(targetSampleTime, ordering: .relaxed)
     if logBuffers {
-      let counts = state.withLock { $0.audioBuffers?.map { $0.count } ?? [] }
+      let counts = state.withLock { $0.audioBuffers?.map { $0.availableToRead } ?? [] }
       let written = session.control.writtenSampleTime.load(ordering: .relaxed)
       log.info(
         "🧹 Stop target set: target=\(targetSampleTime, privacy: .public) written=\(written, privacy: .public) buffers=\(counts, privacy: .public)"
@@ -1258,7 +1265,7 @@ public final class AIOEngine: Sendable {
         64,
         Int(ceil(Double(sampleRate) / Double(tapConfiguration.bufferSize))) * 4
       )
-      let receiverTiming = RingBuffer<TimingPacket>(capacity: timingCapacity)
+      let receiverTiming = SPSCRingBuffer<TimingPacket>(capacity: timingCapacity)
       // Defensive: ensure we never double-install a tap if state got out of sync.
       runOnEngineControlQueue {
         engine.inputNode.removeTap(onBus: tapConfiguration.bus)
@@ -1310,9 +1317,9 @@ public final class AIOEngine: Sendable {
   private static func makeAudioBuffers(
     sampleRate: Int,
     channelCount: Int
-  ) -> [RingBuffer<Float>] {
+  ) -> [SPSCRingBuffer<Float>] {
     (0..<channelCount).map { _ in
-      RingBuffer<Float>(capacity: sampleRate * channelCount * 2)  // 2 seconds of buffer
+      SPSCRingBuffer<Float>(capacity: sampleRate * channelCount * 2)  // 2 seconds of buffer
     }
   }
 
@@ -1530,6 +1537,33 @@ public final class AIOEngine: Sendable {
       }
       return
     }
+    let frameLength = Int(convertedBuffer.frameLength)
+    let writerAvailable = minimumAvailableWriteFrames(
+      channelCount: channelCount,
+      audioBuffers: audioBuffers,
+      limit: frameLength
+    )
+    let writerCanWrite = writerAvailable >= frameLength
+    let receiverCanWrite: Bool
+    if let receiverBuffers, let timingBuffer {
+      let timingHasCapacity = timingBuffer.availableToWrite >= 1
+      receiverCanWrite = timingHasCapacity
+        && minimumAvailableWriteFrames(
+          channelCount: channelCount,
+          audioBuffers: receiverBuffers,
+          limit: frameLength
+        ) >= frameLength
+    } else {
+      receiverCanWrite = false
+    }
+#if DEBUG
+    if !writerCanWrite {
+      metrics.writerDrops.wrappingIncrement(by: Int64(frameLength), ordering: .relaxed)
+    }
+    if receiverBuffers != nil, !receiverCanWrite {
+      metrics.receiverDrops.wrappingIncrement(by: Int64(frameLength), ordering: .relaxed)
+    }
+#endif
 
     let processingStartSampleTime = recordingSampleTimeAtomic.load(ordering: .relaxed)
     let sourceHostTime: UInt64? =
@@ -1538,26 +1572,29 @@ public final class AIOEngine: Sendable {
       (time?.isSampleTimeValid ?? false) ? time.map { Int64($0.sampleTime) } : nil
     let sourceSampleRate: Double? =
       (time?.isSampleTimeValid ?? false) ? time?.sampleRate : nil
-    for i in 0..<channelCount {
-      guard let channelData = convertedBuffer.floatChannelData?[i] else {
-        if rtLoggingEnabled {
-          log.error(
-            "Failed to access channel data for channel \(i, privacy: .public)"
-          )
+    if writerCanWrite || receiverCanWrite {
+      for i in 0..<channelCount {
+        guard let channelData = convertedBuffer.floatChannelData?[i] else {
+          if rtLoggingEnabled {
+            log.error(
+              "Failed to access channel data for channel \(i, privacy: .public)"
+            )
+          }
+          continue
         }
-        continue
-      }
-      let frameLength = Int(convertedBuffer.frameLength)
-      audioBuffers[i].write(UnsafeBufferPointer(start: channelData, count: frameLength))
-      if let receiverBuffers, i < receiverBuffers.count {
-        receiverBuffers[i].write(UnsafeBufferPointer(start: channelData, count: frameLength))
+        if writerCanWrite {
+          audioBuffers[i].write(UnsafeBufferPointer(start: channelData, count: frameLength))
+        }
+        if receiverCanWrite, let receiverBuffers, i < receiverBuffers.count {
+          receiverBuffers[i].write(UnsafeBufferPointer(start: channelData, count: frameLength))
+        }
       }
     }
 
-    if let receiverTimingBuffer = timingBuffer {
+    if receiverCanWrite, let receiverTimingBuffer = timingBuffer {
       var packet = TimingPacket(
         startSampleTime: processingStartSampleTime,
-        frameCount: Int(convertedBuffer.frameLength),
+        frameCount: frameLength,
         hostTime: sourceHostTime,
         sourceSampleTime: sourceSampleTime,
         sourceSampleRate: sourceSampleRate
@@ -1584,7 +1621,7 @@ public final class AIOEngine: Sendable {
   private static func writerLoopSync(
     writer: RecordingFileWriter,
     format: AVAudioFormat,
-    audioBuffers: [RingBuffer<Float>],
+    audioBuffers: [SPSCRingBuffer<Float>],
     control: WriterControl,
     shouldCancel: @escaping @Sendable () -> Bool,
     errorHandler: @escaping @Sendable (ErrorContext) -> Void
@@ -1650,7 +1687,7 @@ public final class AIOEngine: Sendable {
 #if DEBUG
               metrics.writerStallCount.wrappingIncrement(ordering: .relaxed)
 #endif
-              let counts = audioBuffers.map { $0.count }
+              let counts = audioBuffers.map { $0.availableToRead }
               let minAvail = minimumAvailableFrames(
                 channelCount: Int(format.channelCount),
                 audioBuffers: audioBuffers,
@@ -1675,13 +1712,14 @@ public final class AIOEngine: Sendable {
   }
 
   private static func receiverLoopSync(
-    buffers: [RingBuffer<Float>],
-    timing: RingBuffer<TimingPacket>,
+    buffers: [SPSCRingBuffer<Float>],
+    timing: SPSCRingBuffer<TimingPacket>,
     processingFormat: AVAudioFormat,
     bufferReceivers: Synchronized<[any BufferReceiver<Float>]>,
     control: ReceiverControl,
     cadence: Duration,
-    onUnderrun: (@Sendable () -> Void)?
+    onUnderrun: (@Sendable () -> Void)?,
+    onDrop: (@Sendable () -> Void)?
   ) {
     let channelCount = min(Int(processingFormat.channelCount), buffers.count)
     guard channelCount > 0 else { return }
@@ -1716,7 +1754,28 @@ public final class AIOEngine: Sendable {
           + (Double(cadenceComponents.attoseconds) / 1_000_000_000_000_000_000)
       )
 
+    let maxBacklog = 4
     while !control.cancelRequested.load(ordering: .relaxed) {
+      var backlog = timing.availableToRead
+      while backlog > maxBacklog && !control.cancelRequested.load(ordering: .relaxed) {
+        let droppedTimingRead = timing.read(into: timingScratch)
+        guard droppedTimingRead > 0 else { break }
+        let droppedPacket = timingScratch[0]
+        guard droppedPacket.frameCount > 0 else {
+          backlog = timing.availableToRead
+          continue
+        }
+        ensureScratchCapacity(droppedPacket.frameCount)
+        for index in 0..<channelCount {
+          let destination = UnsafeMutableBufferPointer(
+            start: scratchBuffers[index].baseAddress,
+            count: droppedPacket.frameCount
+          )
+          _ = buffers[index].read(into: destination)
+        }
+        onDrop?()
+        backlog = timing.availableToRead
+      }
       let timingRead = timing.read(into: timingScratch)
       guard timingRead > 0 else {
         Thread.sleep(forTimeInterval: sleepInterval)
@@ -1762,7 +1821,7 @@ public final class AIOEngine: Sendable {
 
   private static func flushChunk(
     size bufferSize: Int,
-    from audioBuffers: [RingBuffer<Float>],
+    from audioBuffers: [SPSCRingBuffer<Float>],
     in audioFormat: AVAudioFormat,
     to writer: RecordingFileWriter
   ) -> Result<WriteResult, Error> {
@@ -1822,14 +1881,29 @@ public final class AIOEngine: Sendable {
 
   private static func minimumAvailableFrames(
     channelCount: Int,
-    audioBuffers: [RingBuffer<Float>],
+    audioBuffers: [SPSCRingBuffer<Float>],
     limit: Int
   ) -> Int {
     guard channelCount > 0 else { return 0 }
 
     var minimum = limit
     for index in 0..<min(channelCount, audioBuffers.count) {
-      minimum = min(minimum, audioBuffers[index].count)
+      minimum = min(minimum, audioBuffers[index].availableToRead)
+      if minimum == 0 { break }
+    }
+    return minimum
+  }
+
+  private static func minimumAvailableWriteFrames(
+    channelCount: Int,
+    audioBuffers: [SPSCRingBuffer<Float>],
+    limit: Int
+  ) -> Int {
+    guard channelCount > 0 else { return 0 }
+
+    var minimum = limit
+    for index in 0..<min(channelCount, audioBuffers.count) {
+      minimum = min(minimum, audioBuffers[index].availableToWrite)
       if minimum == 0 { break }
     }
     return minimum
