@@ -4,6 +4,11 @@ This survey highlights functionality the current AIOEngine (built on `AVAudioEng
 `AVAudioFile`) does **not** implement but could be unlocked by dropping down to the Core
 Audio I/O units used by the iOS recording stack.
 
+## Current RT-safety model (AVAudioEngine)
+- The tap callback only converts and enqueues into lock-free SPSC buffers (no receiver calls).
+- Buffer receivers run on a dedicated `receiverQueue`, reading from a separate ring buffer.
+- Converter and converted buffers are prebuilt during warm/route change to keep the tap allocation-free.
+
 ## Voice-processing controls
 - The engine configures the shared `AVAudioSession` with the `.playAndRecord` category and
   default options but never instantiates or configures the Voice Processing I/O unit
