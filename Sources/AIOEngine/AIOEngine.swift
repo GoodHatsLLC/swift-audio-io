@@ -2548,7 +2548,7 @@ extension AIOEngine: BufferEmitter {
 #if os(iOS)
     switch configuration.outputDestination {
     case .temporary:
-      let resolved = (
+      let resolved: (url: URL, protection: OutputFileProtection?) = (
         FileManager.default.temporaryDirectory.appendingPathComponent(filename, isDirectory: false),
         nil
       )
@@ -2597,7 +2597,7 @@ extension AIOEngine: BufferEmitter {
 #else
     switch configuration.outputDestination {
     case .temporary:
-      let resolved = (
+      let resolved: (url: URL, protection: OutputFileProtection?) = (
         FileManager.default.temporaryDirectory.appendingPathComponent(filename, isDirectory: false),
         nil
       )
@@ -2614,7 +2614,7 @@ extension AIOEngine: BufferEmitter {
           operation: .openForWriting, url: directory, error: ErrorContext(error)
         )
       }
-      let resolved = (
+      let resolved: (url: URL, protection: OutputFileProtection?) = (
         directory.appendingPathComponent(filename, isDirectory: false),
         nil
       )
@@ -2637,7 +2637,7 @@ extension AIOEngine: BufferEmitter {
           operation: .openForWriting, url: parent, error: ErrorContext(error)
         )
       }
-      let resolved = (fileURL, nil)
+      let resolved: (url: URL, protection: OutputFileProtection?) = (fileURL, nil)
       logOutputDestination(configuration.outputDestination, url: resolved.0)
       return resolved
     }
