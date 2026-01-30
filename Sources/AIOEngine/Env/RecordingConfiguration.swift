@@ -9,19 +9,36 @@
     Hashable, Identifiable, Sendable
   {
 
+#if os(iOS)
+    public enum OutputDestination: Hashable, Sendable {
+      case temporary
+      case directory(URL, fileProtection: FileProtectionType? = nil)
+      case fileURL(URL, fileProtection: FileProtectionType? = nil)
+    }
+#else
+    public enum OutputDestination: Hashable, Sendable {
+      case temporary
+      case directory(URL)
+      case fileURL(URL)
+    }
+#endif
+
     public var id: Self { self }
     public let inputConfiguration: InputConfiguration
     public let outputConfiguration: OutputConfiguration
     public let tapInterval: Duration
+    public let outputDestination: OutputDestination
 
     public init(
       inputConfiguration: InputConfiguration,
       outputConfiguration: OutputConfiguration,
-      tapInterval: Duration = .seconds(0.1)
+      tapInterval: Duration = .seconds(0.1),
+      outputDestination: OutputDestination = .temporary
     ) {
       self.inputConfiguration = inputConfiguration
       self.outputConfiguration = outputConfiguration
       self.tapInterval = tapInterval
+      self.outputDestination = outputDestination
     }
 
     public var description: String {
@@ -42,6 +59,7 @@
         channels: \(inputConfiguration.channels)
         bitDepth: \(outputConfiguration.bitDepth)
         quality: \(outputConfiguration.quality)
+        outputDestination: \(outputDestination)
       """
     }
 
