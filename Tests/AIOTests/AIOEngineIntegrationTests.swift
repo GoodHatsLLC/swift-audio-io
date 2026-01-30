@@ -59,6 +59,66 @@
       _ = try await MainActor.run { try engine.stopRecording() }
     }
 
+    @Test
+    func testRotateRecordingFileEmitsTwoFiles() async throws {
+      let engine = AIOEngine()
+      let configuration = makeConfiguration()
+
+      let firstURL = try await MainActor.run {
+        try engine.startTestRecording(configuration: configuration)
+      }
+      defer { try? FileManager.default.removeItem(at: firstURL) }
+
+      engine.injectTestAudio(channels: [ramp(count: 256)])
+
+      let rotatedURL = try await MainActor.run {
+        try engine.rotateRecordingFile()
+      }
+      defer { try? FileManager.default.removeItem(at: rotatedURL) }
+      #expect(rotatedURL == firstURL)
+
+      engine.injectTestAudio(channels: [ramp(count: 256)])
+
+      let finalURL = try await MainActor.run {
+        try engine.stopRecording()
+      }
+      defer { try? FileManager.default.removeItem(at: finalURL) }
+
+      let rotatedSize = try #require(rotatedURL.resourceValues(forKeys: [.fileSizeKey]).fileSize)
+      let finalSize = try #require(finalURL.resourceValues(forKeys: [.fileSizeKey]).fileSize)
+      #expect(finalURL != rotatedURL)
+      #expect(rotatedSize > 0)
+      #expect(finalSize > 0)
+    }
+
+    @Test
+    func testInterruptionStopsRecording() async throws {
+      let engine = AIOEngine()
+      let configuration = makeConfiguration()
+
+      let url = try await MainActor.run {
+        try engine.startTestRecording(configuration: configuration)
+      }
+      defer { try? FileManager.default.removeItem(at: url) }
+
+      engine.injectTestAudio(channels: [ramp(count: 256)])
+
+      await engine.handleInterruption(type: .began, options: nil)
+
+      let start = ContinuousClock.now
+      while await MainActor.run({ engine.isRecording }),
+        ContinuousClock.now - start < .seconds(1)
+      {
+        try? await Task.sleep(for: .milliseconds(10))
+      }
+
+      let isRecording = await MainActor.run { engine.isRecording }
+      #expect(isRecording == false)
+
+      let size = try #require(url.resourceValues(forKeys: [.fileSizeKey]).fileSize)
+      #expect(size > 0)
+    }
+
     private func makeConfiguration() -> RecordingConfiguration {
       let input = InputConfiguration(
         sampleRate: SampleRate.common(.sr48000),
@@ -74,6 +134,11 @@
         outputConfiguration: output,
         outputDestination: .temporary
       )
+    }
+
+    private func ramp(count: Int) -> [Float] {
+      guard count > 0 else { return [] }
+      return (0..<count).map { Float($0) / Float(count) }
     }
   }
 
