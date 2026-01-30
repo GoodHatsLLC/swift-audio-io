@@ -1746,7 +1746,8 @@ public final class AIOEngine: Sendable {
     Task { await control.drainSignal.signal() }
   }
 
-  private static func receiverLoopSync(
+  @_spi(TESTING)
+  static func receiverLoopSync(
     buffers: [SPSCRingBuffer<Float>],
     timing: SPSCRingBuffer<TimingPacket>,
     processingFormat: AVAudioFormat,

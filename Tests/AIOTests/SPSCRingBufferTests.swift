@@ -1,8 +1,10 @@
 #if canImport(UIKit)
   import AVFoundation
+  import Atomics
   import Testing
+  import Tools
 
-  @testable import AIOEngine
+  @_spi(TESTING) @testable import AIOEngine
 
   @Suite
   struct SPSCRingBufferTests {
