@@ -355,6 +355,11 @@ public final class AIOEngine: Sendable {
     let wasPlaying: Bool
     let pollingInterval: Duration
   }
+
+  private struct WriteFailure: Sendable {
+    let url: URL
+    let error: ErrorContext
+  }
   /// A struct representing the current playback state.
   public struct Playback: Sendable, Hashable, Identifiable, Codable {
     public init(
@@ -453,6 +458,7 @@ public final class AIOEngine: Sendable {
 
   @MainActor private var writerSession: WriterSession?
   @MainActor private var drainingWriterSessions: [WriterSession] = []
+  @MainActor private var lastWriteFailure: WriteFailure?
 
   @MainActor private var playbackTask: Task<Void, Never>? {
     willSet {
@@ -672,6 +678,7 @@ public final class AIOEngine: Sendable {
           placeState(\.playbackInstance, nil)
           playback = nil
         }
+        lastWriteFailure = nil
         lastRecordingConfiguration = configuration
         try warm(configuration: configuration)
 
@@ -709,6 +716,16 @@ public final class AIOEngine: Sendable {
     to file: AVAudioFile
   ) {
     let control = WriterControl()
+    let errorHandler: @Sendable (ErrorContext) -> Void = { [weak self] error in
+      guard let self else { return }
+      Task { @MainActor in
+        self.recordWriteFailure(error, url: file.url)
+        self.errorSubject.send(
+          AIOError.audioFileFailed(operation: .write, url: file.url, error: error)
+        )
+        self.onRecordingFailed?()
+      }
+    }
     let session = WriterSession(
       id: UUID(),
       task: Task.detached(priority: .userInitiated) {
@@ -716,7 +733,8 @@ public final class AIOEngine: Sendable {
           file: file,
           format: processingFormat,
           audioBuffers: buffers,
-          control: control
+          control: control,
+          errorHandler: errorHandler
         )
       },
       control: control,
@@ -769,6 +787,18 @@ public final class AIOEngine: Sendable {
     }
     writerSession = nil
     drainingWriterSessions.removeAll()
+  }
+
+  @MainActor
+  private func recordWriteFailure(_ error: ErrorContext, url: URL) {
+    guard lastWriteFailure == nil else { return }
+    lastWriteFailure = WriteFailure(url: url, error: error)
+  }
+
+  @MainActor
+  private func consumeWriteFailure() -> WriteFailure? {
+    defer { lastWriteFailure = nil }
+    return lastWriteFailure
   }
 
   /// Warms up the audio engine with the specified configuration.
@@ -1171,31 +1201,39 @@ public final class AIOEngine: Sendable {
     file: AVAudioFile,
     format: AVAudioFormat,
     audioBuffers: [RingBuffer<Float>],
-    control: WriterControl
+    control: WriterControl,
+    errorHandler: @escaping @Sendable (ErrorContext) -> Void
   ) async {
     let bufferSize = 1024  // Write in chunks
 
     while true {
       if Task.isCancelled { break }
-      let framesRead = flushChunk(
+      let result = flushChunk(
         size: bufferSize,
         from: audioBuffers,
         in: format,
         to: file
       )
-      if framesRead == 0 {
-        let stopRequested = control.stopRequested.load(ordering: .relaxed)
-        if stopRequested,
-          minimumAvailableFrames(
-            channelCount: Int(format.channelCount),
-            audioBuffers: audioBuffers,
-            limit: bufferSize
-          ) == 0
-        {
-          break
+      switch result {
+      case .success(let framesRead):
+        if framesRead == 0 {
+          let stopRequested = control.stopRequested.load(ordering: .relaxed)
+          if stopRequested,
+            minimumAvailableFrames(
+              channelCount: Int(format.channelCount),
+              audioBuffers: audioBuffers,
+              limit: bufferSize
+            ) == 0
+          {
+            break
+          }
+          // await more audio
+          await Task.yield()
         }
-        // await more audio
-        await Task.yield()
+      case .failure(let error):
+        let context = ErrorContext(error)
+        errorHandler(context)
+        break
       }
     }
     await control.drainSignal.signal()
@@ -1206,7 +1244,7 @@ public final class AIOEngine: Sendable {
     from audioBuffers: [RingBuffer<Float>],
     in audioFormat: AVAudioFormat,
     to file: AVAudioFile
-  ) -> Int {
+  ) -> Result<Int, Error> {
     let channelCount = Int(audioFormat.channelCount)
     let framesToRead = minimumAvailableFrames(
       channelCount: channelCount,
@@ -1215,7 +1253,7 @@ public final class AIOEngine: Sendable {
     )
 
     guard framesToRead > 0 else {
-      return 0
+      return .success(0)
     }
 
     guard
@@ -1224,7 +1262,7 @@ public final class AIOEngine: Sendable {
         frameCapacity: AVAudioFrameCount(bufferSize)
       )
     else {
-      return 0
+      return .success(0)
     }
 
     var actualFrames = framesToRead
@@ -1232,23 +1270,23 @@ public final class AIOEngine: Sendable {
     for i in 0..<channelCount {
       guard let channelData = pcmBuffer.floatChannelData?[i] else {
         actualFrames = 0
-        return 0
+        return .success(0)
       }
       let readSize = audioBuffers[i].read(
         into: UnsafeMutableBufferPointer(start: channelData, count: framesToRead))
       actualFrames = min(actualFrames, readSize)
     }
 
-    guard actualFrames > 0 else { return framesToRead }
+    guard actualFrames > 0 else { return .success(framesToRead) }
     pcmBuffer.frameLength = AVAudioFrameCount(actualFrames)
 
     do {
       try file.write(from: pcmBuffer)
     } catch {
       log.error("error flushing chunk: \(error, privacy: .public)")
-      return 0
+      return .failure(error)
     }
-    return actualFrames
+    return .success(actualFrames)
 
   }
 
@@ -1275,6 +1313,9 @@ public final class AIOEngine: Sendable {
   public func stopRecording() async throws(AIOError) -> URL {
     guard let url = state.recordingURL, isRecording else { throw AIOError.notRecording }
     await gracefulStop()
+    if let failure = consumeWriteFailure() {
+      throw AIOError.audioFileFailed(operation: .write, url: failure.url, error: failure.error)
+    }
     onRecordingCompleted?()
     return url
   }
