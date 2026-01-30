@@ -765,6 +765,7 @@ public final class AIOEngine: Sendable {
     session.control.stopRequested.store(true, ordering: .relaxed)
     drainingWriterSessions.append(session)
     Task { [weak self] in
+      guard let self else { return }
       let clock = ContinuousClock()
       let start = clock.now
       await session.task.value
@@ -775,7 +776,7 @@ public final class AIOEngine: Sendable {
         "🧹 Writer drained for \(session.fileURL.lastPathComponent, privacy: .public) (size=\(size, privacy: .public), elapsed=\(elapsed, privacy: .public))"
       )
       await MainActor.run {
-        self?.drainingWriterSessions.removeAll { $0.id == session.id }
+        self.drainingWriterSessions.removeAll { $0.id == session.id }
       }
     }
   }
@@ -2413,7 +2414,6 @@ public final class AIOEngine: Sendable {
       """)
 
     // Install new tap with updated format
-    let audioBuffers = state.audioBuffers ?? []
     let startResult = runOnEngineControlQueueResult { [weak self] in
       guard let self else { return }
       self.engine.inputNode.installTap(
@@ -2428,7 +2428,6 @@ public final class AIOEngine: Sendable {
           buffer: buffer,
           time: time,
           to: processingFormat,
-          enqueueingTo: audioBuffers,
           bufferReceivers: bufferReceivers
         )
       }
