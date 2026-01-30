@@ -289,6 +289,7 @@ public final class AIOEngine: Sendable {
 
   private nonisolated func awaitWriterDrain(_ session: WriterSession) async -> Bool {
     await withTaskGroup(of: Bool.self) { group in
+      log.info("🧹 awaitWriterDrain start for \(session.fileURL.lastPathComponent, privacy: .public)")
       group.addTask { [self] in
         await session.task.value
         return true
@@ -299,6 +300,9 @@ public final class AIOEngine: Sendable {
       }
       let result = await group.next() ?? false
       group.cancelAll()
+      if !result {
+        log.error("⏱️ awaitWriterDrain timed out for \(session.fileURL.lastPathComponent, privacy: .public)")
+      }
       return result
     }
   }
@@ -794,6 +798,7 @@ public final class AIOEngine: Sendable {
       guard let self else { return }
       let clock = ContinuousClock()
       let start = clock.now
+      log.info("🧹 Drain start for \(session.fileURL.lastPathComponent, privacy: .public)")
       let drainResult = await Task.detached(priority: .userInitiated) { [self] in
         await self.awaitWriterDrain(session)
       }.value
@@ -832,11 +837,13 @@ public final class AIOEngine: Sendable {
     sessions.append(contentsOf: drainingWriterSessions)
 
     for session in sessions {
+      log.info("🧹 Stop requested for writer \(session.fileURL.lastPathComponent, privacy: .public)")
       session.control.stopRequested.store(true, ordering: .relaxed)
     }
     for session in sessions {
       let clock = ContinuousClock()
       let start = clock.now
+      log.info("🧹 Drain wait start for \(session.fileURL.lastPathComponent, privacy: .public)")
       let drainResult = await Task.detached(priority: .userInitiated) { [self] in
         await self.awaitWriterDrain(session)
       }.value
@@ -863,6 +870,7 @@ public final class AIOEngine: Sendable {
 
     writerSession = nil
     drainingWriterSessions.removeAll()
+    log.info("🧹 stopAndDrainAllWriterSessions completed")
   }
 
   @MainActor
@@ -1106,18 +1114,23 @@ public final class AIOEngine: Sendable {
   @MainActor
   private func gracefulStop() async {
     let tapBus = state.consume(\.installedTapBus)
+    log.info("🛑 gracefulStop starting (tapBus=\(String(describing: tapBus), privacy: .public))")
     engineControlQueue.async { [weak self] in
       guard let self else { return }
+      log.info("🛑 gracefulStop engine stop enqueued")
       if let tapBus = tapBus {
         self.engine.inputNode.removeTap(onBus: tapBus)
       }
       self.engine.stop()
     }
+    log.info("🛑 gracefulStop draining writer sessions")
     await stopAndDrainAllWriterSessions()
+    log.info("🛑 gracefulStop cleanup starting")
     cleanUp()
     isRecording = false
     wantsRecording = false
     reconciliationTask = nil
+    log.info("🛑 gracefulStop completed")
     deactivateAudioSessionIfNeeded(reason: "recording stopped")
   }
 
@@ -1332,6 +1345,7 @@ public final class AIOEngine: Sendable {
         break
       }
     }
+    log.info("🧹 writerLoop exiting for \(file.url.lastPathComponent, privacy: .public)")
     await control.drainSignal.signal()
   }
 
@@ -1408,7 +1422,9 @@ public final class AIOEngine: Sendable {
   @MainActor
   public func stopRecording() async throws(AIOError) -> URL {
     guard let url = state.recordingURL, isRecording else { throw AIOError.notRecording }
+    log.info("🛑 stopRecording requested for \(url.lastPathComponent, privacy: .public)")
     await gracefulStop()
+    log.info("🛑 stopRecording finished gracefulStop for \(url.lastPathComponent, privacy: .public)")
     if let failure = consumeWriteFailure() {
       throw AIOError.audioFileFailed(operation: .write, url: failure.url, error: failure.error)
     }
