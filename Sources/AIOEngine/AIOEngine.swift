@@ -91,6 +91,10 @@ private actor WriterDrainSignal {
   private var isSignaled = false
   private var continuations: [CheckedContinuation<Void, Never>] = []
 
+  func isSignaledValue() -> Bool {
+    isSignaled
+  }
+
   func wait() async {
     if isSignaled { return }
     await withCheckedContinuation { continuation in
@@ -289,25 +293,22 @@ public final class AIOEngine: Sendable {
   private let stopDrainTimeout: Duration = .seconds(6)
 
   private nonisolated func awaitWriterDrain(_ session: WriterSession) async -> Bool {
-    await withTaskGroup(of: Bool.self) { group in
-      log.info("🧹 awaitWriterDrain start for \(session.fileURL.lastPathComponent, privacy: .public)")
-      group.addTask { [self] in
-        await session.task.value
-        return true
-      }
-      group.addTask { [self] in
-        try? await Task.sleep(for: self.writerDrainTimeout)
+    log.info("🧹 awaitWriterDrain start for \(session.fileURL.lastPathComponent, privacy: .public)")
+    let clock = ContinuousClock()
+    let deadline = clock.now.advanced(by: writerDrainTimeout)
+    while clock.now < deadline {
+      if Task.isCancelled {
+        log.warning("🧹 awaitWriterDrain cancelled for \(session.fileURL.lastPathComponent, privacy: .public)")
         return false
       }
-      let result = await group.next() ?? false
-      group.cancelAll()
-      if !result {
-        log.error("⏱️ awaitWriterDrain timed out for \(session.fileURL.lastPathComponent, privacy: .public)")
-      } else {
+      if await session.control.drainSignal.isSignaledValue() {
         log.info("🧹 awaitWriterDrain completed for \(session.fileURL.lastPathComponent, privacy: .public)")
+        return true
       }
-      return result
+      try? await Task.sleep(for: .milliseconds(50))
     }
+    log.error("⏱️ awaitWriterDrain timed out for \(session.fileURL.lastPathComponent, privacy: .public)")
+    return false
   }
 
   struct InternalState {
@@ -802,9 +803,7 @@ public final class AIOEngine: Sendable {
       let clock = ContinuousClock()
       let start = clock.now
       log.info("🧹 Drain start for \(session.fileURL.lastPathComponent, privacy: .public)")
-      let drainResult = await Task.detached(priority: .userInitiated) { [self] in
-        await self.awaitWriterDrain(session)
-      }.value
+      let drainResult = await awaitWriterDrain(session)
       let elapsed = start.duration(to: clock.now)
       if drainResult {
         session.file.close()
@@ -859,9 +858,7 @@ public final class AIOEngine: Sendable {
       let clock = ContinuousClock()
       let start = clock.now
       log.info("🧹 Drain wait start for \(session.fileURL.lastPathComponent, privacy: .public)")
-      let drainResult = await Task.detached(priority: .userInitiated) { [self] in
-        await self.awaitWriterDrain(session)
-      }.value
+      let drainResult = await awaitWriterDrain(session)
       let elapsed = start.duration(to: clock.now)
       log.info(
         "🧹 Drain wait finished for \(session.fileURL.lastPathComponent, privacy: .public) result=\(drainResult, privacy: .public)"
