@@ -278,6 +278,23 @@ public final class AIOEngine: Sendable {
   private let recordingSampleTimeAtomic = ManagedAtomic<Int64>(0)
   private let writerDrainTimeout: Duration = .seconds(5)
 
+  private nonisolated func awaitWriterDrain(
+    _ session: WriterSession
+  ) async -> Result<Void, TimeoutOnlyError> {
+    let waitTask = Task.detached(priority: .userInitiated) {
+      await session.task.value
+    }
+    do {
+      try await withTimeout(of: writerDrainTimeout) {
+        _ = await waitTask.value
+      }
+      return .success(())
+    } catch let error as TimeoutOnlyError {
+      waitTask.cancel()
+      return .failure(error)
+    }
+  }
+
   struct InternalState {
     var file: AVAudioFile?
     var recordingURL: URL?
@@ -769,15 +786,7 @@ public final class AIOEngine: Sendable {
       guard let self else { return }
       let clock = ContinuousClock()
       let start = clock.now
-      let drainResult: Result<Void, TimeoutOnlyError>
-      do {
-        try await withTimeout(of: writerDrainTimeout) {
-          await session.task.value
-        }
-        drainResult = .success(())
-      } catch let error as TimeoutOnlyError {
-        drainResult = .failure(error)
-      }
+      let drainResult = await awaitWriterDrain(session)
       let elapsed = start.duration(to: clock.now)
       switch drainResult {
       case .success:
@@ -818,15 +827,7 @@ public final class AIOEngine: Sendable {
     for session in sessions {
       let clock = ContinuousClock()
       let start = clock.now
-      let drainResult: Result<Void, TimeoutOnlyError>
-      do {
-        try await withTimeout(of: writerDrainTimeout) {
-          await session.task.value
-        }
-        drainResult = .success(())
-      } catch let error as TimeoutOnlyError {
-        drainResult = .failure(error)
-      }
+      let drainResult = await awaitWriterDrain(session)
       let elapsed = start.duration(to: clock.now)
       switch drainResult {
       case .success:
