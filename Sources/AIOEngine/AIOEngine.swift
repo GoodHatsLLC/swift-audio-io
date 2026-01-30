@@ -200,6 +200,7 @@ private actor WriterDrainSignal {
 
 private final class WriterControl: @unchecked Sendable {
   let stopRequested = ManagedAtomic<Bool>(false)
+  let cancelRequested = ManagedAtomic<Bool>(false)
   let drainSignal = WriterDrainSignal()
   let writtenSampleTime = ManagedAtomic<Int64>(0)
   let targetSampleTime = ManagedAtomic<Int64>(0)
@@ -207,7 +208,6 @@ private final class WriterControl: @unchecked Sendable {
 
 private struct WriterSession: Sendable {
   let id: UUID
-  let task: Task<Void, Never>
   let control: WriterControl
   let writer: RecordingFileWriter
   let fileURL: URL
@@ -374,6 +374,7 @@ public final class AIOEngine: Sendable {
   private let engine = AVAudioEngine()
   private nonisolated let player = AVAudioPlayerNode()
   private let engineControlQueue = DispatchQueue(label: "AIOEngine.engine-control", qos: .default)
+  private let writerQueue = DispatchQueue(label: "AIOEngine.writer", qos: .userInitiated)
 
   private let recordingSampleTimeAtomic = ManagedAtomic<Int64>(0)
   private let writerDrainTimeout: Duration = .seconds(5)
@@ -880,20 +881,23 @@ public final class AIOEngine: Sendable {
     }
     let session = WriterSession(
       id: UUID(),
-      task: Task.detached(priority: .userInitiated) {
-        await AIOEngine.writerLoop(
-          writer: writer,
-          format: processingFormat,
-          audioBuffers: buffers,
-          control: control,
-          errorHandler: errorHandler
-        )
-      },
       control: control,
       writer: writer,
       fileURL: writer.fileURL
     )
     writerSession = session
+    writerQueue.async { [control] in
+      AIOEngine.writerLoopSync(
+        writer: writer,
+        format: processingFormat,
+        audioBuffers: buffers,
+        control: control,
+        shouldCancel: { [control] in
+          control.cancelRequested.load(ordering: .relaxed)
+        },
+        errorHandler: errorHandler
+      )
+    }
     log.info("📝 Writer started for \(writer.fileURL.lastPathComponent, privacy: .public)")
 
   }
@@ -930,7 +934,7 @@ public final class AIOEngine: Sendable {
         "🧹 Writer drained for \(session.fileURL.lastPathComponent, privacy: .public) (size=\(size, privacy: .public), elapsed=\(elapsed, privacy: .public))"
       )
     case .targetSatisfied:
-      session.task.cancel()
+      session.control.cancelRequested.store(true, ordering: .relaxed)
       session.writer.close()
       let target = session.control.targetSampleTime.load(ordering: .relaxed)
       let written = session.control.writtenSampleTime.load(ordering: .relaxed)
@@ -939,7 +943,7 @@ public final class AIOEngine: Sendable {
       )
     case .timedOut:
       let error = WriterDrainTimeoutError(url: session.fileURL, timeout: writerDrainTimeout)
-      session.task.cancel()
+      session.control.cancelRequested.store(true, ordering: .relaxed)
       session.writer.close()
       let target = session.control.targetSampleTime.load(ordering: .relaxed)
       let written = session.control.writtenSampleTime.load(ordering: .relaxed)
@@ -1010,10 +1014,10 @@ public final class AIOEngine: Sendable {
   @MainActor
   private func cancelAllWriterSessions() {
     if let current = writerSession {
-      current.task.cancel()
+      current.control.cancelRequested.store(true, ordering: .relaxed)
     }
     for session in drainingWriterSessions {
-      session.task.cancel()
+      session.control.cancelRequested.store(true, ordering: .relaxed)
     }
     writerSession = nil
     drainingWriterSessions.removeAll()
@@ -1448,13 +1452,14 @@ public final class AIOEngine: Sendable {
     )
   }
 
-  private static func writerLoop(
+  private static func writerLoopSync(
     writer: RecordingFileWriter,
     format: AVAudioFormat,
     audioBuffers: [RingBuffer<Float>],
     control: WriterControl,
+    shouldCancel: @escaping @Sendable () -> Bool,
     errorHandler: @escaping @Sendable (ErrorContext) -> Void
-  ) async {
+  ) {
     let bufferSize = 1024  // Write in chunks
     let clock = ContinuousClock()
     var stopRequestedAt: ContinuousClock.Instant?
@@ -1462,7 +1467,7 @@ public final class AIOEngine: Sendable {
     var writtenSampleTime: Int64 = 0
 
     while true {
-      if Task.isCancelled { break }
+      if shouldCancel() { break }
       let result = flushChunk(
         size: bufferSize,
         from: audioBuffers,
@@ -1521,8 +1526,8 @@ public final class AIOEngine: Sendable {
               )
             }
           }
-          // await more audio
-          await Task.yield()
+          if shouldCancel() { break }
+          Thread.sleep(forTimeInterval: 0.001)
         }
       case .failure(let error):
         let context = ErrorContext(error)
@@ -1531,7 +1536,7 @@ public final class AIOEngine: Sendable {
       }
     }
     log.info("🧹 writerLoop exiting for \(writer.fileURL.lastPathComponent, privacy: .public)")
-    await control.drainSignal.signal()
+    Task { await control.drainSignal.signal() }
   }
 
   private struct WriteResult: Sendable {
@@ -1671,7 +1676,7 @@ public final class AIOEngine: Sendable {
   ///
   /// The rotation process:
   /// 1. Creates a new output file
-  /// 2. Cancels the current writer task (it will flush remaining data)
+  /// 2. Cancels the current writer loop (it will flush remaining data)
   /// 3. Waits briefly for the writer to finish the current chunk
   /// 4. Updates state with the new file
   /// 5. Starts a new writer loop
