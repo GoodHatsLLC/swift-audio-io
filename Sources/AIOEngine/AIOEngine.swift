@@ -410,8 +410,8 @@ public final class AIOEngine: Sendable {
   private let receiverPollingInterval: Duration = .milliseconds(20)
   private let maxBufferSeconds: Double = 2.0
   private let tapErrorCode = ManagedAtomic<Int>(0)
-#if DEBUG
   private struct EngineMetrics: Sendable {
+#if DEBUG
     let tapCallbackCount = ManagedAtomic<Int64>(0)
     let tapCallbackMaxNanos = ManagedAtomic<UInt64>(0)
     let writerUnderruns = ManagedAtomic<Int64>(0)
@@ -419,9 +419,9 @@ public final class AIOEngine: Sendable {
     let receiverUnderruns = ManagedAtomic<Int64>(0)
     let writerDrops = ManagedAtomic<Int64>(0)
     let receiverDrops = ManagedAtomic<Int64>(0)
+#endif
   }
   private let metrics = EngineMetrics()
-#endif
 
   private enum WriterDrainOutcome: Sendable {
     case signaled
@@ -942,6 +942,7 @@ public final class AIOEngine: Sendable {
     to writer: RecordingFileWriter
   ) {
     let control = WriterControl()
+    let localMetrics = metrics
     let errorHandler: @Sendable (ErrorContext) -> Void = { [weak self] error in
       guard let self else { return }
       Task { @MainActor in
@@ -959,12 +960,13 @@ public final class AIOEngine: Sendable {
       fileURL: writer.fileURL
     )
     writerSession = session
-    writerQueue.async { [control] in
+    writerQueue.async { [control, localMetrics] in
       AIOEngine.writerLoopSync(
         writer: writer,
         format: processingFormat,
         audioBuffers: buffers,
         control: control,
+        metrics: localMetrics,
         shouldCancel: { [control] in
           control.cancelRequested.load(ordering: .relaxed)
         },
@@ -1562,31 +1564,31 @@ public final class AIOEngine: Sendable {
         "Channel count mismatch: \(channelCount, privacy: .public) vs \(audioBuffers.count, privacy: .public)"
       )
     }
-    let frameLength = Int(convertedBuffer.frameLength)
-    let writerAvailable = minimumAvailableWriteFrames(
+    let convertedFrameLength = Int(convertedBuffer.frameLength)
+    let writerAvailable = AIOEngine.minimumAvailableWriteFrames(
       channelCount: effectiveChannelCount,
       audioBuffers: audioBuffers,
-      limit: frameLength
+      limit: convertedFrameLength
     )
-    let writerCanWrite = writerAvailable >= frameLength
+    let writerCanWrite = writerAvailable >= convertedFrameLength
     let receiverCanWrite: Bool
     if let receiverBuffers, let timingBuffer {
       let timingHasCapacity = timingBuffer.availableToWrite >= 1
       receiverCanWrite = timingHasCapacity
-        && minimumAvailableWriteFrames(
+        && AIOEngine.minimumAvailableWriteFrames(
           channelCount: effectiveChannelCount,
           audioBuffers: receiverBuffers,
-          limit: frameLength
-        ) >= frameLength
+          limit: convertedFrameLength
+        ) >= convertedFrameLength
     } else {
       receiverCanWrite = false
     }
 #if DEBUG
     if !writerCanWrite {
-      metrics.writerDrops.wrappingIncrement(by: Int64(frameLength), ordering: .relaxed)
+      metrics.writerDrops.wrappingIncrement(by: Int64(convertedFrameLength), ordering: .relaxed)
     }
     if receiverBuffers != nil, !receiverCanWrite {
-      metrics.receiverDrops.wrappingIncrement(by: Int64(frameLength), ordering: .relaxed)
+      metrics.receiverDrops.wrappingIncrement(by: Int64(convertedFrameLength), ordering: .relaxed)
     }
 #endif
 
@@ -1608,10 +1610,14 @@ public final class AIOEngine: Sendable {
           continue
         }
         if writerCanWrite {
-          audioBuffers[i].write(UnsafeBufferPointer(start: channelData, count: frameLength))
+          audioBuffers[i].write(
+            UnsafeBufferPointer(start: channelData, count: convertedFrameLength)
+          )
         }
         if receiverCanWrite, let receiverBuffers, i < receiverBuffers.count {
-          receiverBuffers[i].write(UnsafeBufferPointer(start: channelData, count: frameLength))
+          receiverBuffers[i].write(
+            UnsafeBufferPointer(start: channelData, count: convertedFrameLength)
+          )
         }
       }
     }
@@ -1619,7 +1625,7 @@ public final class AIOEngine: Sendable {
     if receiverCanWrite, let receiverTimingBuffer = timingBuffer {
       var packet = TimingPacket(
         startSampleTime: processingStartSampleTime,
-        frameCount: frameLength,
+        frameCount: convertedFrameLength,
         hostTime: sourceHostTime,
         sourceSampleTime: sourceSampleTime,
         sourceSampleRate: sourceSampleRate
@@ -1648,9 +1654,13 @@ public final class AIOEngine: Sendable {
     format: AVAudioFormat,
     audioBuffers: [SPSCRingBuffer<Float>],
     control: WriterControl,
+    metrics: EngineMetrics,
     shouldCancel: @escaping @Sendable () -> Bool,
     errorHandler: @escaping @Sendable (ErrorContext) -> Void
   ) {
+#if !DEBUG
+    _ = metrics
+#endif
     let bufferSize = 1024  // Write in chunks
     let clock = ContinuousClock()
     var stopRequestedAt: ContinuousClock.Instant?
@@ -1736,7 +1746,7 @@ public final class AIOEngine: Sendable {
     Task { await control.drainSignal.signal() }
   }
 
-  static func receiverLoopSync(
+  private static func receiverLoopSync(
     buffers: [SPSCRingBuffer<Float>],
     timing: SPSCRingBuffer<TimingPacket>,
     processingFormat: AVAudioFormat,
