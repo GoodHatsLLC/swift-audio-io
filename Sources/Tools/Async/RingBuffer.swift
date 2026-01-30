@@ -1,63 +1,5 @@
 import Atomics
 import Foundation
-import os
-
-private enum RingBufferLog {
-  private static let subsystem: String = {
-    Bundle.main.bundleIdentifier ?? "AIO.Tools"
-  }()
-  static let logger = Logger(subsystem: subsystem, category: "RingBuffer")
-  static let enabled: Bool = {
-#if DEBUG
-    if let value = ProcessInfo.processInfo.environment["RINGBUFFER_LOG"] {
-      return value != "0"
-    }
-    return true
-#else
-    return ProcessInfo.processInfo.environment["RINGBUFFER_LOG"] == "1"
-#endif
-  }()
-  static let verbose: Bool =
-    ProcessInfo.processInfo.environment["RINGBUFFER_LOG_VERBOSE"] == "1"
-  static let countEnabled: Bool =
-    ProcessInfo.processInfo.environment["RINGBUFFER_LOG_COUNT"] == "1"
-  static let waitThresholdNs: UInt64 = {
-    let fallbackMs: UInt64 = 2
-    if let value = ProcessInfo.processInfo.environment["RINGBUFFER_LOG_WAIT_MS"],
-      let parsed = UInt64(value)
-    {
-      return parsed * 1_000_000
-    }
-    return fallbackMs * 1_000_000
-  }()
-  static let holdThresholdNs: UInt64 = {
-    let fallbackMs: UInt64 = 2
-    if let value = ProcessInfo.processInfo.environment["RINGBUFFER_LOG_HOLD_MS"],
-      let parsed = UInt64(value)
-    {
-      return parsed * 1_000_000
-    }
-    return fallbackMs * 1_000_000
-  }()
-
-  @inline(__always)
-  static func nowNs() -> UInt64 {
-    DispatchTime.now().uptimeNanoseconds
-  }
-
-  @inline(__always)
-  static func shouldLog(waitNs: UInt64, holdNs: UInt64) -> Bool {
-    guard enabled else { return false }
-    return verbose || waitNs >= waitThresholdNs || holdNs >= holdThresholdNs
-  }
-
-  @inline(__always)
-  static func log(waitNs: UInt64, holdNs: UInt64, _ message: () -> String) {
-    guard shouldLog(waitNs: waitNs, holdNs: holdNs) else { return }
-    let rendered = message()
-    logger.info("\(rendered, privacy: .public)")
-  }
-}
 
 /// A bounded ring buffer safe for concurrent readers and writers.
 ///
@@ -71,7 +13,6 @@ public final class RingBuffer<T>: @unchecked Sendable {
   private var writeIndex: ManagedAtomic<Int>
   private var readIndex: ManagedAtomic<Int>
   private let lock = NSLock()
-  private var logID: Int { ObjectIdentifier(self).hashValue }
 
   public init(capacity: Int) {
     let adjustedCapacity = Int.nextPowerOfTwo(capacity)
@@ -116,37 +57,24 @@ public final class RingBuffer<T>: @unchecked Sendable {
     let totalToWrite = min(data.count, capacity)
     guard totalToWrite > 0, let sourceBaseAddress = data.baseAddress else { return 0 }
 
-    let lockStart = RingBufferLog.nowNs()
     lock.lock()
-    let lockedAt = RingBufferLog.nowNs()
-    var occupiedBefore = 0
-    var overwrittenCount = 0
-    var availableAfter = 0
-    defer {
-      let unlockAt = RingBufferLog.nowNs()
-      lock.unlock()
-      RingBufferLog.log(waitNs: lockedAt - lockStart, holdNs: unlockAt - lockedAt) {
-        "🔁 RingBuffer[\(logID)] write req=\(totalToWrite) wrote=\(totalToWrite) occupied=\(occupiedBefore) overwritten=\(overwrittenCount) available=\(availableAfter) cap=\(capacity)"
-      }
-    }
+    defer { lock.unlock() }
 
     let currentWrite = writeIndex.load(ordering: .acquiring)
     let currentRead = readIndex.load(ordering: .acquiring)
 
     let newWrite = currentWrite &+ totalToWrite
     let occupied = currentWrite &- currentRead
-    occupiedBefore = occupied
 
     // Calculate new read index if we need to overwrite
     let newRead: Int
     if occupied + totalToWrite > capacity {
       // We need to overwrite, advance read index
-      overwrittenCount = (occupied + totalToWrite) - capacity
+      let overwrittenCount = (occupied + totalToWrite) - capacity
       newRead = currentRead &+ overwrittenCount
     } else {
       newRead = currentRead
     }
-    availableAfter = newWrite &- newRead
 
     // Update indices atomically
     writeIndex.store(newWrite, ordering: .releasing)
@@ -215,27 +143,14 @@ public final class RingBuffer<T>: @unchecked Sendable {
   @discardableResult
   public func read(into destination: UnsafeMutableBufferPointer<T>) -> Int {
     guard let dest = destination.baseAddress else { return 0 }
-    let lockStart = RingBufferLog.nowNs()
     lock.lock()
-    let lockedAt = RingBufferLog.nowNs()
-    var availableBefore = 0
-    var availableAfter = 0
-    var readCount = 0
-    defer {
-      let unlockAt = RingBufferLog.nowNs()
-      lock.unlock()
-      RingBufferLog.log(waitNs: lockedAt - lockStart, holdNs: unlockAt - lockedAt) {
-        "🔁 RingBuffer[\(logID)] read req=\(destination.count) read=\(readCount) available=\(availableBefore) availableAfter=\(availableAfter) cap=\(capacity)"
-      }
-    }
+    defer { lock.unlock() }
 
     let currentRead = readIndex.load(ordering: .acquiring)
     let currentWrite = writeIndex.load(ordering: .acquiring)
     let available = currentWrite &- currentRead
-    availableBefore = available
     let toRead = Swift.min(destination.count, available)
     guard toRead > 0 else { return 0 }
-    readCount = toRead
 
     let readPos = currentRead & capacityMask
     let remainingToEnd = capacity - readPos
@@ -260,27 +175,14 @@ public final class RingBuffer<T>: @unchecked Sendable {
     // Update read index after successful read
     let newRead = currentRead &+ toRead
     readIndex.store(newRead, ordering: .releasing)
-    availableAfter = (currentWrite &- newRead)
 
     return toRead
   }
 
   /// The number of data elements in the ring buffer
   public var count: Int {
-    let lockStart = RingBufferLog.nowNs()
     lock.lock()
-    let lockedAt = RingBufferLog.nowNs()
-    defer {
-      let unlockAt = RingBufferLog.nowNs()
-      lock.unlock()
-      let waitNs = lockedAt - lockStart
-      let holdNs = unlockAt - lockedAt
-      if RingBufferLog.countEnabled || RingBufferLog.shouldLog(waitNs: waitNs, holdNs: holdNs) {
-        RingBufferLog.log(waitNs: waitNs, holdNs: holdNs) {
-          "🔁 RingBuffer[\(logID)] count"
-        }
-      }
-    }
+    defer { lock.unlock() }
 
     let currentWrite = writeIndex.load(ordering: .acquiring)
     let currentRead = readIndex.load(ordering: .acquiring)
@@ -289,16 +191,8 @@ public final class RingBuffer<T>: @unchecked Sendable {
 
   /// Clear the ring buffer's indices without resetting values
   public func clearIndices() {
-    let lockStart = RingBufferLog.nowNs()
     lock.lock()
-    let lockedAt = RingBufferLog.nowNs()
-    defer {
-      let unlockAt = RingBufferLog.nowNs()
-      lock.unlock()
-      RingBufferLog.log(waitNs: lockedAt - lockStart, holdNs: unlockAt - lockedAt) {
-        "🔁 RingBuffer[\(logID)] clearIndices"
-      }
-    }
+    defer { lock.unlock() }
 
     writeIndex.store(0, ordering: .releasing)
     readIndex.store(0, ordering: .releasing)
