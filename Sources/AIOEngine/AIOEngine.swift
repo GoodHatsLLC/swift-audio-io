@@ -512,7 +512,12 @@ public final class AIOEngine: Sendable {
   @MainActor public var reconciliationConfiguration: ReconciliationConfiguration = .default
 
   /// Preferred audio session category/mode/options for this engine.
-  @MainActor public var sessionConfiguration: AudioSessionConfiguration = .recorderDefault
+  @MainActor public var recordingSessionConfiguration: AudioSessionConfiguration = .recorderDefault
+  @MainActor public var playbackSessionConfiguration: AudioSessionConfiguration = .playbackDefault
+  @MainActor public var sessionConfiguration: AudioSessionConfiguration {
+    get { recordingSessionConfiguration }
+    set { recordingSessionConfiguration = newValue }
+  }
   /// Backend used for audio file writing.
   @MainActor private var writerBackend: WriterBackend = .extAudioFile
   /// Whether the engine should deactivate the audio session when it becomes idle.
@@ -2505,7 +2510,7 @@ public final class AIOEngine: Sendable {
   private func configureAudioSession(for configuration: RecordingConfiguration) throws(AIOError) {
     let session = AVAudioSession.sharedInstance()
 
-    try applyAudioSessionConfiguration(session)
+    try applyAudioSessionConfiguration(session, configuration: recordingSessionConfiguration)
 
     // Set preferred sample rate
     do {
@@ -2552,7 +2557,7 @@ public final class AIOEngine: Sendable {
   @MainActor
   private func configureAudioSessionForPlayback() throws(AIOError) {
     let session = AVAudioSession.sharedInstance()
-    try applyAudioSessionConfiguration(session)
+    try applyAudioSessionConfiguration(session, configuration: playbackSessionConfiguration)
     do {
       try session.setActive(true)
     } catch {
@@ -2561,8 +2566,10 @@ public final class AIOEngine: Sendable {
   }
 
   @MainActor
-  private func applyAudioSessionConfiguration(_ session: AVAudioSession) throws(AIOError) {
-    let configuration = sessionConfiguration
+  private func applyAudioSessionConfiguration(
+    _ session: AVAudioSession,
+    configuration: AudioSessionConfiguration
+  ) throws(AIOError) {
 
     if session.category != configuration.category
       || session.mode != configuration.mode
