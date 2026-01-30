@@ -7,6 +7,12 @@ import Foundation
 import SystemLog
 import Tools
 
+#if os(iOS)
+private typealias OutputFileProtection = FileProtectionType
+#else
+private typealias OutputFileProtection = Never
+#endif
+
 /// The core audio recording and playback engine.
 ///
 /// `AIOEngine` provides a high-level interface for capturing and playing back audio, built on top of `AVFoundation`.
@@ -838,16 +844,15 @@ public final class AIOEngine: Sendable {
       // Configure audio session
       try configureAudioSession(for: configuration)
 
-      let url = FileManager.default.temporaryDirectory.appendingPathComponent(
-        Self.generateRecordingFilename(
-          extension: configuration.fileExtension
-        ),
-        conformingTo: configuration.outputConfiguration.fileFormat.utType
+      let (url, protection) = try resolveOutputURL(
+        for: configuration,
+        allowExplicitFile: true
       )
 
       let file: AVAudioFile
       do {
         file = try AVAudioFile(forWriting: url, settings: fileSettings)
+        applyFileProtectionIfNeeded(protection, to: url)
       } catch {
         throw AIOError.audioFileFailed(
           operation: .openForWriting, url: url, error: ErrorContext(error))
@@ -1351,13 +1356,14 @@ public final class AIOEngine: Sendable {
     }
 
     // Create new file with fresh filename
-    let newURL = FileManager.default.temporaryDirectory.appendingPathComponent(
-      Self.generateRecordingFilename(extension: configuration.fileExtension),
-      conformingTo: configuration.outputConfiguration.fileFormat.utType
+    let (newURL, protection) = try resolveOutputURL(
+      for: configuration,
+      allowExplicitFile: false
     )
     let newFile: AVAudioFile
     do {
       newFile = try AVAudioFile(forWriting: newURL, settings: fileSettings)
+      applyFileProtectionIfNeeded(protection, to: newURL)
     } catch {
       throw AIOError.audioFileFailed(
         operation: .openForWriting, url: newURL, error: ErrorContext(error))
@@ -2482,6 +2488,122 @@ extension AIOEngine: BufferEmitter {
         $0.endBufferTask()
       }
     }
+  }
+
+  @MainActor
+  private func resolveOutputURL(
+    for configuration: RecordingConfiguration,
+    allowExplicitFile: Bool
+  ) throws(AIOError) -> (url: URL, protection: OutputFileProtection?) {
+    let filename = Self.generateRecordingFilename(extension: configuration.fileExtension)
+#if os(iOS)
+    switch configuration.outputDestination {
+    case .temporary:
+      return (
+        FileManager.default.temporaryDirectory.appendingPathComponent(filename, isDirectory: false),
+        nil
+      )
+    case .directory(let directory, let protection):
+      do {
+        try FileManager.default.createDirectory(
+          at: directory,
+          withIntermediateDirectories: true
+        )
+      } catch {
+        throw AIOError.audioFileFailed(
+          operation: .openForWriting, url: directory, error: ErrorContext(error)
+        )
+      }
+      applyFileProtectionIfNeeded(protection, to: directory)
+      return (
+        directory.appendingPathComponent(filename, isDirectory: false),
+        protection
+      )
+    case .fileURL(let fileURL, let protection):
+      guard allowExplicitFile else {
+        throw AIOError.invalidRecordingConfiguration(
+          details: "Output destination does not support rotation"
+        )
+      }
+      let parent = fileURL.deletingLastPathComponent()
+      do {
+        try FileManager.default.createDirectory(
+          at: parent,
+          withIntermediateDirectories: true
+        )
+      } catch {
+        throw AIOError.audioFileFailed(
+          operation: .openForWriting, url: parent, error: ErrorContext(error)
+        )
+      }
+      applyFileProtectionIfNeeded(protection, to: parent)
+      return (fileURL, protection)
+    }
+#else
+    switch configuration.outputDestination {
+    case .temporary:
+      return (
+        FileManager.default.temporaryDirectory.appendingPathComponent(filename, isDirectory: false),
+        nil
+      )
+    case .directory(let directory):
+      do {
+        try FileManager.default.createDirectory(
+          at: directory,
+          withIntermediateDirectories: true
+        )
+      } catch {
+        throw AIOError.audioFileFailed(
+          operation: .openForWriting, url: directory, error: ErrorContext(error)
+        )
+      }
+      return (
+        directory.appendingPathComponent(filename, isDirectory: false),
+        nil
+      )
+    case .fileURL(let fileURL):
+      guard allowExplicitFile else {
+        throw AIOError.invalidRecordingConfiguration(
+          details: "Output destination does not support rotation"
+        )
+      }
+      let parent = fileURL.deletingLastPathComponent()
+      do {
+        try FileManager.default.createDirectory(
+          at: parent,
+          withIntermediateDirectories: true
+        )
+      } catch {
+        throw AIOError.audioFileFailed(
+          operation: .openForWriting, url: parent, error: ErrorContext(error)
+        )
+      }
+      return (fileURL, nil)
+    }
+#endif
+  }
+
+  @MainActor
+  private func applyFileProtectionIfNeeded(
+    _ protection: OutputFileProtection?,
+    to url: URL
+  ) {
+#if os(iOS)
+    guard let protection else { return }
+    do {
+      try FileManager.default.setAttributes(
+        [.protectionKey: protection],
+        ofItemAtPath: url.path
+      )
+    } catch {
+      log.error(
+        "🔒 Failed to apply file protection to \(url.path, privacy: .public): \(error, privacy: .public)"
+      )
+    }
+#else
+    _ = protection
+    _ = url
+#endif
   }
 
   // MARK: - Filename Generation
