@@ -6,8 +6,8 @@ import SystemLog
 /// - View layer may access a concrete `ErrorManager` via SwiftUI environment.
 /// - Business logic should depend on `any ErrorManaging` (injected), not `ErrorManager` directly.
 public protocol ErrorManaging: Sendable {
-  @MainActor
-  func enqueue(
+  
+  nonisolated func enqueue(
     _ error: any Error,
     visibility: ErrorManager.ErrorEvent.Visibility,
     userMessage: String?,
@@ -23,8 +23,8 @@ public protocol ErrorManaging: Sendable {
 }
 
 extension ErrorManaging {
-  @MainActor
-  public func enqueue(
+
+  public nonisolated func enqueue(
     _ error: any Error,
     visibility: ErrorManager.ErrorEvent.Visibility = .userInterrupting,
     userMessage: String? = nil,
@@ -79,8 +79,7 @@ public struct AnyErrorManager: ErrorManaging {
     self.base = base
   }
 
-  @MainActor
-  public func enqueue(
+  public nonisolated func enqueue(
     _ error: any Error,
     visibility: ErrorManager.ErrorEvent.Visibility,
     userMessage: String?,
@@ -106,8 +105,7 @@ public struct AnyErrorManager: ErrorManaging {
 }
 
 extension ErrorManager {
-  @MainActor
-  public func enqueue(
+  public nonisolated func enqueue(
     _ error: any Error,
     visibility: ErrorEvent.Visibility,
     userMessage: String?,
@@ -140,23 +138,24 @@ extension ErrorManager: ErrorManaging {}
     @MainActor
     public private(set) var events: [ErrorManager.ErrorEvent] = []
 
-    @MainActor
-    public func enqueue(
+    public nonisolated func enqueue(
       _ error: any Error,
       visibility: ErrorManager.ErrorEvent.Visibility,
       userMessage: String?,
       context: String?,
       source: SourceLocation
     ) {
-      events.append(
-        ErrorManager.ErrorEvent(
-          error: error,
-          visibility: visibility,
-          userMessage: userMessage,
-          context: context,
-          source: source
+      Task { @MainActor in
+        events.append(
+          ErrorManager.ErrorEvent(
+            error: error,
+            visibility: visibility,
+            userMessage: userMessage,
+            context: context,
+            source: source
+          )
         )
-      )
+      }
     }
 
     @MainActor
