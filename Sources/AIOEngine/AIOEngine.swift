@@ -1516,8 +1516,8 @@ public final class AIOEngine: Sendable {
     guard let converter,
       let converterInputFormat,
       let converterOutputFormat,
-      converterInputFormat.isEqual(buffer.format),
-      converterOutputFormat.isEqual(processingFormat)
+      formatsCompatible(converterInputFormat, buffer.format),
+      formatsCompatible(converterOutputFormat, processingFormat)
     else {
       recordTapError(.converterMissing)
       return
@@ -1647,6 +1647,16 @@ public final class AIOEngine: Sendable {
       metrics.tapCallbackMaxNanos.store(tapElapsed, ordering: .relaxed)
     }
 #endif
+  }
+
+  private nonisolated func formatsCompatible(
+    _ lhs: AVAudioFormat,
+    _ rhs: AVAudioFormat
+  ) -> Bool {
+    lhs.commonFormat == rhs.commonFormat
+      && lhs.sampleRate == rhs.sampleRate
+      && lhs.channelCount == rhs.channelCount
+      && lhs.isInterleaved == rhs.isInterleaved
   }
 
   private static func writerLoopSync(
