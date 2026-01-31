@@ -61,8 +61,8 @@ public final class ErrorManager: Sendable {
       nil
     }
   }
-  @MainActor
-  public func enqueue(
+  
+  public nonisolated func enqueue(
     _ error: any Error,
     visibility: ErrorEvent.Visibility = .userInterrupting,
     userMessage: String? = nil,
@@ -80,15 +80,17 @@ public final class ErrorManager: Sendable {
       \("[\(source.file):\(source.function):\(source.line)]", privacy: .public)
       """
     )
-    errors.append(
-      ErrorEvent(
-        error: error,
-        visibility: visibility,
-        userMessage: userMessage,
-        context: context,
-        source: source
+    Task { @MainActor in
+      errors.append(
+        ErrorEvent(
+          error: error,
+          visibility: visibility,
+          userMessage: userMessage,
+          context: context,
+          source: source
+        )
       )
-    )
+    }
   }
 
   public func reporter(
