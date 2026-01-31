@@ -587,22 +587,20 @@ extension OSLogStream {
       switch self {
       case .any: NSPredicate.init(value: true)
       case .levelFloor(let minLevel):
-        if let v = minLevel.nativeIntValue {
-          NSPredicate(format: "level >= %d", v)
-        } else {
-          NSPredicate(value: true)
-        }
+        // OSLogStore doesn't support filtering by "level" in predicates.
+        // Keep predicate permissive and rely on in-memory Filter.matches.
+        _ = minLevel
+        NSPredicate(value: true)
       case .text(let text):
         NSPredicate(
           format: "composedMessage CONTAINS[c] %@",
           text
         )
       case .level(let floor):
-        if let v = floor.nativeIntValue {
-          NSPredicate(format: "level == %d", v)
-        } else {
-          NSPredicate(value: true)
-        }
+        // OSLogStore doesn't support filtering by "level" in predicates.
+        // Keep predicate permissive and rely on in-memory Filter.matches.
+        _ = floor
+        NSPredicate(value: true)
       case .category(let category):
         NSPredicate(
           format: "category == %@",
