@@ -2474,6 +2474,9 @@ public final class AIOEngine: Sendable {
       self.player.stop()
       self.engine.stop()
       self.engine.reset()
+      if self.engine.attachedNodes.contains(self.player) == false {
+        self.engine.attach(self.player)
+      }
     }
   }
 
