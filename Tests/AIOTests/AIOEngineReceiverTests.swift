@@ -84,12 +84,12 @@
       let size = try #require(url.resourceValues(forKeys: [.fileSizeKey]).fileSize)
       #expect(size > 0)
 
-#if DEBUG
-      let metrics = engine.debugMetricsSnapshot()
-      #expect(metrics.receiverUnderruns == 0)
-      #expect(metrics.receiverDrops == 0)
-      #expect(metrics.writerDrops == 0)
-#endif
+      #if DEBUG
+        let metrics = engine.debugMetricsSnapshot()
+        #expect(metrics.receiverUnderruns == 0)
+        #expect(metrics.receiverDrops == 0)
+        #expect(metrics.writerDrops == 0)
+      #endif
 
       _ = try await engine.stopRecording()
     }

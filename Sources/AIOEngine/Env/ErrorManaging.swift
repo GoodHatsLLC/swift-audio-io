@@ -6,7 +6,7 @@ import SystemLog
 /// - View layer may access a concrete `ErrorManager` via SwiftUI environment.
 /// - Business logic should depend on `any ErrorManaging` (injected), not `ErrorManager` directly.
 public protocol ErrorManaging: Sendable {
-  
+
   nonisolated func enqueue(
     _ error: any Error,
     visibility: ErrorManager.ErrorEvent.Visibility,

@@ -13,9 +13,9 @@ public final class RingBuffer<T>: @unchecked Sendable {
   private var writeIndex: ManagedAtomic<Int>
   private var readIndex: ManagedAtomic<Int>
   private let lock = NSLock()
-#if DEBUG
-  private let overwriteCount = ManagedAtomic<Int64>(0)
-#endif
+  #if DEBUG
+    private let overwriteCount = ManagedAtomic<Int64>(0)
+  #endif
 
   public init(capacity: Int) {
     let adjustedCapacity = Int.nextPowerOfTwo(capacity)
@@ -74,9 +74,9 @@ public final class RingBuffer<T>: @unchecked Sendable {
     if occupied + totalToWrite > capacity {
       // We need to overwrite, advance read index
       let overwrittenCount = (occupied + totalToWrite) - capacity
-#if DEBUG
-      overwriteCount.wrappingIncrement(by: Int64(overwrittenCount), ordering: .relaxed)
-#endif
+      #if DEBUG
+        overwriteCount.wrappingIncrement(by: Int64(overwrittenCount), ordering: .relaxed)
+      #endif
       newRead = currentRead &+ overwrittenCount
     } else {
       newRead = currentRead
@@ -195,11 +195,11 @@ public final class RingBuffer<T>: @unchecked Sendable {
     return currentWrite &- currentRead
   }
 
-#if DEBUG
-  public var debugOverwriteCount: Int64 {
-    overwriteCount.load(ordering: .relaxed)
-  }
-#endif
+  #if DEBUG
+    public var debugOverwriteCount: Int64 {
+      overwriteCount.load(ordering: .relaxed)
+    }
+  #endif
 
   /// Clear the ring buffer's indices without resetting values
   public func clearIndices() {

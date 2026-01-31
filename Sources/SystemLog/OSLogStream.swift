@@ -647,7 +647,8 @@ extension OSLogStream {
       case .levelFloor(let minLevel):
         guard entry.type == .log else { return true }
         guard let entry = entry.level.nativeIntValue,
-              let minLevel = minLevel.nativeIntValue else {
+          let minLevel = minLevel.nativeIntValue
+        else {
           return true
         }
         return entry >= minLevel

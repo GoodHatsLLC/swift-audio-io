@@ -657,7 +657,8 @@
       if let analysisWork = work.analysis {
         let wantsBeat = analysisWork.beatDetection != nil && sinks.beat != nil
         let wantsTimeOutput = analysisWork.timeDomain != nil && sinks.timeDomain != nil
-        let wantsFrequencyOutput = analysisWork.frequencyDomain != nil && sinks.frequencyDomain != nil
+        let wantsFrequencyOutput =
+          analysisWork.frequencyDomain != nil && sinks.frequencyDomain != nil
 
         let wantsTimeAnalysis = wantsTimeOutput || wantsBeat
         if analysisWork.timeDomain != nil || analysisWork.beatDetection != nil {
@@ -689,7 +690,8 @@
 
       analysisFlagsAtomic.store(flags.rawValue, ordering: .relaxed)
       analysisEnabledAtomic.store(!flags.isEmpty, ordering: .relaxed)
-      analysisUpdateRateHz = flags.isEmpty
+      analysisUpdateRateHz =
+        flags.isEmpty
         ? nil
         : (work.analysis?.updateRateHz ?? configuration.updateRateHz)
 
@@ -698,7 +700,9 @@
       updateLodPublishTimerIfNeeded()
     }
 
-    private func normalizedLODConfig(_ config: MultiBandLODConfiguration) -> MultiBandLODConfiguration {
+    private func normalizedLODConfig(_ config: MultiBandLODConfiguration)
+      -> MultiBandLODConfiguration
+    {
       let sampleRate = max(Int(configuration.sampleRate.rounded()), 1)
       return MultiBandLODConfiguration(
         bandCount: config.bandCount,
@@ -761,7 +765,8 @@
 
       var resolvedBeatDetection: BeatDetectionConfiguration?
       if flags.contains(.beat) {
-        resolvedBeatDetection = analysisWork?.beatDetection ?? configuration.beatDetectionConfiguration
+        resolvedBeatDetection =
+          analysisWork?.beatDetection ?? configuration.beatDetectionConfiguration
       }
 
       let newConfig = AnalysisConfig(
@@ -857,7 +862,7 @@
       let audioChunk = Array(pipeline.readScratchBuffer.prefix(readCount))
 
       var amplitudeResult: AmplitudeData?
-      if (flags.contains(.timeDomain) || flags.contains(.beat)),
+      if flags.contains(.timeDomain) || flags.contains(.beat),
         let amplitudeAnalyzer = pipeline.amplitudeAnalyzer
       {
         amplitudeResult = amplitudeAnalyzer.processAmplitudeData(audioChunk)
