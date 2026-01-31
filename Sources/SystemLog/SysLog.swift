@@ -17,21 +17,21 @@ public typealias SystemLogger = OSLog.Logger
 extension SystemLogger {
   @_spi(SysLog) public static func make(
     file: StaticString = #file,
-    subsystem: String? = nil,
-    category: String = Bundle.main.bundleIdentifier ?? "none.bundle"
+    subsystem: String = Bundle.main.bundleIdentifier ?? "none.bundle",
+    category: String? = nil
   )
     -> SystemLogger
   {
     SystemLogger(
-      subsystem: { () -> String in
-        subsystem
+      subsystem: subsystem,
+      category: { () -> String in
+        category
           ?? ("\(file)"
           .split(separator: ".", maxSplits: 1, omittingEmptySubsequences: true).first?
           .split(separator: "/", maxSplits: 1, omittingEmptySubsequences: true).last).flatMap(
             String.init)
           ?? "\(file)"
-      }(),
-      category: category
+      }()
     )
   }
 
@@ -264,8 +264,8 @@ extension Reporter where E == any Error {
 private let logger = SystemLog.make()
 public enum SystemLog {
   public static func make(
-    file: StaticString = #file, category: String = Bundle.main.bundleIdentifier ?? "none.bundle",
-    subsystem: String? = nil
+    file: StaticString = #file, subsystem: String = Bundle.main.bundleIdentifier ?? "none.bundle",
+    category: String? = nil
   ) -> SystemLogger {
     Logger.make(
       file: file,
@@ -1145,7 +1145,7 @@ public enum SystemLog {
     @State private var filters: FilterSheet.Filters = {
       var filters = FilterSheet.Filters()
       if let bundleId = Bundle.main.bundleIdentifier {
-        filters.categories = [bundleId]
+        filters.subsystems = [bundleId]
       }
       return filters
     }()
