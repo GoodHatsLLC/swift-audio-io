@@ -688,7 +688,7 @@ public enum SystemLog {
     }
 
     private var levelOptions: [OSLogStream.LogEntry.LogLevel] {
-      OSLogStream.LogEntry.LogLevel.allCases.filter { $0 != .unknown }
+      OSLogStream.LogEntry.LogLevel.allCases
     }
 
     private var categoryOptions: [String] {
@@ -1964,8 +1964,6 @@ extension OSLogStream.LogEntry.LogLevel {
       .fault
     case .undefined:
       .undefined
-    case .unknown:
-      .unknown
     }
   }
 }

@@ -587,14 +587,22 @@ extension OSLogStream {
       switch self {
       case .any: NSPredicate.init(value: true)
       case .levelFloor(let minLevel):
-        NSPredicate(format: "level >= %d", minLevel.nativeIntValue)
+        if let v = minLevel.nativeIntValue {
+          NSPredicate(format: "level >= %d", v)
+        } else {
+          NSPredicate(value: true)
+        }
       case .text(let text):
         NSPredicate(
           format: "composedMessage CONTAINS[c] %@",
           text
         )
       case .level(let floor):
-        NSPredicate(format: "level == %d", floor.nativeIntValue)
+        if let v = floor.nativeIntValue {
+          NSPredicate(format: "level == %d", v)
+        } else {
+          NSPredicate(value: true)
+        }
       case .category(let category):
         NSPredicate(
           format: "category == %@",
@@ -642,7 +650,11 @@ extension OSLogStream {
         return entry.category == category
       case .levelFloor(let minLevel):
         guard entry.type == .log else { return true }
-        return entry.level.nativeIntValue >= minLevel.nativeIntValue
+        guard let entry = entry.level.nativeIntValue,
+              let minLevel = minLevel.nativeIntValue else {
+          return true
+        }
+        return entry >= minLevel
       case .level(let level):
         guard entry.type == .log else { return true }
         return entry.level == level
@@ -660,11 +672,21 @@ extension OSLogStream {
 
   public struct LogEntry: Identifiable, Hashable, Sendable, Codable {
     public init(
-      type: EntryType, level: LogLevel, activityIdentifier: UInt64? = nil, category: String? = nil,
-      composedMessage: String, date: Date, parentActivityIdentifier: UInt64? = nil,
-      process: String? = nil, processIdentifier: Int32? = nil, sender: String? = nil,
-      signpostIdentifier: UInt64? = nil, signpostName: String? = nil,
-      signpostType: SignpostType? = nil, storeCategory: StoreCategory, subsystem: String? = nil,
+      type: EntryType,
+      level: LogLevel,
+      activityIdentifier: UInt64? = nil,
+      category: String? = nil,
+      composedMessage: String,
+      date: Date,
+      parentActivityIdentifier: UInt64? = nil,
+      process: String? = nil,
+      processIdentifier: Int32? = nil,
+      sender: String? = nil,
+      signpostIdentifier: UInt64? = nil,
+      signpostName: String? = nil,
+      signpostType: SignpostType? = nil,
+      storeCategory: StoreCategory,
+      subsystem: String? = nil,
       threadIdentifier: UInt64? = nil
     ) {
       self.type = type
@@ -866,12 +888,11 @@ extension OSLogStream {
         case 3: self = .notice
         case 4: self = .error
         case 5: self = .fault
-        default: self = .unknown
+        default: return nil
         }
       }
-      public var nativeIntValue: Int {
+      public var nativeIntValue: Int? {
         switch self {
-        case .unknown: -1
         case .undefined: 0
         case .debug: 1
         case .info: 2
@@ -895,8 +916,6 @@ extension OSLogStream {
           return "Error"
         case .fault:
           return "Fault"
-        case .unknown:
-          return "Unknown"
         }
       }
       var color: Color {
@@ -913,26 +932,22 @@ extension OSLogStream {
           return .orange
         case .fault:
           return .red
-        case .unknown:
-          return .clear
         }
       }
       var sfSymbol: String {
         switch self {
         case .undefined:
-          return "exclamationmark"
+          return "questionmark.app.dashed"
         case .debug:
           return "stethoscope"
         case .info:
-          return "info"
+          return "info.circle.fill"
         case .notice:
           return "bell.fill"
         case .error:
-          return "exclamationmark.2"
+          return "exclamationmark.circle.fill"
         case .fault:
-          return "exclamationmark.3"
-        case .unknown:
-          return "questionmark"
+          return "exclamationmark.triangle.fill"
         }
       }
       static var range: ClosedRange<Int> { 0...5 }
@@ -956,7 +971,6 @@ extension OSLogStream {
       case error
       case fault
       case undefined
-      case unknown
     }
 
     public enum StoreCategory: String, Sendable, Codable {
