@@ -2661,7 +2661,9 @@ public final class AIOEngine: Sendable {
   @MainActor
   private func configureAudioSessionForPlayback() throws(AIOError) {
     let session = AVAudioSession.sharedInstance()
-    try applyAudioSessionConfiguration(session, configuration: playbackSessionConfiguration)
+    // Don't change the audio session category for playback.
+    // The existing .playAndRecord category already supports playback,
+    // and switching categories can fail and break playback.
     do {
       try session.setActive(true)
     } catch {
