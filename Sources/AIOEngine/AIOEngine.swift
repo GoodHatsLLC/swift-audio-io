@@ -2706,6 +2706,14 @@ public final class AIOEngine: Sendable {
       return
     }
     let previousFormat = state.lastInputFormat ?? initialFormat
+    let (cachedInputFormat, cachedOutputFormat) = state.withLock { state in
+      (state.tapConverterInputFormat, state.tapConverterOutputFormat)
+    }
+    let shouldReconfigureTap: Bool = {
+      guard let cachedInputFormat, let cachedOutputFormat else { return true }
+      return !(cachedInputFormat.isEqual(newInputFormat)
+        && cachedOutputFormat.isEqual(processingFormat))
+    }()
 
     // Check if we can continue recording
     let canContinue = canContinueRecording(
@@ -2718,10 +2726,14 @@ public final class AIOEngine: Sendable {
     if canContinue {
       // Attempt to continue recording with the new route
       do {
-        try reconfigureTapForNewRoute(
-          newInputFormat: newInputFormat,
-          processingFormat: processingFormat
-        )
+        if shouldReconfigureTap {
+          try reconfigureTapForNewRoute(
+            newInputFormat: newInputFormat,
+            processingFormat: processingFormat
+          )
+        } else {
+          log.info("Skipping tap reconfigure; format unchanged")
+        }
 
         // Notify about quality change if channels or sample rate differ
         let qualityChange = createQualityChange(
