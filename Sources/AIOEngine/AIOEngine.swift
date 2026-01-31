@@ -410,6 +410,7 @@ public final class AIOEngine: Sendable {
   private let receiverPollingInterval: Duration = .milliseconds(20)
   private let maxBufferSeconds: Double = 2.0
   private let tapErrorCode = ManagedAtomic<Int>(0)
+  private let tapResizeRequestedFrames = ManagedAtomic<Int>(0)
   private struct EngineMetrics: Sendable {
 #if DEBUG
     let tapCallbackCount = ManagedAtomic<Int64>(0)
@@ -490,11 +491,29 @@ public final class AIOEngine: Sendable {
     tapErrorCode.store(code.rawValue, ordering: .relaxed)
   }
 
+  private nonisolated func requestTapResize(frames: Int) {
+    guard frames > 0 else { return }
+    var current = tapResizeRequestedFrames.load(ordering: .relaxed)
+    while frames > current {
+      let result = tapResizeRequestedFrames.compareExchange(
+        expected: current,
+        desired: frames,
+        ordering: .acquiringAndReleasing
+      )
+      if result.exchanged { break }
+      current = result.original
+    }
+  }
+
   private nonisolated func consumeTapError() -> TapErrorCode? {
     let raw = tapErrorCode.load(ordering: .relaxed)
     guard raw != 0, let code = TapErrorCode(rawValue: raw) else { return nil }
     tapErrorCode.store(0, ordering: .relaxed)
     return code
+  }
+
+  private nonisolated func consumeTapResizeRequest() -> Int {
+    tapResizeRequestedFrames.exchange(0, ordering: .acquiringAndReleasing)
   }
 
   /// A Boolean value that indicates whether the engine is currently recording.
@@ -953,6 +972,7 @@ public final class AIOEngine: Sendable {
       case .converterMissing, .bufferTooSmall, .conversionFailed:
         error = .formatConversionFailed
       }
+      self.resizeTapConvertedBufferIfNeeded()
       let description: String = {
         switch code {
         case .converterMissing: return "converterMissing"
@@ -1035,6 +1055,7 @@ public final class AIOEngine: Sendable {
       case .converterMissing, .bufferTooSmall, .conversionFailed:
         error = .formatConversionFailed
       }
+      self.resizeTapConvertedBufferIfNeeded()
       let description: String = {
         switch code {
         case .converterMissing: return "converterMissing"
@@ -1567,6 +1588,7 @@ public final class AIOEngine: Sendable {
       return
     }
     guard convertedBuffer.frameCapacity >= requestedCapacity else {
+      requestTapResize(frames: Int(requestedCapacity))
       recordTapError(.bufferTooSmall)
       return
     }
@@ -1687,6 +1709,33 @@ public final class AIOEngine: Sendable {
       && lhs.sampleRate == rhs.sampleRate
       && lhs.channelCount == rhs.channelCount
       && lhs.isInterleaved == rhs.isInterleaved
+  }
+
+  private func resizeTapConvertedBufferIfNeeded() {
+    let requested = consumeTapResizeRequest()
+    guard requested > 0 else { return }
+    let (existingCapacity, processingFormat) = state.withLock { state in
+      (state.tapConvertedBuffer?.frameCapacity, state.tapConverterOutputFormat)
+    }
+    guard let processingFormat else { return }
+    let current = Int(existingCapacity ?? 0)
+    guard requested > current else { return }
+    let targetCapacity = AVAudioFrameCount(requested)
+    guard let buffer = AVAudioPCMBuffer(
+      pcmFormat: processingFormat,
+      frameCapacity: targetCapacity
+    ) else {
+      log.error(
+        "Failed to resize tap buffer to \(requested, privacy: .public) frames"
+      )
+      return
+    }
+    state.withLock { state in
+      state.tapConvertedBuffer = buffer
+    }
+    log.warning(
+      "Resized tap buffer to \(requested, privacy: .public) frames"
+    )
   }
 
   private static func writerLoopSync(
