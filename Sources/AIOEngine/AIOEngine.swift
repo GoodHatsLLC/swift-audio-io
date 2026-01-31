@@ -2270,11 +2270,13 @@ public final class AIOEngine: Sendable {
     state.playbackInstance = playbackInstance
     await withEngineControlQueue { [weak self] in
       guard let self else { return }
-      // Connect the player node to the output node.
+      // Connect the player node through the main mixer for automatic format conversion.
       // Note: player is already attached in init(), we only need to connect it.
+      // Connecting directly to outputNode can raise an uncatchable NSException on iOS 26.x
+      // when the file's processingFormat doesn't match the hardware output format.
       self.engine.connect(
         self.player,
-        to: self.engine.outputNode,
+        to: self.engine.mainMixerNode,
         format: file.processingFormat
       )
       self.player
@@ -2373,7 +2375,7 @@ public final class AIOEngine: Sendable {
       guard let self else { return }
       self.engine.connect(
         self.player,
-        to: self.engine.outputNode,
+        to: self.engine.mainMixerNode,
         format: file.processingFormat
       )
       self.player.scheduleSegment(
