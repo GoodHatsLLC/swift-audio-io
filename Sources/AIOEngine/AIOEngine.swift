@@ -575,6 +575,11 @@ public final class AIOEngine: Sendable {
   @MainActor public var defaultPlaybackPollingInterval: Duration = .seconds(0.5)
   /// Called when the playback item or playback state changes (play/pause/stop), excluding time ticks.
   @MainActor public var onPlaybackStateChanged: (@Sendable @MainActor (Playback?) -> Void)?
+  /// Called on every playback update including time ticks.
+  ///
+  /// Use this to mirror playback state into a local `@Observable` stored property
+  /// so that SwiftUI observation reliably fires for downstream views.
+  @MainActor public var onPlaybackUpdated: (@Sendable @MainActor (Playback?) -> Void)?
   @MainActor private var lastPlaybackStateSignature: PlaybackStateSignature?
   /// A Boolean value that indicates whether the engine is currently playing back audio.
   @MainActor public var isPlayback: Bool {
@@ -662,6 +667,7 @@ public final class AIOEngine: Sendable {
       lastPlaybackStateSignature = newSignature
       onPlaybackStateChanged?(playback)
     }
+    onPlaybackUpdated?(playback)
   }
 
   private func getPlayback() -> Playback? {
@@ -913,6 +919,7 @@ public final class AIOEngine: Sendable {
         if shouldClearPlayback {
           placeState(\.playbackInstance, nil)
           playback = nil
+          onPlaybackUpdated?(nil)
         }
         lastWriteFailure = nil
         lastRecordingConfiguration = configuration
@@ -2570,6 +2577,7 @@ public final class AIOEngine: Sendable {
     scrubTask = nil
     placeState(\.playbackInstance, nil)
     playback = nil
+    onPlaybackUpdated?(nil)
     deactivateAudioSessionIfNeeded(reason: "playback stopped")
   }
 
