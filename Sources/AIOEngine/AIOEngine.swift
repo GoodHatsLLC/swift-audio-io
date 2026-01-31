@@ -3374,6 +3374,28 @@ extension AIOEngine: BufferEmitter {
 #if DEBUG
 @_spi(TESTING)
 extension AIOEngine {
+  public struct EngineMetricsSnapshot: Sendable {
+    public let tapCallbackCount: Int64
+    public let tapCallbackMaxNanos: UInt64
+    public let writerUnderruns: Int64
+    public let writerStallCount: Int64
+    public let receiverUnderruns: Int64
+    public let writerDrops: Int64
+    public let receiverDrops: Int64
+  }
+
+  public nonisolated func debugMetricsSnapshot() -> EngineMetricsSnapshot {
+    EngineMetricsSnapshot(
+      tapCallbackCount: metrics.tapCallbackCount.load(ordering: .relaxed),
+      tapCallbackMaxNanos: metrics.tapCallbackMaxNanos.load(ordering: .relaxed),
+      writerUnderruns: metrics.writerUnderruns.load(ordering: .relaxed),
+      writerStallCount: metrics.writerStallCount.load(ordering: .relaxed),
+      receiverUnderruns: metrics.receiverUnderruns.load(ordering: .relaxed),
+      writerDrops: metrics.writerDrops.load(ordering: .relaxed),
+      receiverDrops: metrics.receiverDrops.load(ordering: .relaxed)
+    )
+  }
+
   /// Starts a recording session without touching AVAudioSession or AVAudioEngine.
   /// Intended for integration tests that inject buffers directly.
   @MainActor
