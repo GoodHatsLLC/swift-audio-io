@@ -1682,7 +1682,7 @@ public final class AIOEngine: Sendable {
         sourceSampleTime: sourceSampleTime,
         sourceSampleRate: sourceSampleRate
       )
-      withUnsafePointer(to: &packet) { pointer in
+      _ = withUnsafePointer(to: &packet) { pointer in
         receiverTimingBuffer.write(UnsafeBufferPointer(start: pointer, count: 1))
       }
     }
@@ -3647,7 +3647,7 @@ extension AIOEngine {
         sourceSampleTime: sourceSampleTime,
         sourceSampleRate: sourceSampleRate
       )
-      withUnsafePointer(to: &packet) { pointer in
+      _ = withUnsafePointer(to: &packet) { pointer in
         timingBuffer.write(UnsafeBufferPointer(start: pointer, count: 1))
       }
     }
