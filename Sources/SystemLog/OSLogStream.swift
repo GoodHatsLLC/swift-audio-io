@@ -589,7 +589,6 @@ extension OSLogStream {
       case .levelFloor(let minLevel):
         // OSLogStore doesn't support filtering by "level" in predicates.
         // Keep predicate permissive and rely on in-memory Filter.matches.
-        _ = minLevel
         NSPredicate(value: true)
       case .text(let text):
         NSPredicate(
@@ -599,7 +598,6 @@ extension OSLogStream {
       case .level(let floor):
         // OSLogStore doesn't support filtering by "level" in predicates.
         // Keep predicate permissive and rely on in-memory Filter.matches.
-        _ = floor
         NSPredicate(value: true)
       case .category(let category):
         NSPredicate(
