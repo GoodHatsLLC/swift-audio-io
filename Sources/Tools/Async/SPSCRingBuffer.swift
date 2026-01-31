@@ -10,9 +10,9 @@ public final class SPSCRingBuffer<T>: @unchecked Sendable {
   private let capacityMask: Int
   private var writeIndex: ManagedAtomic<Int>
   private var readIndex: ManagedAtomic<Int>
-#if DEBUG
-  private let dropCount = ManagedAtomic<Int64>(0)
-#endif
+  #if DEBUG
+    private let dropCount = ManagedAtomic<Int64>(0)
+  #endif
 
   public init(capacity: Int) {
     let adjustedCapacity = Int.nextPowerOfTwo(max(capacity, 1))
@@ -54,9 +54,9 @@ public final class SPSCRingBuffer<T>: @unchecked Sendable {
 
     let available = availableToWrite
     guard totalToWrite <= available else {
-#if DEBUG
-      dropCount.wrappingIncrement(by: Int64(totalToWrite), ordering: .relaxed)
-#endif
+      #if DEBUG
+        dropCount.wrappingIncrement(by: Int64(totalToWrite), ordering: .relaxed)
+      #endif
       return 0
     }
 
@@ -113,11 +113,11 @@ public final class SPSCRingBuffer<T>: @unchecked Sendable {
     return toRead
   }
 
-#if DEBUG
-  public var debugDropCount: Int64 {
-    dropCount.load(ordering: .relaxed)
-  }
-#endif
+  #if DEBUG
+    public var debugDropCount: Int64 {
+      dropCount.load(ordering: .relaxed)
+    }
+  #endif
 }
 
 extension Int {

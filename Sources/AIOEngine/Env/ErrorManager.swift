@@ -61,7 +61,7 @@ public final class ErrorManager: Sendable {
       nil
     }
   }
-  
+
   public nonisolated func enqueue(
     _ error: any Error,
     visibility: ErrorEvent.Visibility = .userInterrupting,

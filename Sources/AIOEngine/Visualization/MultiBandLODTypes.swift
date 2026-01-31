@@ -129,7 +129,7 @@
     @available(*, deprecated, message: "Use computeCrossoverFrequencies instead")
     public func computeAlphas(bandCount: Int, sampleRate: Int) -> [Float] {
       let cutoffs = computeCrossoverFrequencies(bandCount: bandCount, sampleRate: sampleRate)
-      
+
       // Legacy alpha calculation: alpha = 1 - exp(-2 * pi * f / sr)
       // This matches a simple 1-pole RC filter response.
       let sr = max(Float(sampleRate), 1.0)
@@ -137,10 +137,10 @@
         let alpha = 1.0 - exp((-2.0 * Float.pi * freq) / sr)
         return min(max(alpha, 0.0), 1.0)
       }
-      
+
       // Keep a trailing value for diagnostics/debugging parity with older code paths.
       alphas.append(1.0)
-      
+
       return alphas
     }
 

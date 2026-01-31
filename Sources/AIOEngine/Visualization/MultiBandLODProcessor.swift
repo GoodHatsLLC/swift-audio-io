@@ -111,7 +111,7 @@
       let totalCount = bandCount * length
       self.memory = UnsafeMutableBufferPointer<Float>.allocate(capacity: totalCount)
       self.memory.initialize(repeating: 0)
-      
+
       var slices: [UnsafeMutableBufferPointer<Float>] = []
       for i in 0..<bandCount {
         let start = i * length
@@ -170,7 +170,9 @@
     fileprivate let rawStorage: RawBandStorage?
     public let rawWriteIndexSnapshot: Int
 
-    fileprivate init(_ slot: LODBufferSlot, rawStorage: RawBandStorage? = nil, rawWriteIndex: Int = 0) {
+    fileprivate init(
+      _ slot: LODBufferSlot, rawStorage: RawBandStorage? = nil, rawWriteIndex: Int = 0
+    ) {
       self.slot = slot
       self.rawStorage = rawStorage
       self.rawWriteIndexSnapshot = rawWriteIndex
@@ -282,8 +284,10 @@
       var y2: Float = 0
 
       mutating func reset() {
-        x1 = 0; x2 = 0
-        y1 = 0; y2 = 0
+        x1 = 0
+        x2 = 0
+        y1 = 0
+        y2 = 0
       }
     }
 
@@ -491,21 +495,22 @@
             let coeffs = filterCoefficients[b]
             // We use `withUnsafeMutablePointer` or just direct access since strict aliasing isn't an issue here with structs.
             // Direct access to struct members in array is fast.
-            
+
             var state = filterStates[b]
-            
+
             // Direct Form 1:
             // y[n] = b0*x[n] + b1*x[n-1] + b2*x[n-2] - a1*y[n-1] - a2*y[n-2]
-            let lp = coeffs.b0 * x + coeffs.b1 * state.x1 + coeffs.b2 * state.x2
-                   - coeffs.a1 * state.y1 - coeffs.a2 * state.y2
-            
+            let lp =
+              coeffs.b0 * x + coeffs.b1 * state.x1 + coeffs.b2 * state.x2
+              - coeffs.a1 * state.y1 - coeffs.a2 * state.y2
+
             // Shift state
             state.x2 = state.x1
             state.x1 = x
             state.y2 = state.y1
             state.y1 = lp
-            
-            filterStates[b] = state // Write back
+
+            filterStates[b] = state  // Write back
 
             // This band's contribution
             part = lp - lowerBoundSignal
@@ -513,11 +518,11 @@
           }
 
           windowStats[b].add(part)
-          
+
           // Write to raw buffer
           rawBandStorage.buffers[b][currentRawWriteIndex] = part
         }
-        
+
         currentRawWriteIndex = (currentRawWriteIndex + 1) % rawLength
 
         // Check if we have enough samples for an LOD commit
@@ -525,7 +530,7 @@
           commitLOD()
         }
       }
-      
+
       rawWriteIndex.store(currentRawWriteIndex, ordering: .relaxed)
 
       totalSamplesProcessed.wrappingIncrement(by: samples.count, ordering: .relaxed)
@@ -939,7 +944,8 @@
         return .empty
       }
 
-      let segmentFrames: [(start: AVFAudio.AVAudioFramePosition, end: AVFAudio.AVAudioFramePosition)]
+      let segmentFrames:
+        [(start: AVFAudio.AVAudioFramePosition, end: AVFAudio.AVAudioFramePosition)]
       segmentFrames = normalizedSegments.map { range in
         let start = AVFAudio.AVAudioFramePosition(range.lowerBound * sampleRate)
         let end = AVFAudio.AVAudioFramePosition(range.upperBound * sampleRate)

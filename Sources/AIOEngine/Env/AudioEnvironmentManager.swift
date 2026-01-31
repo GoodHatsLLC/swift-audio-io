@@ -1203,7 +1203,8 @@
       let inputId = env.input?.id ?? "_default"
       defaults.set(inputId, forKey: StorageKey.preferredInputId)
 
-      var prefs = persistedInputPreferencesById[inputId]
+      var prefs =
+        persistedInputPreferencesById[inputId]
         ?? PersistedInputPreferences(
           sampleRateHz: env.sampleRate.rawValue,
           channelCount: isConfiguredForStereo ? 2 : 1,

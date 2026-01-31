@@ -951,7 +951,8 @@ public enum SystemLog {
 
       do {
         let content = LogModel.exportLogs(logs, as: selectedFormat)
-        let fileName = "logs_\(Date.now.ISO8601Format()).\(selectedFormat.preferredFilenameExtension ?? "txt")"
+        let fileName =
+          "logs_\(Date.now.ISO8601Format()).\(selectedFormat.preferredFilenameExtension ?? "txt")"
         let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
 
         try content.write(to: tempURL, atomically: true, encoding: .utf8)

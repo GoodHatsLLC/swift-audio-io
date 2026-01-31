@@ -9,41 +9,41 @@
     Hashable, Identifiable, Sendable
   {
 
-#if os(iOS)
-    public enum OutputDestination: Hashable, Sendable, CustomStringConvertible {
-      case temporary
-      case directory(URL, fileProtection: FileProtectionType? = nil)
-      case fileURL(URL, fileProtection: FileProtectionType? = nil)
+    #if os(iOS)
+      public enum OutputDestination: Hashable, Sendable, CustomStringConvertible {
+        case temporary
+        case directory(URL, fileProtection: FileProtectionType? = nil)
+        case fileURL(URL, fileProtection: FileProtectionType? = nil)
 
-      public var description: String {
-        switch self {
-        case .temporary:
-          return "temporary"
-        case .directory(let url, let protection):
-          return "directory(\(url.path), protection=\(String(describing: protection)))"
-        case .fileURL(let url, let protection):
-          return "fileURL(\(url.path), protection=\(String(describing: protection)))"
+        public var description: String {
+          switch self {
+          case .temporary:
+            return "temporary"
+          case .directory(let url, let protection):
+            return "directory(\(url.path), protection=\(String(describing: protection)))"
+          case .fileURL(let url, let protection):
+            return "fileURL(\(url.path), protection=\(String(describing: protection)))"
+          }
         }
       }
-    }
-#else
-    public enum OutputDestination: Hashable, Sendable, CustomStringConvertible {
-      case temporary
-      case directory(URL)
-      case fileURL(URL)
+    #else
+      public enum OutputDestination: Hashable, Sendable, CustomStringConvertible {
+        case temporary
+        case directory(URL)
+        case fileURL(URL)
 
-      public var description: String {
-        switch self {
-        case .temporary:
-          return "temporary"
-        case .directory(let url):
-          return "directory(\(url.path))"
-        case .fileURL(let url):
-          return "fileURL(\(url.path))"
+        public var description: String {
+          switch self {
+          case .temporary:
+            return "temporary"
+          case .directory(let url):
+            return "directory(\(url.path))"
+          case .fileURL(let url):
+            return "fileURL(\(url.path))"
+          }
         }
       }
-    }
-#endif
+    #endif
 
     public var id: Self { self }
     public let inputConfiguration: InputConfiguration
