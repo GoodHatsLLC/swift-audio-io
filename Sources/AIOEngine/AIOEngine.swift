@@ -3396,6 +3396,16 @@ extension AIOEngine {
     )
   }
 
+  public nonisolated func debugBufferCapacities() -> (writer: [Int], receiver: [Int]) {
+    let (writerBuffers, receiverBuffers) = state.withLock { state in
+      (state.audioBuffers, state.receiverBuffers)
+    }
+    return (
+      writer: writerBuffers?.map(\.capacity) ?? [],
+      receiver: receiverBuffers?.map(\.capacity) ?? []
+    )
+  }
+
   /// Starts a recording session without touching AVAudioSession or AVAudioEngine.
   /// Intended for integration tests that inject buffers directly.
   @MainActor
