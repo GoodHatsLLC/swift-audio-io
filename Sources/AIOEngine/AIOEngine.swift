@@ -943,6 +943,26 @@ public final class AIOEngine: Sendable {
   ) {
     let control = WriterControl()
     let localMetrics = metrics
+    let tapErrorPoll: @Sendable () -> TapErrorCode? = { [weak self] in
+      self?.consumeTapError()
+    }
+    let onTapError: @Sendable (TapErrorCode) -> Void = { [weak self] code in
+      guard let self else { return }
+      let error: AIOError
+      switch code {
+      case .converterMissing, .bufferTooSmall, .conversionFailed:
+        error = .formatConversionFailed
+      }
+      let description: String = {
+        switch code {
+        case .converterMissing: return "converterMissing"
+        case .bufferTooSmall: return "bufferTooSmall"
+        case .conversionFailed: return "conversionFailed"
+        }
+      }()
+      log.error("Tap error: \(description, privacy: .public)")
+      self.errorSubject.send(error)
+    }
     let errorHandler: @Sendable (ErrorContext) -> Void = { [weak self] error in
       guard let self else { return }
       Task { @MainActor in
@@ -970,7 +990,9 @@ public final class AIOEngine: Sendable {
         shouldCancel: { [control] in
           control.cancelRequested.load(ordering: .relaxed)
         },
-        errorHandler: errorHandler
+        errorHandler: errorHandler,
+        tapErrorPoll: tapErrorPoll,
+        onTapError: onTapError
       )
     }
     log.info("📝 Writer started for \(writer.fileURL.lastPathComponent, privacy: .public)")
@@ -1013,6 +1035,14 @@ public final class AIOEngine: Sendable {
       case .converterMissing, .bufferTooSmall, .conversionFailed:
         error = .formatConversionFailed
       }
+      let description: String = {
+        switch code {
+        case .converterMissing: return "converterMissing"
+        case .bufferTooSmall: return "bufferTooSmall"
+        case .conversionFailed: return "conversionFailed"
+        }
+      }()
+      log.error("Tap error: \(description, privacy: .public)")
       self.errorSubject.send(error)
     }
     let cadence = receiverPollingInterval
@@ -1666,7 +1696,9 @@ public final class AIOEngine: Sendable {
     control: WriterControl,
     metrics: EngineMetrics,
     shouldCancel: @escaping @Sendable () -> Bool,
-    errorHandler: @escaping @Sendable (ErrorContext) -> Void
+    errorHandler: @escaping @Sendable (ErrorContext) -> Void,
+    tapErrorPoll: (@Sendable () -> TapErrorCode?)?,
+    onTapError: (@Sendable (TapErrorCode) -> Void)?
   ) {
 #if !DEBUG
     _ = metrics
@@ -1679,6 +1711,9 @@ public final class AIOEngine: Sendable {
 
     while true {
       if shouldCancel() { break }
+      if let tapErrorPoll, let onTapError, let code = tapErrorPoll() {
+        onTapError(code)
+      }
       let result = flushChunk(
         size: bufferSize,
         from: audioBuffers,
