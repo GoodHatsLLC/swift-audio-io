@@ -1258,6 +1258,10 @@ public final class AIOEngine: Sendable {
       // Configure audio session
       try configureAudioSession(for: configuration)
 
+      // Prepare the engine after audio session reconfiguration so the input node
+      // picks up the new session settings (e.g. channel count for stereo).
+      runOnEngineControlQueue { engine.prepare() }
+
       let (url, protection) = try resolveOutputURL(
         for: configuration,
         allowExplicitFile: true
@@ -1368,17 +1372,19 @@ public final class AIOEngine: Sendable {
       ) else {
         throw AIOError.formatConversionFailed
       }
-      // Defensive: ensure we never double-install a tap if state got out of sync.
-      runOnEngineControlQueue {
-        engine.inputNode.removeTap(onBus: tapConfiguration.bus)
-      }
       recordingSampleTimeAtomic.store(0, ordering: .relaxed)
-      // Install tap
-      runOnEngineControlQueue {
+      // Remove any existing tap and install the new one in a single engine-control-queue
+      // dispatch. Re-read the input node format atomically to prevent a race where an audio
+      // route change (triggered by the stereo session reconfiguration) shifts the format
+      // between the earlier read and the installTap call — which causes an uncatchable
+      // NSException inside AVFAudio.
+      let actualTapFormat: AVAudioFormat = runOnEngineControlQueue {
+        engine.inputNode.removeTap(onBus: tapConfiguration.bus)
+        let currentInputFormat = engine.inputNode.outputFormat(forBus: 0)
         engine.inputNode.installTap(
           onBus: tapConfiguration.bus,
           bufferSize: tapConfiguration.bufferSize,
-          format: tapConfiguration.inputAVAudioFormat
+          format: currentInputFormat
         ) { @Sendable buffer, time in
           self.processAudio(
             buffer: buffer,
@@ -1387,6 +1393,33 @@ public final class AIOEngine: Sendable {
           )
         }
         engine.prepare()
+        return currentInputFormat
+      }
+
+      // If the actual tap format diverged from the pre-computed format (e.g. the hardware
+      // settled on a different channel count after the stereo session reconfiguration),
+      // rebuild the converter and conversion buffer to match the real format.
+      var finalConverter = tapConverter
+      var finalConverterInputFormat = tapFormat
+      var finalConvertedBuffer = tapConvertedBuffer
+      if actualTapFormat.channelCount != tapFormat.channelCount
+        || actualTapFormat.sampleRate != tapFormat.sampleRate
+      {
+        log.warning(
+          "Tap format changed after install: expected \(tapFormat, privacy: .public), got \(actualTapFormat, privacy: .public)"
+        )
+        if let rebuilt = AVAudioConverter(from: actualTapFormat, to: processingFormat) {
+          let ratio = processingFormat.sampleRate / actualTapFormat.sampleRate
+          let frames = max(
+            AVAudioFrameCount(ceil(Double(tapConfiguration.bufferSize) * ratio)),
+            1
+          )
+          if let buf = AVAudioPCMBuffer(pcmFormat: processingFormat, frameCapacity: frames) {
+            finalConverter = rebuilt
+            finalConverterInputFormat = actualTapFormat
+            finalConvertedBuffer = buf
+          }
+        }
       }
 
       state {
@@ -1395,10 +1428,10 @@ public final class AIOEngine: Sendable {
         $0.audioBuffers = audioBuffers
         $0.receiverBuffers = receiverBuffers
         $0.receiverTiming = receiverTiming
-        $0.tapConverter = tapConverter
-        $0.tapConverterInputFormat = tapFormat
+        $0.tapConverter = finalConverter
+        $0.tapConverterInputFormat = finalConverterInputFormat
         $0.tapConverterOutputFormat = processingFormat
-        $0.tapConvertedBuffer = tapConvertedBuffer
+        $0.tapConvertedBuffer = finalConvertedBuffer
         $0.installedTapBus = tapConfiguration.bus
         $0.recordingConfiguration = configuration
         $0.initialInputFormat = inputFormat
