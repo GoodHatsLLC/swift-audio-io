@@ -3,9 +3,10 @@
   import AVFAudio
   import Foundation
   import os
+  import SystemLog
   import Tools
 
-  private let log = OSLog(subsystem: "AIOEngine", category: "MultiBandLOD")
+  private let log = SystemLog.make()
 
   // MARK: - Triple-Buffered LOD Storage
 
@@ -333,14 +334,6 @@
     /// Current write index for raw storage (atomic).
     private let rawWriteIndex: ManagedAtomic<Int>
 
-    /// Total samples processed.
-    private let totalSamplesProcessed: ManagedAtomic<Int>
-
-    #if DEBUG
-      /// Duration of the most recent `process(_:)` call (nanoseconds).
-      private let debugLastProcessDurationNs: ManagedAtomic<UInt64>
-    #endif
-
     // MARK: - Triple-Buffered Snapshot (Lock-free read access)
 
     /// Three pre-allocated buffer slots for triple buffering.
@@ -426,11 +419,6 @@
       )
       self.rawWriteIndex = ManagedAtomic(0)
 
-      self.totalSamplesProcessed = ManagedAtomic(0)
-      #if DEBUG
-        self.debugLastProcessDurationNs = ManagedAtomic(0)
-      #endif
-
       // Initialize triple-buffered LOD slots (pre-allocated, never reallocated)
       self.bufferSlots = [
         LODBufferSlot(configuration: configuration),
@@ -447,10 +435,9 @@
       self.deltaWrittenCount = 0
       self.writerWriteIndexAtomic = ManagedAtomic(bufferSlots[writeSlotIndex].writeIndex)
 
-      os_log(
-        .info, log: log,
-        "Initialized with %d bands, LOD ratio %d, buffer %d seconds (triple-buffered)",
-        configuration.bandCount, configuration.lodRatio, configuration.bufferSeconds)
+      log.info(
+        "Initialized with \(configuration.bandCount) bands, LOD ratio \(configuration.lodRatio), buffer \(configuration.bufferSeconds) seconds (triple-buffered)"
+      )
     }
 
     // MARK: - Processing
@@ -465,9 +452,6 @@
     public func process(_ samples: UnsafeBufferPointer<Float>) {
       guard !samples.isEmpty else { return }
 
-      #if DEBUG
-        let startNs = DispatchTime.now().uptimeNanoseconds
-      #endif
       let bandCount = configuration.bandCount
       let lodRatio = configuration.lodRatio
 
@@ -532,15 +516,6 @@
       }
 
       rawWriteIndex.store(currentRawWriteIndex, ordering: .relaxed)
-
-      totalSamplesProcessed.wrappingIncrement(by: samples.count, ordering: .relaxed)
-
-      #if DEBUG
-        debugLastProcessDurationNs.store(
-          DispatchTime.now().uptimeNanoseconds - startNs,
-          ordering: .relaxed
-        )
-      #endif
     }
 
     /// Process samples from a contiguous array.
@@ -753,7 +728,6 @@
       commitsSinceSlotSwap = 0
       deltaStartWriteIndex = bufferSlots[writeSlotIndex].writeIndex
       deltaWrittenCount = 0
-      totalSamplesProcessed.store(0, ordering: .relaxed)
       writerWriteIndexAtomic.store(bufferSlots[writeSlotIndex].writeIndex, ordering: .relaxed)
 
       rawWriteIndex.store(0, ordering: .relaxed)
@@ -762,7 +736,7 @@
         b.initialize(repeating: 0)
       }
 
-      os_log(.info, log: log, "Reset all buffers (triple-buffered)")
+      log.info("Reset all buffers (triple-buffered)")
     }
 
     // MARK: - Diagnostics
@@ -783,22 +757,6 @@
     /// This is the published write index (safe for renderers).
     public var currentWriteIndex: Int { publishedWriteIndex }
 
-    /// Total number of raw samples processed.
-    public var samplesProcessed: Int {
-      totalSamplesProcessed.load(ordering: .relaxed)
-    }
-
-    #if DEBUG
-      /// Duration of the most recent `process(_:)` call, in nanoseconds.
-      public var lastProcessDurationNanoseconds: UInt64 {
-        debugLastProcessDurationNs.load(ordering: .relaxed)
-      }
-    #endif
-
-    /// Approximate duration of audio processed in seconds.
-    public var durationProcessed: TimeInterval {
-      Double(samplesProcessed) / Double(configuration.sampleRate)
-    }
   }
 
   // MARK: - Offline Generation
