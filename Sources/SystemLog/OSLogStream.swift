@@ -586,7 +586,7 @@ extension OSLogStream {
     public var predicate: NSPredicate {
       switch self {
       case .any: NSPredicate.init(value: true)
-      case .levelFloor(let minLevel):
+      case .levelFloor:
         // OSLogStore doesn't support filtering by "level" in predicates.
         // Keep predicate permissive and rely on in-memory Filter.matches.
         NSPredicate(value: true)
@@ -595,7 +595,7 @@ extension OSLogStream {
           format: "composedMessage CONTAINS[c] %@",
           text
         )
-      case .level(let floor):
+      case .level:
         // OSLogStore doesn't support filtering by "level" in predicates.
         // Keep predicate permissive and rely on in-memory Filter.matches.
         NSPredicate(value: true)
