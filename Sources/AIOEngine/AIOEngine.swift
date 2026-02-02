@@ -1402,9 +1402,17 @@
         // route change (triggered by the stereo session reconfiguration) shifts the format
         // between the earlier read and the installTap call — which causes an uncatchable
         // NSException inside AVFAudio.
-        let actualTapFormat: AVAudioFormat = runOnEngineControlQueue {
+        //
+        // Validate the re-read format before calling installTap. During an audio source switch
+        // (e.g. AirPods → built-in mic) the input node format can transiently report 0 channels
+        // or 0 sample rate while the route change settles. Passing such a format to installTap
+        // triggers an uncatchable NSException inside AVFAudio.
+        let actualTapFormat: AVAudioFormat? = runOnEngineControlQueue {
           engine.inputNode.removeTap(onBus: tapConfiguration.bus)
           let currentInputFormat = engine.inputNode.outputFormat(forBus: 0)
+          guard currentInputFormat.channelCount > 0, currentInputFormat.sampleRate > 0 else {
+            return nil
+          }
           engine.inputNode.installTap(
             onBus: tapConfiguration.bus,
             bufferSize: tapConfiguration.bufferSize,
@@ -1418,6 +1426,15 @@
           }
           engine.prepare()
           return currentInputFormat
+        }
+        guard let actualTapFormat else {
+          let transientFormat = runOnEngineControlQueue { engine.inputNode.outputFormat(forBus: 0) }
+          log.warning(
+            "Input format became invalid during tap install (transient route change). format: \(transientFormat, privacy: .public)"
+          )
+          throw AIOError.audioSessionNotReady(
+            details: "Input format invalid during audio source switch"
+          )
         }
 
         // If the actual tap format diverged from the pre-computed format (e.g. the hardware
