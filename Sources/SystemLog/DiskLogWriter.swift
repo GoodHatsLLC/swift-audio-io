@@ -86,6 +86,10 @@ private struct RotatingFileStream: TextOutputStream {
   private var currentDateString: String = ""
   private var currentHandle: FileHandle?
 
+  init(logsDirectory: URL) {
+    self.logsDirectory = logsDirectory
+  }
+
   mutating func write(_ string: String) {
     let today = Self.todayString()
     if today != currentDateString {
