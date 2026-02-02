@@ -80,7 +80,7 @@ public struct DiskLogWriter: Sendable {
 /// Writes are expected to be serial — this type is used exclusively via the `inout` parameter of
 /// ``OSLogStream/to(textStream:batchSize:pollInterval:filter:from:)`` which writes sequentially
 /// from a single `for await` loop.
-private struct RotatingFileStream: TextOutputStream, ~Copyable {
+private struct RotatingFileStream: TextOutputStream {
   let logsDirectory: URL
 
   private var currentDateString: String = ""
