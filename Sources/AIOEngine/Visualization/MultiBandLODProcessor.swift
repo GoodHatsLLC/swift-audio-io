@@ -329,7 +329,7 @@
     private var windowStats: [RunningStats]
 
     /// Raw band storage (single circular buffer per band).
-    private let rawBandStorage: RawBandStorage
+    private let rawBandStorage: RawBandStorage?
 
     /// Current write index for raw storage (atomic).
     private let rawWriteIndex: ManagedAtomic<Int>
@@ -373,8 +373,16 @@
 
     /// Creates a new multi-band LOD processor.
     ///
-    /// - Parameter configuration: Processing configuration.
-    public init(configuration: MultiBandLODConfiguration = .default) {
+    /// - Parameters:
+    ///   - configuration: Processing configuration.
+    ///   - allocateRawStorage: Whether to allocate per-sample raw band storage.
+    ///     Pass `false` for offline/file-based generation where only LOD data is
+    ///     needed. This avoids a large allocation (bandCount × sampleRate × duration
+    ///     × 4 bytes) that is unused in the offline snapshot path. Default is `true`.
+    public init(
+      configuration: MultiBandLODConfiguration = .default,
+      allocateRawStorage: Bool = true
+    ) {
       self.configuration = configuration
 
       // Compute crossover frequencies
@@ -413,10 +421,12 @@
       self.filterStates = Array(repeating: BiquadState(), count: frequencies.count)
 
       self.windowStats = Array(repeating: RunningStats(), count: configuration.bandCount)
-      self.rawBandStorage = RawBandStorage(
-        bandCount: configuration.bandCount,
-        length: configuration.rawBufferLength
-      )
+      self.rawBandStorage = allocateRawStorage
+        ? RawBandStorage(
+          bandCount: configuration.bandCount,
+          length: configuration.rawBufferLength
+        )
+        : nil
       self.rawWriteIndex = ManagedAtomic(0)
 
       // Initialize triple-buffered LOD slots (pre-allocated, never reallocated)
@@ -455,9 +465,10 @@
       let bandCount = configuration.bandCount
       let lodRatio = configuration.lodRatio
 
-      // Cache pointer to unsafe buffer for tight loop access if needed,
-      // but UnsafeBufferPointer subscript is already efficient.
-      let rawLength = configuration.rawBufferLength
+      // Cache raw storage pointer outside the loop. When nil (offline path),
+      // we skip per-sample raw writes entirely — only LOD data is needed.
+      let rawStorage = rawBandStorage
+      let rawLength = rawStorage != nil ? configuration.rawBufferLength : 1
       // Get current raw write index
       var currentRawWriteIndex = rawWriteIndex.load(ordering: .relaxed)
 
@@ -503,8 +514,10 @@
 
           windowStats[b].add(part)
 
-          // Write to raw buffer
-          rawBandStorage.buffers[b][currentRawWriteIndex] = part
+          // Write to raw buffer (skipped in offline mode)
+          if let rawStorage {
+            rawStorage.buffers[b][currentRawWriteIndex] = part
+          }
         }
 
         currentRawWriteIndex = (currentRawWriteIndex + 1) % rawLength
@@ -732,8 +745,10 @@
 
       rawWriteIndex.store(0, ordering: .relaxed)
       // Zero out raw buffers
-      for b in rawBandStorage.buffers {
-        b.initialize(repeating: 0)
+      if let rawBandStorage {
+        for b in rawBandStorage.buffers {
+          b.initialize(repeating: 0)
+        }
       }
 
       log.info("Reset all buffers (triple-buffered)")
@@ -807,7 +822,10 @@
         rawBufferLengthOverride: rawBufferLengthOverride
       )
 
-      let processor = MultiBandLODProcessor(configuration: adjustedConfig)
+      let processor = MultiBandLODProcessor(
+        configuration: adjustedConfig,
+        allocateRawStorage: false
+      )
 
       // Process in chunks
       let bufferSize: AVFAudio.AVAudioFrameCount = 4096
@@ -934,7 +952,10 @@
         rawBufferLengthOverride: rawBufferLengthOverride
       )
 
-      let processor = MultiBandLODProcessor(configuration: adjustedConfig)
+      let processor = MultiBandLODProcessor(
+        configuration: adjustedConfig,
+        allocateRawStorage: false
+      )
 
       let bufferSize: AVFAudio.AVAudioFrameCount = 4096
       guard
