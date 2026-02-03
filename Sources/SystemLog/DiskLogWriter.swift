@@ -55,7 +55,9 @@ public struct DiskLogWriter: Sendable {
     do {
       try FileManager.default.createDirectory(at: logsDirectory, withIntermediateDirectories: true)
     } catch {
-      log.error("DiskLogWriter: failed to create logs directory at \(logsDirectory.path, privacy: .public): \(error, privacy: .public)")
+      log.error(
+        "DiskLogWriter: failed to create logs directory at \(logsDirectory.path, privacy: .public): \(error, privacy: .public)"
+      )
       assertionFailure("DiskLogWriter: failed to create logs directory: \(error)")
       return
     }
@@ -133,7 +135,9 @@ private struct RotatingFileStream: TextOutputStream {
       currentHandle = handle
       return handle
     } catch {
-      log.warning("DiskLogWriter: failed to open log file \(fileURL.lastPathComponent, privacy: .public): \(error, privacy: .public)")
+      log.warning(
+        "DiskLogWriter: failed to open log file \(fileURL.lastPathComponent, privacy: .public): \(error, privacy: .public)"
+      )
       return nil
     }
   }
@@ -158,13 +162,16 @@ extension DiskLogWriter {
   /// Removes `.log` files from the logs directory that are older than ``retentionDays``.
   private func purgeStaleFiles() {
     let fm = FileManager.default
-    guard let contents = try? fm.contentsOfDirectory(
-      at: logsDirectory,
-      includingPropertiesForKeys: [.contentModificationDateKey],
-      options: [.skipsHiddenFiles]
-    ) else { return }
+    guard
+      let contents = try? fm.contentsOfDirectory(
+        at: logsDirectory,
+        includingPropertiesForKeys: [.contentModificationDateKey],
+        options: [.skipsHiddenFiles]
+      )
+    else { return }
 
-    let cutoff = Calendar.current.date(byAdding: .day, value: -retentionDays, to: Date()) ?? .distantPast
+    let cutoff =
+      Calendar.current.date(byAdding: .day, value: -retentionDays, to: Date()) ?? .distantPast
 
     for url in contents where url.pathExtension == "log" {
       guard

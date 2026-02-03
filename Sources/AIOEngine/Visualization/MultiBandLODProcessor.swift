@@ -421,7 +421,8 @@
       self.filterStates = Array(repeating: BiquadState(), count: frequencies.count)
 
       self.windowStats = Array(repeating: RunningStats(), count: configuration.bandCount)
-      self.rawBandStorage = allocateRawStorage
+      self.rawBandStorage =
+        allocateRawStorage
         ? RawBandStorage(
           bandCount: configuration.bandCount,
           length: configuration.rawBufferLength
