@@ -786,6 +786,15 @@
     ///   - url: URL of the audio file to process.
     ///   - configuration: LOD configuration to use.
     /// - Returns: Complete LOD snapshot of the audio file.
+    /// Maximum LOD samples per band for offline generation.
+    ///
+    /// This caps the LOD buffer size to prevent unbounded memory growth for long
+    /// audio files. 16384 samples provides ample detail — the default rendering
+    /// `maxPixelWidth` is 8192, so this is 2× oversampled. For files shorter
+    /// than `maxOfflineLODSamplesPerBand * lodRatio` raw samples the original
+    /// `lodRatio` is preserved; for longer files it increases proportionally.
+    private static let maxOfflineLODSamplesPerBand = 16384
+
     public static func generateFromFile(
       url: URL,
       configuration: MultiBandLODConfiguration = .default
@@ -803,8 +812,24 @@
       // This avoids padding up to whole seconds (or a default live buffer size), which can
       // otherwise make offline waveforms look "chunky" and allow panning into empty space.
       let fileFrameCount = max(Int(file.length), 0)
+
+      // Scale lodRatio for long files so LOD buffer memory stays bounded.
+      // Without this, a 1-hour file at 48 kHz with the default lodRatio of 128
+      // produces ~1.35 M LOD samples/band × 5 bands × 3 buffers × 3 slots ≈ 243 MB.
+      // With scaling, the LOD buffer is capped at ~maxOfflineLODSamplesPerBand entries
+      // per band regardless of file length.
+      let effectiveLodRatio: Int
+      if fileFrameCount > maxOfflineLODSamplesPerBand * configuration.lodRatio {
+        effectiveLodRatio = max(
+          configuration.lodRatio,
+          Int(ceil(Double(fileFrameCount) / Double(maxOfflineLODSamplesPerBand)))
+        )
+      } else {
+        effectiveLodRatio = configuration.lodRatio
+      }
+
       let (paddedFrameCount, paddedOverflow) = fileFrameCount.addingReportingOverflow(
-        max(configuration.lodRatio, 1)
+        max(effectiveLodRatio, 1)
       )
       // Ensure offline buffers have at least one extra LOD slot so `writeIndex` doesn't wrap.
       // This keeps offline `writeIndex` monotonic (useful for sizing and mapping) while still
@@ -814,7 +839,7 @@
       let fileDuration = Double(file.length) / sampleRate
       let adjustedConfig = MultiBandLODConfiguration(
         bandCount: configuration.bandCount,
-        lodRatio: configuration.lodRatio,
+        lodRatio: effectiveLodRatio,
         bufferSeconds: max(Int(ceil(fileDuration)), 1),
         sampleRate: Int(sampleRate),
         crossoverMode: configuration.crossoverMode,
@@ -937,14 +962,25 @@
         return .empty
       }
 
+      // Scale lodRatio for long segment totals (same rationale as single-file variant).
+      let effectiveLodRatio: Int
+      if totalFrames > maxOfflineLODSamplesPerBand * configuration.lodRatio {
+        effectiveLodRatio = max(
+          configuration.lodRatio,
+          Int(ceil(Double(totalFrames) / Double(maxOfflineLODSamplesPerBand)))
+        )
+      } else {
+        effectiveLodRatio = configuration.lodRatio
+      }
+
       let (paddedFrameCount, paddedOverflow) = totalFrames.addingReportingOverflow(
-        max(configuration.lodRatio, 1)
+        max(effectiveLodRatio, 1)
       )
       let rawBufferLengthOverride = paddedOverflow ? totalFrames : paddedFrameCount
       let bufferSeconds = max(Int(ceil(Double(totalFrames) / sampleRate)), 1)
       let adjustedConfig = MultiBandLODConfiguration(
         bandCount: configuration.bandCount,
-        lodRatio: configuration.lodRatio,
+        lodRatio: effectiveLodRatio,
         bufferSeconds: bufferSeconds,
         sampleRate: Int(sampleRate),
         crossoverMode: configuration.crossoverMode,
