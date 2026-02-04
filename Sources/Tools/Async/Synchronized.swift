@@ -36,7 +36,7 @@ public final class Synchronized<Value>: Sendable {
     withLock(\.self)[keyPath: path]
   }
 
-    public nonisolated subscript<T: Sendable>(locked keyPath: WritableKeyPath<Value, T>) -> T {
+  public nonisolated subscript<T: Sendable>(locked keyPath: WritableKeyPath<Value, T>) -> T {
     get { pick(keyPath) }
     set { place(keyPath, value: newValue) }
   }
