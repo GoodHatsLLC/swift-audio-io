@@ -1,4 +1,3 @@
-@dynamicMemberLookup
 public final class Synchronized<Value>: Sendable {
   public init(_ value: consuming sending Value) {
     self.mut = .init(value)
@@ -37,13 +36,9 @@ public final class Synchronized<Value>: Sendable {
     withLock(\.self)[keyPath: path]
   }
 
-  public nonisolated subscript<T: Sendable>(dynamicMember keyPath: WritableKeyPath<Value, T>) -> T {
+    public nonisolated subscript<T: Sendable>(locked keyPath: WritableKeyPath<Value, T>) -> T {
     get { pick(keyPath) }
     set { place(keyPath, value: newValue) }
-  }
-
-  public nonisolated subscript<T: Sendable>(dynamicMember keyPath: KeyPath<Value, T>) -> T {
-    get { pick(keyPath) }
   }
 
   consuming public func consume<T: Sendable>(_ path: consuming WritableKeyPath<Value, T?>) -> T? {
