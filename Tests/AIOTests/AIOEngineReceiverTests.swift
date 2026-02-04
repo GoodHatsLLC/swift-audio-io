@@ -4,6 +4,7 @@
   import Testing
 
   @_spi(TESTING) import AIOEngine
+  import Tools
 
   @Suite
   struct AIOEngineReceiverTests {
