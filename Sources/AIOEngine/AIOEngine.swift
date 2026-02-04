@@ -54,12 +54,12 @@
   /// - ``attachBufferReceiver(_:)``
   /// - ``detachBufferReceivers()``
   ///
-  /// ### Managing Audio Routes
+  /// ### Managing Audio system events
   ///
-  /// - ``switchInput(to:)``
-  /// - ``switchOutput(to:)``
   /// - ``handleRouteChange(event:)``
   /// - ``handleInterruption(type:options:)``
+  /// - ``handleMediaServicesLost()``
+  /// - ``handleMediaServicesReset()``
   ///
   private let log = SystemLog.make()
   #if DEBUG
@@ -171,11 +171,11 @@
   }
 
   private struct WriterDrainTimeoutError: LocalizedError, Sendable {
-    let url: URL
+    let url: URL?
     let timeout: Duration
 
     var errorDescription: String? {
-      "Writer drain timed out after \(timeout.seconds) seconds for \(url.lastPathComponent)"
+      "Writer drain timed out after \(timeout.seconds) seconds for \(url?.lastPathComponent ?? "missing URL")"
     }
   }
 
@@ -296,7 +296,7 @@
       /// A system audio session operation failed.
       case audioSessionFailed(operation: AudioSessionOperation, error: ErrorContext)
       /// An audio file operation failed.
-      case audioFileFailed(operation: AudioFileOperation, url: URL, error: ErrorContext)
+      case audioFileFailed(operation: AudioFileOperation, url: URL?, error: ErrorContext)
 
       public var errorDescription: String? {
         switch self {
@@ -322,7 +322,7 @@
         case .audioSessionFailed(let operation, let error):
           "Audio session operation '\(operation)' failed: \(error)"
         case .audioFileFailed(let operation, let url, let error):
-          "Audio file operation '\(operation)' failed for \(url.lastPathComponent): \(error)"
+          "Audio file operation '\(operation)' failed for \(url?.lastPathComponent ?? "missing URL"): \(error)"
         }
       }
 
@@ -540,7 +540,6 @@
     /// Preferred audio session category/mode/options for this engine.
     @MainActor public var recordingSessionConfiguration: AudioSessionConfiguration =
       .recorderDefault
-    @MainActor public var playbackSessionConfiguration: AudioSessionConfiguration = .playbackDefault
     @MainActor public var sessionConfiguration: AudioSessionConfiguration {
       get { recordingSessionConfiguration }
       set { recordingSessionConfiguration = newValue }
@@ -614,7 +613,7 @@
     }
 
     private struct WriteFailure: Sendable {
-      let url: URL
+      let url: URL?
       let error: ErrorContext
     }
     /// A struct representing the current playback state.
@@ -659,7 +658,7 @@
       let previousSignature = PlaybackStateSignature(playback: playback)
 
       let updated: Playback?
-      if let playbackInstance = state.playbackInstance, new?.id == playbackInstance.id {
+        if let playbackInstance = state[locked: \.playbackInstance], new?.id == playbackInstance.id {
         updated = new
       } else if new == nil {
         updated = nil
@@ -679,7 +678,7 @@
     }
 
     private func getPlayback() -> Playback? {
-      guard let playbackInstance = state.playbackInstance else { return nil }
+      guard let playbackInstance = state[locked: \.playbackInstance] else { return nil }
       return getPlayback(for: playbackInstance)
     }
 
@@ -1234,11 +1233,11 @@
     }
 
     @MainActor
-    private func recordWriteFailure(_ error: ErrorContext, url: URL) {
+    private func recordWriteFailure(_ error: ErrorContext, url: URL?) {
       guard lastWriteFailure == nil else { return }
       lastWriteFailure = WriteFailure(url: url, error: error)
       log.error(
-        "🛑 Recording write failed for \(url.lastPathComponent, privacy: .public): \(error, privacy: .public)"
+        "🛑 Recording write failed for \(url?.lastPathComponent ?? "missing URL", privacy: .public): \(error, privacy: .public)"
       )
     }
 
@@ -1263,7 +1262,7 @@
       log.info("warming with config: \(configuration, privacy: .public)")
       let initialInput = runOnEngineControlQueue { engine.inputNode.outputFormat(forBus: 0) }
       log.info("input format: \(initialInput, privacy: .public)")
-      if let recordingConfiguration = state.recordingConfiguration {
+        if let recordingConfiguration = state[locked: \.recordingConfiguration] {
         if configuration == recordingConfiguration {
           log.info("engine already warmed")
           recordingSampleTimeAtomic.store(0, ordering: .relaxed)
@@ -1562,7 +1561,7 @@
         return result
       }
       if !drainCompleted {
-        let url = state.recordingURL ?? URL(fileURLWithPath: "unknown")
+          let url = state[locked: \.recordingURL]
         let error = WriterDrainTimeoutError(url: url, timeout: stopDrainTimeout)
         log.error("⏱️ stopAndDrainAllWriterSessions timed out: \(error, privacy: .public)")
         cancelAllWriterSessions()
@@ -1582,7 +1581,7 @@
       tapErrorCode.store(0, ordering: .relaxed)
       let writer = state { state in
         defer {
-          state.recordingWriter = nil
+            state.recordingWriter = nil
           state.recordingURL = nil
           state.recordingConfiguration = nil
           state.audioBuffers = nil
@@ -1596,7 +1595,7 @@
           state.lastInputFormat = nil
           state.isHandlingRouteChange = false
         }
-        return state.recordingWriter
+          return state.recordingWriter
       }
       if closeFile {
         writer?.close()
@@ -2127,7 +2126,7 @@
     /// - Throws: An `AIOError.notRecording` error if the engine is not currently recording.
     @MainActor
     public func stopRecording() async throws(AIOError) -> URL {
-      guard let url = state.recordingURL, isRecording else { throw AIOError.notRecording }
+      guard let url = state[locked: \.recordingURL], isRecording else { throw AIOError.notRecording }
       log.info("🛑 stopRecording requested for \(url.lastPathComponent, privacy: .public)")
       await gracefulStop()
       log.info(
@@ -2188,13 +2187,20 @@
     /// - Throws: `AIOError.notRecording` if not currently recording
     @MainActor
     public func rotateRecordingFile() async throws(AIOError) -> URL {
-      guard isRecording,
-        let currentURL = state.recordingURL,
-        let configuration = state.recordingConfiguration,
-        let processingFormat = configuration.processingFormat
-      else {
-        throw AIOError.notRecording
-      }
+
+        guard isRecording,
+              let (currentURL, configuration, format): (URL, RecordingConfiguration, AVAudioFormat) = state.withLock({
+                  guard let url = $0.recordingURL,
+                        let config = $0.recordingConfiguration,
+                        let format = config.processingFormat
+                  else {
+                      return Optional.none
+                  }
+                  return Optional((url, config, format))
+              })
+          else {
+            throw AIOError.notRecording
+        }
 
       // Create new file with fresh filename
       let (newURL, protection) = try resolveOutputURL(
@@ -2204,8 +2210,8 @@
       let newWriter = try makeRecordingWriter(url: newURL, configuration: configuration)
       applyFileProtectionIfNeeded(protection, to: newURL)
 
-      let sampleRate = Int(processingFormat.sampleRate)
-      let channelCount = Int(processingFormat.channelCount)
+      let sampleRate = Int(format.sampleRate)
+      let channelCount = Int(format.channelCount)
       guard sampleRate > 0, channelCount > 0 else {
         throw AIOError.invalidRecordingConfiguration(details: "Invalid processing format")
       }
@@ -2218,16 +2224,18 @@
       if let currentWriter = writerSession {
         enqueueDrain(for: currentWriter)
       } else {
-        state.recordingWriter?.close()
+          state[locked: \.recordingWriter]?.close()
       }
 
       // Update state with new file
-      state.recordingWriter = newWriter
-      state.recordingURL = newURL
-      state.audioBuffers = newBuffers
+        state {
+            $0.recordingWriter = newWriter
+            $0.recordingURL = newURL
+            $0.audioBuffers = newBuffers
+        }
 
       // Start new writer loop for the new file
-      startFileWriteLoop(flushing: newBuffers, of: processingFormat, to: newWriter)
+      startFileWriteLoop(flushing: newBuffers, of: format, to: newWriter)
 
       // Notify of new file (for crash detection tracking)
       let fileFormat = configuration.outputConfiguration.fileFormat.rawValue
@@ -2276,7 +2284,7 @@
 
       if getPlayback() != nil {
         await stopAndResetEngine()
-        state.playbackInstance = nil
+          state[locked: \.playbackInstance] = nil
         setPlayback(nil)
       } else {
         await stopAndResetEngine()
@@ -2307,7 +2315,7 @@
         pollingInterval: interval
       )
 
-      state.playbackInstance = playbackInstance
+        state[locked: \.playbackInstance] = playbackInstance
       await withEngineControlQueue { [weak self] in
         guard let self else { return }
         // Connect the player node through the main mixer for automatic format conversion.
@@ -2373,7 +2381,7 @@
       // Stop any existing playback
       if getPlayback() != nil {
         await stopAndResetEngine()
-        state.playbackInstance = nil
+          state[locked: \.playbackInstance] = nil
         setPlayback(nil)
       } else {
         await stopAndResetEngine()
@@ -2409,7 +2417,7 @@
         pollingInterval: interval
       )
 
-      state.playbackInstance = playbackInstance
+        state[locked: \.playbackInstance] = playbackInstance
 
       await withEngineControlQueue { [weak self] in
         guard let self else { return }
@@ -2557,7 +2565,7 @@
       play: Bool,
       updatePlaybackTimer: Bool = true
     ) throws(AIOError) -> Playback? {
-      if let initialInstance = state.playbackInstance {
+        if let initialInstance = state[locked: \.playbackInstance] {
         let playback = getPlayback(for: initialInstance)
         let file = initialInstance.file
         guard playback.duration > time, time >= 0 else {
@@ -2570,7 +2578,7 @@
           startFrame: framePosition,
           pollingInterval: initialInstance.pollingInterval
         )
-        state.playbackInstance = newInstance
+            state[locked:\.playbackInstance] = newInstance
         scrubTask = Task(priority: .utility) { [weak self] in
           guard let self else { return }
           await self.scrub(
@@ -2609,9 +2617,9 @@
     @MainActor
     public func stopPlayback() async {
       await stopPlayerIfNeeded()
-      let finishedFile: AVAudioFile? = state.withLock { state in
-        if let foundInstance = state.playbackInstance {
-          state.playbackInstance = nil
+      let finishedFile: AVAudioFile? = state {
+        if let foundInstance = $0.playbackInstance {
+          $0.playbackInstance = nil
           return foundInstance.file
         } else {
           return nil
@@ -2638,7 +2646,7 @@
       }
       scrubTask = nil
       // Update the playback state to reflect paused status
-      if let instance = state.playbackInstance {
+        if let instance = state[locked:\.playbackInstance] {
         setPlayback(getPlayback(for: instance))
       }
     }
@@ -2653,7 +2661,7 @@
         self?.player.play()
       }
       // Update the playback state to reflect playing status
-      if let instance = state.playbackInstance {
+        if let instance = state[locked: \.playbackInstance] {
         setPlayback(getPlayback(for: instance))
       }
     }
@@ -2669,30 +2677,12 @@
       }
       if let finishedFile {
         Task { @MainActor [weak self, state] in
-          if state.playbackInstance == nil {
+            if state[locked: \.playbackInstance] == nil {
             self?.setPlayback(nil)
             self?.deactivateAudioSessionIfNeeded(reason: "playback finished")
           }
         }
         finishedFile.close()
-      }
-    }
-
-    public func switchInput(to port: AVAudioSessionPortDescription) throws(AIOError) {
-      let session = AVAudioSession.sharedInstance()
-      do {
-        try session.setPreferredInput(port)
-      } catch {
-        throw .audioSessionFailed(operation: .setPreferredInput, error: ErrorContext(error))
-      }
-    }
-
-    public func switchOutput(to port: AVAudioSessionPortDescription) throws(AIOError) {
-      let session = AVAudioSession.sharedInstance()
-      do {
-        try session.overrideOutputAudioPort(port.portType == .builtInSpeaker ? .speaker : .none)
-      } catch {
-        throw .audioSessionFailed(operation: .overrideOutputAudioPort, error: ErrorContext(error))
       }
     }
 
@@ -2845,7 +2835,7 @@
     }
 
     private func calculatePreferredBufferDuration(sampleRate: Double) -> TimeInterval {
-      let targetDuration = 0.01  // 10ms
+      let targetDuration = 0.02  // 20ms
       let baseSamples = targetDuration * sampleRate
       let adjustedSamples = max(baseSamples, 512)
       return adjustedSamples / sampleRate
@@ -2867,29 +2857,41 @@
       }
 
       // Prevent re-entrant calls
-      guard !state.isHandlingRouteChange else {
+        let isReEntrant = state {
+            if $0.isHandlingRouteChange {
+                return true
+            } else {
+                $0.isHandlingRouteChange = true
+                return false
+            }
+        }
+      guard !isReEntrant else {
         log.info("Already handling route change, ignoring duplicate")
         return
       }
 
-      state.isHandlingRouteChange = true
-      defer { state.isHandlingRouteChange = false }
+        defer { state[locked: \.isHandlingRouteChange] = false }
 
       log.info("Handling route change: \(String(describing: event.reason), privacy: .public)")
 
       let session = AVAudioSession.sharedInstance()
       let newInputFormat = runOnEngineControlQueue { engine.inputNode.outputFormat(forBus: 0) }
 
-      guard let currentConfig = state.recordingConfiguration,
-        let processingFormat = currentConfig.processingFormat,
-        let initialFormat = state.initialInputFormat
-      else {
-        log.error("Missing configuration during route change")
-        return
-      }
-      let previousFormat = state.lastInputFormat ?? initialFormat
-      let (cachedInputFormat, cachedOutputFormat) = state.withLock { state in
-        (state.tapConverterInputFormat, state.tapConverterOutputFormat)
+        guard let (processingFormat, initialFormat): (AVAudioFormat, AVAudioFormat) = state ({
+            if let currentConfig = $0.recordingConfiguration,
+              let processingFormat = currentConfig.processingFormat,
+               let initialFormat = $0.initialInputFormat {
+                return Optional((processingFormat, initialFormat))
+            } else {
+                return Optional.none
+            }
+        }) else {
+            log.error("Missing configuration during route change")
+            return
+        }
+
+      let (cachedInputFormat, cachedOutputFormat, previousFormat) = state.withLock { state in
+          (state.tapConverterInputFormat, state.tapConverterOutputFormat, state.lastInputFormat ?? initialFormat)
       }
       let shouldReconfigureTap: Bool = {
         guard let cachedInputFormat, let cachedOutputFormat else { return true }
@@ -3003,7 +3005,7 @@
     public func handleMediaServicesLost() async {
       log.warning("Media services lost; tearing down engine state")
       let shouldRestartRecording = isRecording || wantsRecording
-      let configuration = state.recordingConfiguration ?? lastRecordingConfiguration
+        let configuration = state[locked: \.recordingConfiguration] ?? lastRecordingConfiguration
 
       pendingPlaybackResume = capturePlaybackResumeState()
       if pendingPlaybackResume != nil {
@@ -3040,7 +3042,7 @@
 
     @MainActor
     private func capturePlaybackResumeState() -> PlaybackResume? {
-      guard let instance = state.playbackInstance else { return nil }
+        guard let instance = state[locked: \.playbackInstance] else { return nil }
       let playback = getPlayback(for: instance)
       let time =
         playback.time
@@ -3151,11 +3153,11 @@
       // Remove old tap and stop engine before reconfiguring.
       let currentInputFormat = runOnEngineControlQueue { [weak self] in
         guard let self else { return newInputFormat }
-        self.engine.inputNode.removeTap(onBus: self.state.installedTapBus ?? 0)
+          self.engine.inputNode.removeTap(onBus: self.state[locked: \.installedTapBus] ?? 0)
         self.engine.stop()
         return self.engine.inputNode.outputFormat(forBus: 0)
       }
-      state.installedTapBus = nil
+        state[locked: \.installedTapBus] = nil
 
       // Validate the format before attempting to install tap.
       // installTap throws an uncatchable NSException if the format is invalid.
@@ -3194,7 +3196,7 @@
       }
 
       // Get tap configuration using the current format (not the pre-stop format)
-      guard let currentConfig = state.recordingConfiguration,
+        guard let currentConfig = state[locked:\.recordingConfiguration],
         let tapConfiguration = currentConfig.tapConfiguration(bus: 0, input: currentInputFormat)
       else {
         throw AIOError.invalidRecordingConfiguration(details: "Cannot create tap configuration")
@@ -3227,11 +3229,12 @@
       else {
         throw AIOError.formatConversionFailed
       }
-
-      state.tapConverter = tapConverter
-      state.tapConverterInputFormat = tapFormat
-      state.tapConverterOutputFormat = processingFormat
-      state.tapConvertedBuffer = tapConvertedBuffer
+        state{
+            $0.tapConverter = tapConverter
+            $0.tapConverterInputFormat = tapFormat
+            $0.tapConverterOutputFormat = processingFormat
+            $0.tapConvertedBuffer = tapConvertedBuffer
+        }
 
       log.info(
         """
@@ -3260,7 +3263,7 @@
         throw .engineStartFailed(error: ErrorContext(error))
       }
 
-      state.installedTapBus = tapConfiguration.bus
+        state[locked:\.installedTapBus] = tapConfiguration.bus
 
       log.info("Reconfigured tap for new route: \(currentInputFormat, privacy: .public)")
     }

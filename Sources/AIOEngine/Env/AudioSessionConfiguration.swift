@@ -1,4 +1,4 @@
-#if canImport(AVFoundation) && (!os(macOS) || targetEnvironment(macCatalyst))
+
   import AVFoundation
 
   public struct AudioSessionConfiguration: Sendable, Hashable {
@@ -106,4 +106,4 @@
       hasher.combine(prefersInterruptionOnRouteDisconnect)
     }
   }
-#endif
+
