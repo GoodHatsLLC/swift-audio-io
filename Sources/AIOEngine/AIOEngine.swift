@@ -3348,21 +3348,17 @@
     public nonisolated func attachBufferReceiver(_ receiver: consuming some BufferReceiver<Float>)
       async
     {
-      await MainActor.run {
         self.bufferReceivers({ $0.append(receiver) })
-      }
     }
 
     /// Detaches all buffer receivers from the engine.
     public nonisolated func detachBufferReceivers() async {
-      await MainActor.run {
         self.bufferReceivers({ b in
           defer { b = [] }
           return b
         }).forEach {
           $0.endBufferTask()
         }
-      }
     }
 
     @MainActor
