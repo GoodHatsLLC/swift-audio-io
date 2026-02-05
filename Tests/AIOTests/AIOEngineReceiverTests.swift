@@ -76,7 +76,7 @@
       let url = try await engine.startTestRecording(configuration: configuration)
       defer { try? FileManager.default.removeItem(at: url) }
 
-      for _ in 0..<5 {
+      for _ in 0..<4 {
         engine.injectTestAudio(channels: [ramp(count: 128)])
       }
 
@@ -132,7 +132,7 @@
   }
 
   private func currentQueueLabel() -> String {
-    String(validatingUTF8: __dispatch_queue_get_label(nil)) ?? ""
+    unsafe String(validatingCString: __dispatch_queue_get_label(nil)) ?? ""
   }
 
   private final class QueueLabelReceiver: BufferReceiver, @unchecked Sendable {
@@ -147,7 +147,7 @@
     }
 
     nonisolated func processBuffer(_ data: UnsafeBufferPointer<Float>) {
-      processBuffer(data, timing: BufferTiming(sampleTime: 0, sampleRate: 48_000))
+      unsafe processBuffer(data, timing: BufferTiming(sampleTime: 0, sampleRate: 48_000))
     }
 
     nonisolated func processBuffer(_ data: UnsafeBufferPointer<Float>, timing: BufferTiming) {
@@ -172,12 +172,12 @@
     }
 
     nonisolated func processBuffer(_ data: UnsafeBufferPointer<Float>) {
-      processBuffer(data, timing: BufferTiming(sampleTime: 0, sampleRate: 48_000))
+      unsafe processBuffer(data, timing: BufferTiming(sampleTime: 0, sampleRate: 48_000))
     }
 
     nonisolated func processBuffer(_ data: UnsafeBufferPointer<Float>, timing: BufferTiming) {
       lock.lock()
-      stored.append((values: Array(data), timing: timing))
+      unsafe stored.append((values: Array(data), timing: timing))
       lock.unlock()
     }
 
@@ -193,7 +193,7 @@
     }
 
     nonisolated func processBuffer(_ data: UnsafeBufferPointer<Float>) {
-      processBuffer(data, timing: BufferTiming(sampleTime: 0, sampleRate: 48_000))
+      unsafe processBuffer(data, timing: BufferTiming(sampleTime: 0, sampleRate: 48_000))
     }
 
     nonisolated func processBuffer(_ data: UnsafeBufferPointer<Float>, timing: BufferTiming) {

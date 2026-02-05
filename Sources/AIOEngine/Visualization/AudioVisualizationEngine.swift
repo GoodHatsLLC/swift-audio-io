@@ -59,7 +59,7 @@
   ///   main queue.
   /// - Optional LOD processing must be configured before the instance is attached as a
   ///   buffer receiver; it must not be enabled/disabled while active.
-  @Observable
+  @safe @Observable
   public final class AudioVisualizationEngine: @unchecked Sendable, Identifiable {
     // MARK: - Public Properties
 
@@ -267,6 +267,8 @@
 
     /// Multi-band Level-of-Detail processor for Metal visualization.
     /// Enable with `enableMultiBandLOD(configuration:)`.
+
+    @ObservationIgnored
     private var lodProcessor: MultiBandLODProcessor?
     private var lodConfig: MultiBandLODConfiguration?
     private var legacyLodWork: LODWork?
@@ -275,7 +277,7 @@
     /// Returns nil if multi-band LOD is not enabled.
     /// For zero-copy access, use `multiBandLODRef` instead.
     public var multiBandLOD: MultiBandLODSnapshot? {
-      lodProcessor?.snapshot()
+      unsafe lodProcessor?.snapshot()
     }
 
     /// Zero-copy reference to current multi-band LOD data for GPU rendering.
@@ -285,12 +287,12 @@
     /// allocation or copying. The reference is safe to use for rendering because
     /// triple-buffering guarantees the audio thread won't write to this data.
     public var multiBandLODRef: LODSnapshotRef? {
-      lodProcessor?.snapshotRef()
+      unsafe lodProcessor?.snapshotRef()
     }
 
     /// Whether multi-band LOD processing is enabled.
     public var isMultiBandLODEnabled: Bool {
-      lodProcessor != nil
+      unsafe lodProcessor != nil
     }
 
     // MARK: - Private Properties
@@ -331,14 +333,14 @@
       var beatDetection: BeatDetectionConfiguration?
     }
 
-    private final class AnalysisPipeline {
+    @safe private final class AnalysisPipeline {
       let amplitudeAnalyzer: AmplitudeAnalyzer?
       let frequencyAnalyzer: FrequencyAnalyzer?
       let frequencyBucketer: FrequencyBucketer?
       let beatDetector: BeatDetector?
       let frequencySampleCount: Int
       let peakHoldDecayRate: Float
-      let ringBuffer: RingBuffer<Float>
+      let ringBuffer: SPSCRingBuffer<Float>
       let maxVisualizationSamples: Int
       var readScratchBuffer: [Float]
 
@@ -389,7 +391,7 @@
         let resolvedMaxSamples = max(maxSamples, 1)
         let ringCapacity = max(resolvedMaxSamples * 4, 1024)
         self.maxVisualizationSamples = resolvedMaxSamples
-        self.ringBuffer = RingBuffer<Float>(capacity: ringCapacity)
+        self.ringBuffer = SPSCRingBuffer<Float>(capacity: ringCapacity)
         self.readScratchBuffer = Array(repeating: 0.0, count: resolvedMaxSamples)
       }
     }
@@ -403,8 +405,8 @@
     private var analysisUpdateRateHz: Double?
     private var lodPublishRateHz: Double?
 
-    private var analysisTimer: DispatchSourceTimer?
-    private var lodPublishTimer: DispatchSourceTimer?
+    private var analysisTimer: (any DispatchSourceTimer)?
+    private var lodPublishTimer: (any DispatchSourceTimer)?
 
     // MARK: - Initialization
 
@@ -430,7 +432,7 @@
 
     /// Registers a visualization consumer and applies its declared work and sinks.
     @MainActor
-    public func register(consumer: VisualizationConsumer) {
+    public func register(consumer: any VisualizationConsumer) {
       let consumerId = ObjectIdentifier(consumer)
       let work = consumer.work
       let sinks = consumer.sinks
@@ -443,24 +445,12 @@
 
     /// Unregisters a visualization consumer if it is currently active.
     @MainActor
-    public func unregister(consumer: VisualizationConsumer) {
+    public func unregister(consumer: any VisualizationConsumer) {
       let consumerId = ObjectIdentifier(consumer)
       let removed = clearConsumerIfMatching(consumerId)
       guard removed else { return }
       hasConsumerAtomic.store(false, ordering: .relaxed)
       applyWork(.none, sinks: .empty)
-      updateProcessingState()
-    }
-
-    @available(*, deprecated, message: "Use register(consumer:) instead.")
-    public func visualizationConsumerDidAppear() {
-      hasConsumerAtomic.store(true, ordering: .relaxed)
-      updateProcessingState()
-    }
-
-    @available(*, deprecated, message: "Use unregister(consumer:) instead.")
-    public func visualizationConsumerDidDisappear() {
-      hasConsumerAtomic.store(false, ordering: .relaxed)
       updateProcessingState()
     }
 
@@ -493,11 +483,11 @@
       lastBeatUpdateEndSampleTimeAtomic.store(0, ordering: .relaxed)
       analysisPipeline?.frequencyBucketer?.resetPeakHold()
       analysisPipeline?.beatDetector?.reset()
-      analysisPipeline?.ringBuffer.clearIndices()
+      analysisPipeline?.ringBuffer.clear()
       fallbackSampleTimeAtomic.store(0, ordering: .relaxed)
       latestEndSampleTimeAtomic.store(0, ordering: .relaxed)
       latestSampleRateBitsAtomic.store(configuration.sampleRate.bitPattern, ordering: .relaxed)
-      lodProcessor?.reset()
+      unsafe lodProcessor?.reset()
 
       log.info("Audio visualization stopped")
     }
@@ -522,22 +512,6 @@
       }
 
       isActive = shouldBeActive
-    }
-
-    /// Updates the frequency bucket mode.
-    ///
-    /// - Parameter mode: The new bucketing mode to use.
-    @available(*, deprecated, message: "Use VisualizationWork instead.")
-    public func updateBucketMode(_ mode: FrequencyBucketMode) {
-      analysisPipeline?.frequencyBucketer?.updateMode(mode)
-    }
-
-    /// Updates the beat detection configuration.
-    ///
-    /// - Parameter configuration: The new beat detection configuration.
-    @available(*, deprecated, message: "Use VisualizationWork instead.")
-    public func updateBeatDetectionConfiguration(_ configuration: BeatDetectionConfiguration) {
-      analysisPipeline?.beatDetector?.updateConfiguration(configuration)
     }
 
     // MARK: - Multi-Band LOD
@@ -578,7 +552,7 @@
     ///
     /// Call this when starting a new recording to clear history.
     public func resetMultiBandLOD() {
-      lodProcessor?.reset()
+      unsafe lodProcessor?.reset()
     }
 
     /// Processes an `AVAudioPCMBuffer` for visualization.
@@ -586,14 +560,14 @@
     /// - Parameter buffer: The audio buffer to process.
     public func processAudioBuffer(_ buffer: AVAudioPCMBuffer) {
       guard isActiveAtomic.load(ordering: .relaxed),
-        let floatData = buffer.floatChannelData?[0]
+        let floatData = unsafe buffer.floatChannelData?[0]
       else { return }
 
-      let bufferPointer = UnsafeBufferPointer(
+      let bufferPointer = unsafe UnsafeBufferPointer(
         start: floatData,
         count: Int(buffer.frameLength)
       )
-      processBuffer(bufferPointer)
+      unsafe processBuffer(bufferPointer)
     }
 
     // MARK: - Private Methods
@@ -633,23 +607,23 @@
 
     private func applyWork(_ work: VisualizationWork, sinks: VisualizationSinks) {
       let resolvedLodWork = work.lod ?? legacyLodWork
-      if resolvedLodWork != nil, sinks.lodSnapshot == nil {
+      if resolvedLodWork != nil, unsafe sinks.lodSnapshot == nil {
         log.warning("VisualizationWork.lod requested without a lodSnapshot sink.")
       }
-      let wantsLod = resolvedLodWork != nil && sinks.lodSnapshot != nil
+      let wantsLod = unsafe resolvedLodWork != nil && sinks.lodSnapshot != nil
       lodPublishRateHz = wantsLod ? resolvedLodWork?.publishRateHz : nil
 
       if let lodWork = resolvedLodWork, wantsLod {
         let resolvedConfig = normalizedLODConfig(lodWork.configuration)
         if lodConfig != resolvedConfig {
           lodEnabledAtomic.store(false, ordering: .relaxed)
-          lodProcessor = MultiBandLODProcessor(configuration: resolvedConfig)
+          unsafe lodProcessor = unsafe MultiBandLODProcessor(configuration: resolvedConfig)
           lodConfig = resolvedConfig
         }
         lodEnabledAtomic.store(true, ordering: .relaxed)
       } else {
         lodEnabledAtomic.store(false, ordering: .relaxed)
-        lodProcessor = nil
+        unsafe lodProcessor = nil
         lodConfig = nil
       }
 
@@ -832,7 +806,7 @@
 
     private func updateAudioBuffer(_ data: UnsafeBufferPointer<Float>) {
       guard !data.isEmpty else { return }
-      analysisPipeline?.ringBuffer.write(data)
+      unsafe analysisPipeline?.ringBuffer.write(data)
     }
 
     private func updateVisualizations() {
@@ -846,10 +820,10 @@
       let desiredSamples = pipeline.maxVisualizationSamples
       var readCount = 0
 
-      pipeline.readScratchBuffer.withUnsafeMutableBufferPointer { bufferPointer in
+      unsafe pipeline.readScratchBuffer.withUnsafeMutableBufferPointer { bufferPointer in
         guard let base = bufferPointer.baseAddress else { return }
-        let limitedBuffer = UnsafeMutableBufferPointer(start: base, count: desiredSamples)
-        readCount = pipeline.ringBuffer.read(into: limitedBuffer)
+        let limitedBuffer = unsafe UnsafeMutableBufferPointer(start: base, count: desiredSamples)
+        readCount = unsafe pipeline.ringBuffer.read(into: limitedBuffer)
       }
 
       guard readCount > 0 else { return }
@@ -945,11 +919,11 @@
 
     private func publishLODSnapshot() {
       guard lodEnabledAtomic.load(ordering: .relaxed) else { return }
-      let snapshot = lodProcessor?.snapshotRef()
+      let snapshot = unsafe lodProcessor?.snapshotRef()
       let sinks = sinksSnapshot()
-      guard sinks.lodSnapshot != nil else { return }
+      guard unsafe sinks.lodSnapshot != nil else { return }
       DispatchQueue.main.async {
-        sinks.lodSnapshot?(snapshot)
+        unsafe sinks.lodSnapshot?(snapshot)
       }
     }
 
@@ -985,7 +959,7 @@
         sampleTime: startSampleTime,
         sampleRate: configuration.sampleRate
       )
-      processBuffer(data, timing: timing)
+      unsafe processBuffer(data, timing: timing)
     }
 
     nonisolated public func processBuffer(
@@ -1001,11 +975,11 @@
 
       guard isActiveAtomic.load(ordering: .relaxed) else { return }
       if analysisEnabledAtomic.load(ordering: .relaxed) {
-        self.updateAudioBuffer(data)
+        unsafe self.updateAudioBuffer(data)
       }
 
       if lodEnabledAtomic.load(ordering: .relaxed) {
-        lodProcessor?.process(data)
+        unsafe lodProcessor?.process(data)
       }
 
       let sinks = sinksSnapshot()

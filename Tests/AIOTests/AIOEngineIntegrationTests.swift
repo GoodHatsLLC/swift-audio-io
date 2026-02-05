@@ -84,6 +84,29 @@
     }
 
     @Test
+    func testStereoRecordingWritesFile() async throws {
+      let engine = AIOEngine()
+      let configuration = makeStereoConfiguration()
+
+      let url = try await engine.startTestRecording(configuration: configuration)
+      defer { try? FileManager.default.removeItem(at: url) }
+
+      let left = (0..<480).map { Float($0) / 480.0 }
+      let right = (0..<480).map { 1.0 - Float($0) / 480.0 }
+      engine.injectTestAudio(channels: [left, right])
+
+      let stoppedURL = try await engine.stopRecording()
+      try #require(stoppedURL == url)
+
+      let size = try #require(url.resourceValues(forKeys: [.fileSizeKey]).fileSize)
+      #expect(size > 0)
+
+      let file = try AVAudioFile(forReading: url)
+      #expect(file.fileFormat.channelCount == 2)
+      #expect(file.length > 0)
+    }
+
+    @Test
     func testInterruptionStopsRecording() async throws {
       let engine = AIOEngine()
       let configuration = makeConfiguration()
@@ -126,6 +149,23 @@
       )
     }
 
+    private func makeStereoConfiguration() -> RecordingConfiguration {
+      let input = InputConfiguration(
+        sampleRate: SampleRate.common(.sr48000),
+        channels: .stereo
+      )
+      let output = OutputConfiguration(
+        fileFormat: .caf,
+        bitDepth: .pcmFloat32,
+        quality: .high
+      )
+      return RecordingConfiguration(
+        inputConfiguration: input,
+        outputConfiguration: output,
+        outputDestination: .temporary
+      )
+    }
+
     private func ramp(count: Int) -> [Float] {
       guard count > 0 else { return [] }
       return (0..<count).map { Float($0) / Float(count) }
@@ -145,12 +185,12 @@
     }
 
     nonisolated func processBuffer(_ data: UnsafeBufferPointer<Float>) {
-      processBuffer(data, timing: BufferTiming(sampleTime: 0, sampleRate: 48_000))
+      unsafe processBuffer(data, timing: BufferTiming(sampleTime: 0, sampleRate: 48_000))
     }
 
     nonisolated func processBuffer(_ data: UnsafeBufferPointer<Float>, timing: BufferTiming) {
       lock.lock()
-      storedValues = Array(data)
+      storedValues = unsafe Array(data)
       storedTiming = timing
       lock.unlock()
     }

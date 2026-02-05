@@ -22,13 +22,13 @@ extension Mut {
   }
 
   public borrowing func withLock<Result>(
-    _ body: (inout sending Value) -> sending Result
-  ) -> sending Result {
+    _ body: (inout Value) -> Result
+  ) -> Result {
     #if canImport(Synchronization)
       return lock.withLock { (v) -> Transferring<Result> in
         nonisolated(unsafe) var copy = v
-        defer { v = copy }
-        return Transferring(body(&copy))
+        defer { v = unsafe copy }
+        return unsafe Transferring(body(&copy))
       }.value
     #else
       return lock.withLockUnchecked { (v) -> Transferring<Result> in
@@ -46,8 +46,8 @@ extension Mut {
       #if canImport(Synchronization)
         return try lock.withLock { (v) -> Transferring<Result> in
           nonisolated(unsafe) var copy = v
-          defer { v = copy }
-          return try Transferring(body(&copy))
+          defer { v = unsafe copy }
+          return try unsafe Transferring(body(&copy))
         }.value
       #else
         return try lock.withLockUnchecked { (v) -> Transferring<Result> in
@@ -69,8 +69,8 @@ extension Mut {
     #if canImport(Synchronization)
       return lock.withLockIfAvailable { (v) -> Transferring<Result> in
         nonisolated(unsafe) var copy = v
-        defer { v = copy }
-        return Transferring(body(&copy))
+        defer { v = unsafe copy }
+        return unsafe Transferring(body(&copy))
       }?.value
     #else
       return lock.withLockIfAvailableUnchecked { (v) -> Transferring<Result> in
@@ -88,8 +88,8 @@ extension Mut {
       #if canImport(Synchronization)
         return try lock.withLockIfAvailable { (v) -> Transferring<Result> in
           nonisolated(unsafe) var copy = v
-          defer { v = copy }
-          return try Transferring(body(&copy))
+          defer { v = unsafe copy }
+          return try unsafe Transferring(body(&copy))
         }?.value
       #else
         return try lock.withLockIfAvailableUnchecked { (v) -> Transferring<Result> in

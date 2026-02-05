@@ -25,7 +25,7 @@ public protocol BufferReceiver<T>: AnyObject, Sendable {
 
 extension BufferReceiver {
   public nonisolated func processBuffer(_ data: UnsafeBufferPointer<T>, timing: BufferTiming) {
-    processBuffer(data)
+    unsafe processBuffer(data)
   }
 }
 

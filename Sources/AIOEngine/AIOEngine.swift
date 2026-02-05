@@ -1,5 +1,5 @@
 #if !os(macOS) || targetEnvironment(macCatalyst)
-  @preconcurrency import AVFoundation
+  import AVFoundation
   import AsyncAlgorithms
   import Atomics
   import Dispatch
@@ -265,8 +265,8 @@
 
     // MARK: - Stored Properties
 
-    let engine = AVAudioEngine()
-    nonisolated let player = AVAudioPlayerNode()
+    nonisolated(unsafe) let engine = AVAudioEngine()
+    nonisolated(unsafe) let player = AVAudioPlayerNode()
     let engineControlQueue = DispatchQueue(label: "AIOEngine.engine-control", qos: .default)
     let writerQueue = DispatchQueue(label: "AIOEngine.writer", qos: .userInitiated)
     let receiverQueue = DispatchQueue(label: "AIOEngine.receiver", qos: .userInitiated)
@@ -340,7 +340,8 @@
     }
     /// A Boolean value that indicates whether the player is currently playing.
     @MainActor public var isPlaying: Bool {
-      playback != nil && player.isPlaying
+      // FIXME: player isPlaying would need to be mirrored as a stored variable to be safe
+      unsafe playback != nil && player.isPlaying
     }
 
     @MainActor var writerSession: WriterSession?
@@ -375,7 +376,7 @@
 
     /// Creates a new instance of the audio engine.
     public init() {
-      runOnEngineControlQueue { [engine, player] in
+      runOnEngineControlQueue { [engine = unsafe engine, player = unsafe player] in
         engine.attach(player)
       }
     }
@@ -385,7 +386,7 @@
     /// - Parameter reconciliationConfiguration: Configuration for state reconciliation.
     @MainActor public init(reconciliationConfiguration: ReconciliationConfiguration) {
       self.reconciliationConfiguration = reconciliationConfiguration
-      runOnEngineControlQueue { [engine, player] in
+      runOnEngineControlQueue { [engine = unsafe engine, player = unsafe player] in
         engine.attach(player)
       }
     }
@@ -398,7 +399,7 @@
 
     nonisolated func runOnEngineControlQueueResult<T>(
       _ work: () throws -> T
-    ) -> Result<T, Error> {
+    ) -> Result<T, any Error> {
       engineControlQueue.sync {
         Result { try work() }
       }
@@ -417,7 +418,7 @@
 
     nonisolated func withEngineControlQueueResult<T>(
       _ work: @escaping @Sendable () throws -> T
-    ) async -> Result<T, Error> {
+    ) async -> Result<T, any Error> {
       await withCheckedContinuation { continuation in
         engineControlQueue.async {
           let result = Result { try work() }
@@ -544,10 +545,10 @@
       let startOffset =
         Double(instance.startFrame) / instance.file.processingFormat.sampleRate
 
-      guard let nodeTime = player.lastRenderTime,
-        let playerTime = player.playerTime(forNodeTime: nodeTime)
+      guard let nodeTime = unsafe player.lastRenderTime,
+        let playerTime = unsafe player.playerTime(forNodeTime: nodeTime)
       else {
-        return Playback(
+        return unsafe Playback(
           id: instance.id,
           file: instance.file.url,
           isPlaying: player.isPlaying,
@@ -562,7 +563,7 @@
 
       let duration = Double(instance.file.length) / instance.file.processingFormat.sampleRate
 
-      return Playback(
+      return unsafe Playback(
         id: instance.id,
         file: instance.file.url,
         isPlaying: player.isPlaying,

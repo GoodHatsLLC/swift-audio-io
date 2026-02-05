@@ -1,5 +1,5 @@
 #if !os(macOS) || targetEnvironment(macCatalyst)
-  @preconcurrency import AVFoundation
+  import AVFoundation
   import AsyncAlgorithms
   import Foundation
   import SystemLog
@@ -78,21 +78,21 @@
       let startResult = await withEngineControlQueueResult { [weak self] in
         guard let self else { return }
         // Reset engine state
-        self.player.stop()
-        self.engine.stop()
-        self.engine.reset()
-        if !self.engine.attachedNodes.contains(self.player) {
-          self.engine.attach(self.player)
+        unsafe self.player.stop()
+        unsafe self.engine.stop()
+        unsafe self.engine.reset()
+        if unsafe !self.engine.attachedNodes.contains(self.player) {
+          unsafe self.engine.attach(self.player)
         }
         // Connect the player node through the main mixer for automatic format conversion.
         // Connecting directly to outputNode can raise an uncatchable NSException on iOS 26.x
         // when the file's processingFormat doesn't match the hardware output format.
-        self.engine.connect(
+        unsafe self.engine.connect(
           self.player,
           to: self.engine.mainMixerNode,
           format: file.processingFormat
         )
-        self.player
+        unsafe self.player
           .scheduleFile(file, at: nil, completionCallbackType: .dataPlayedBack) {
             [
               weak self,
@@ -100,8 +100,8 @@
             ] _ in
             self?.cleanupPlaybackInstance(playbackInstance)
           }
-        try self.engine.start()
-        self.player.play()
+        try unsafe self.engine.start()
+        unsafe self.player.play()
       }
       if case .failure(let error) = startResult {
         throw AIOError.engineStartFailed(error: ErrorContext(error))
@@ -180,18 +180,18 @@
       let startResult = await withEngineControlQueueResult { [weak self] in
         guard let self else { return }
         // Reset engine state
-        self.player.stop()
-        self.engine.stop()
-        self.engine.reset()
-        if !self.engine.attachedNodes.contains(self.player) {
-          self.engine.attach(self.player)
+        unsafe self.player.stop()
+        unsafe self.engine.stop()
+        unsafe self.engine.reset()
+        if unsafe !self.engine.attachedNodes.contains(self.player) {
+          unsafe self.engine.attach(self.player)
         }
-        self.engine.connect(
+        unsafe self.engine.connect(
           self.player,
           to: self.engine.mainMixerNode,
           format: file.processingFormat
         )
-        self.player.scheduleSegment(
+        unsafe self.player.scheduleSegment(
           file,
           startingFrame: startFrame,
           frameCount: frameCount,
@@ -205,8 +205,8 @@
             }
           }
         }
-        try self.engine.start()
-        self.player.play()
+        try unsafe self.engine.start()
+        unsafe self.player.play()
       }
       if case .failure(let error) = startResult {
         throw AIOError.engineStartFailed(error: ErrorContext(error))
@@ -246,9 +246,9 @@
       if Task.isCancelled { return }
       await withEngineControlQueue { [weak self] in
         guard let self else { return }
-        self.player.stop()
+        unsafe self.player.stop()
         file.framePosition = framePosition
-        self.player
+        unsafe self.player
           .scheduleSegment(
             file,
             startingFrame: framePosition,
@@ -260,7 +260,7 @@
             }
           )
         if play {
-          self.player.play()
+          unsafe self.player.play()
         }
       }
     }
@@ -348,7 +348,7 @@
     public func pausePlayback() {
       guard isPlayback else { return }
       engineControlQueue.async { [weak self] in
-        self?.player.pause()
+        unsafe self?.player.pause()
       }
       scrubTask = nil
       // Update the playback state to reflect paused status
@@ -362,9 +362,9 @@
     /// Has no effect if playback is not paused or if there is no active playback.
     @MainActor
     public func resumePlayback() {
-      guard isPlayback, !player.isPlaying else { return }
+      guard isPlayback, unsafe !player.isPlaying else { return }
       engineControlQueue.async { [weak self] in
-        self?.player.play()
+        unsafe self?.player.play()
       }
       // Update the playback state to reflect playing status
       if let instance = state[locked: \.playbackInstance] {
@@ -394,8 +394,8 @@
 
     nonisolated func stopPlayerIfNeeded() async {
       await withEngineControlQueue { [weak self] in
-        guard let self, self.player.isPlaying else { return }
-        self.player.stop()
+        guard let self, unsafe self.player.isPlaying else { return }
+        unsafe self.player.stop()
       }
     }
 

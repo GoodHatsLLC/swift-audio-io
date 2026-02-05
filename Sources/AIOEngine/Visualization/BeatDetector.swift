@@ -128,7 +128,7 @@
 
         // Calculate weighted average of bass frequencies
         var bassEnergy: Float = 0
-        vDSP_meanv(bassSpectrum, 1, &bassEnergy, vDSP_Length(bassCount))
+        unsafe vDSP_meanv(bassSpectrum, 1, &bassEnergy, vDSP_Length(bassCount))
 
         // Combine bass energy with overall RMS, emphasizing bass
         return bassEnergy * 0.7 + rmsLevel * 0.3
@@ -149,7 +149,7 @@
 
       // Calculate mean energy
       var mean: Float = 0
-      vDSP_meanv(energyHistory, 1, &mean, vDSP_Length(historyCount))
+      unsafe vDSP_meanv(energyHistory, 1, &mean, vDSP_Length(historyCount))
 
       // Calculate variance for adaptive sensitivity
       var variance: Float = 0
@@ -157,11 +157,11 @@
 
       // temp = history - mean
       var negativeMean = -mean
-      vDSP_vsadd(energyHistory, 1, &negativeMean, &temp, 1, vDSP_Length(historyCount))
+      unsafe vDSP_vsadd(energyHistory, 1, &negativeMean, &temp, 1, vDSP_Length(historyCount))
 
       // variance = mean(temp^2)
-      vDSP_vsq(temp, 1, &temp, 1, vDSP_Length(historyCount))
-      vDSP_meanv(temp, 1, &variance, vDSP_Length(historyCount))
+      unsafe vDSP_vsq(temp, 1, &temp, 1, vDSP_Length(historyCount))
+      unsafe vDSP_meanv(temp, 1, &variance, vDSP_Length(historyCount))
 
       // Standard deviation
       let stdDev = sqrtf(max(variance, 0.0001))

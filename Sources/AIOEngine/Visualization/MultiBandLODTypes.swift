@@ -120,30 +120,6 @@
     /// Specify exact cutoff frequencies between bands.
     case custom(frequencies: [Float])
 
-    /// Compute filter alpha values for cascading lowpass filters.
-    ///
-    /// - Parameters:
-    ///   - bandCount: Number of bands to split into.
-    ///   - sampleRate: Audio sample rate.
-    /// - Returns: Array of alpha values for each crossover point.
-    @available(*, deprecated, message: "Use computeCrossoverFrequencies instead")
-    public func computeAlphas(bandCount: Int, sampleRate: Int) -> [Float] {
-      let cutoffs = computeCrossoverFrequencies(bandCount: bandCount, sampleRate: sampleRate)
-
-      // Legacy alpha calculation: alpha = 1 - exp(-2 * pi * f / sr)
-      // This matches a simple 1-pole RC filter response.
-      let sr = max(Float(sampleRate), 1.0)
-      var alphas = cutoffs.map { freq -> Float in
-        let alpha = 1.0 - exp((-2.0 * Float.pi * freq) / sr)
-        return min(max(alpha, 0.0), 1.0)
-      }
-
-      // Keep a trailing value for diagnostics/debugging parity with older code paths.
-      alphas.append(1.0)
-
-      return alphas
-    }
-
     /// Compute crossover frequencies for the bands.
     ///
     /// - Parameters:
@@ -272,7 +248,7 @@
 
   extension LODSnapshot {
     public func withRawBuffer<R>(band: Int, _ body: (UnsafeBufferPointer<Float>) -> R) -> R {
-      body(UnsafeBufferPointer(start: nil, count: 0))
+      unsafe body(UnsafeBufferPointer(start: nil, count: 0))
     }
   }
 
@@ -389,25 +365,25 @@
 
     /// Direct access to a band's min buffer.
     public func withMinBuffer<R>(band: Int, _ body: (UnsafeBufferPointer<Float>) -> R) -> R {
-      bands[band].minBuffer.withUnsafeBufferPointer(body)
+      unsafe bands[band].minBuffer.withUnsafeBufferPointer(body)
     }
 
     /// Direct access to a band's max buffer.
     public func withMaxBuffer<R>(band: Int, _ body: (UnsafeBufferPointer<Float>) -> R) -> R {
-      bands[band].maxBuffer.withUnsafeBufferPointer(body)
+      unsafe bands[band].maxBuffer.withUnsafeBufferPointer(body)
     }
 
     /// Direct access to a band's RMS buffer.
     public func withRMSBuffer<R>(band: Int, _ body: (UnsafeBufferPointer<Float>) -> R) -> R {
-      bands[band].rmsBuffer.withUnsafeBufferPointer(body)
+      unsafe bands[band].rmsBuffer.withUnsafeBufferPointer(body)
     }
 
     /// Direct access to a band's raw buffer.
     public func withRawBuffer<R>(band: Int, _ body: (UnsafeBufferPointer<Float>) -> R) -> R {
       if let raw = bands[band].rawBuffer {
-        return raw.withUnsafeBufferPointer(body)
+        return unsafe raw.withUnsafeBufferPointer(body)
       } else {
-        return body(UnsafeBufferPointer(start: nil, count: 0))
+        return unsafe body(UnsafeBufferPointer(start: nil, count: 0))
       }
     }
   }

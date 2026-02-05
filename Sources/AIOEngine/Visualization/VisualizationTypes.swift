@@ -92,10 +92,21 @@
 
     /// Human-readable label for this frequency range.
     public var label: String {
-      if centerFrequency >= 1000 {
-        return String(format: "%.1fk", centerFrequency / 1000)
+      let cf = centerFrequency
+      if cf >= 1000 {
+        let k = cf / 1000.0
+        let formatted = k.formatted(
+          .number
+            .precision(.fractionLength(0...1))
+            .grouping(.never)
+        )
+        return "\(formatted)k"
       } else {
-        return String(format: "%.0f", centerFrequency)
+        return cf.formatted(
+          .number
+            .precision(.fractionLength(0...0))
+            .grouping(.never)
+        )
       }
     }
 
@@ -364,7 +375,7 @@
   }
 
   /// Sink callbacks for visualization outputs.
-  public struct VisualizationSinks: @unchecked Sendable {
+  @safe public struct VisualizationSinks: Sendable {
     public var timeDomain: (@MainActor (TimeDomainData) -> Void)?
     public var frequencyDomain: (@MainActor (FrequencyDomainData) -> Void)?
     public var beat: (@MainActor (BeatInfo) -> Void)?
@@ -381,11 +392,11 @@
       self.timeDomain = timeDomain
       self.frequencyDomain = frequencyDomain
       self.beat = beat
-      self.lodSnapshot = lodSnapshot
+      unsafe self.lodSnapshot = lodSnapshot
       self.latestBufferTiming = latestBufferTiming
     }
 
-    public static let empty = VisualizationSinks()
+    public static let empty = unsafe VisualizationSinks()
   }
 
   /// A consumer that declares required work and exposes sinks for updates.

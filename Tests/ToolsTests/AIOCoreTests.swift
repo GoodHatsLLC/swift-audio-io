@@ -19,14 +19,4 @@ struct ToolsTests {
     #expect(synchronized.withLock(\.count) == 4)
   }
 
-  @Test
-  func ringBufferEnqueuesAndDequeues() {
-    let ringBuffer = RingBuffer<Int>(capacity: 3)
-    ringBuffer.write([1, 2])
-    #expect(ringBuffer.count == 2)
-
-    let consumed = ringBuffer.read(2)
-    #expect(consumed == [1, 2])
-    #expect(ringBuffer.count == 0)
-  }
 }

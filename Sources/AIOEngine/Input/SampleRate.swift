@@ -12,7 +12,7 @@ public struct SampleRate: RawRepresentable, Hashable, Codable, CustomStringConve
   public static let typeDescription: String = "Sample Rate"
   public var id: Self { self }
   public var description: String {
-    String(format: "%.1f kHz", platform / 1000.0)
+    "\(platform / 1000.0) kHz"
   }
   public static var commonCases: [SampleRate] {
     SampleRate.Common.allCases.map(SampleRate.init(common:))

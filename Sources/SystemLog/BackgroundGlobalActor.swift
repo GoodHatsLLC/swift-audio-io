@@ -13,9 +13,9 @@ public final class BackgroundSerialExecutor: TaskExecutor, SerialExecutor, Senda
     qos: .background
   )
   public func enqueue(_ job: UnownedJob) {
-    let unowned = asUnownedSerialExecutor()
+    let unowned = unsafe asUnownedSerialExecutor()
     queue.async {
-      job.runSynchronously(on: unowned)
+      unsafe job.runSynchronously(on: unowned)
     }
   }
 }
@@ -31,6 +31,6 @@ public actor Background {
   public static let executor = BackgroundSerialExecutor()
   public static let shared: some Actor = Background()
   public nonisolated var unownedExecutor: UnownedSerialExecutor {
-    Self.executor.asUnownedSerialExecutor()
+    unsafe Self.executor.asUnownedSerialExecutor()
   }
 }

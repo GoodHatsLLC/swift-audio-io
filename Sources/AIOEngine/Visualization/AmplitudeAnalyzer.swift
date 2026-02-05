@@ -100,9 +100,9 @@
 
       let stride = Float(inputSize) / Float(outputSize)
 
-      data.withUnsafeBufferPointer { dataPtr in
+      unsafe data.withUnsafeBufferPointer { dataPtr in
         if let source = dataPtr.baseAddress {
-          decimatedData.withUnsafeMutableBufferPointer { decimatedPtr in
+          unsafe decimatedData.withUnsafeMutableBufferPointer { decimatedPtr in
             if let destination = decimatedPtr.baseAddress {
               for i in 0..<outputSize {
                 let startIndex = Int(Float(i) * stride)
@@ -111,9 +111,10 @@
                 let N = vDSP_Length(effectiveEndIndex - startIndex)
 
                 if N > 0 {
-                  vDSP_meamgv(source.advanced(by: startIndex), 1, destination.advanced(by: i), N)
+                  unsafe vDSP_meamgv(
+                    source.advanced(by: startIndex), 1, destination.advanced(by: i), N)
                 } else {
-                  destination[i] = 0.0
+                  unsafe destination[i] = 0.0
                 }
               }
             }
@@ -131,16 +132,16 @@
       var noiseFloor = configuration.noiseFloor
 
       // tempBuffer = max(data, noiseFloor)
-      vDSP_vthres(data, 1, &noiseFloor, &tempBuffer, 1, count)
+      unsafe vDSP_vthres(data, 1, &noiseFloor, &tempBuffer, 1, count)
 
       // workBuffer = tempBuffer * smoothingFactor
-      vDSP_vsmul(&tempBuffer, 1, &smoothingFactor, &workBuffer, 1, count)
+      unsafe vDSP_vsmul(&tempBuffer, 1, &smoothingFactor, &workBuffer, 1, count)
 
       // tempBuffer = smoothedAmplitudes * invSmoothingFactor
-      vDSP_vsmul(&smoothedAmplitudes, 1, &invSmoothingFactor, &tempBuffer, 1, count)
+      unsafe vDSP_vsmul(&smoothedAmplitudes, 1, &invSmoothingFactor, &tempBuffer, 1, count)
 
       // smoothedAmplitudes = tempBuffer + workBuffer
-      vDSP_vadd(&tempBuffer, 1, &workBuffer, 1, &smoothedAmplitudes, 1, count)
+      unsafe vDSP_vadd(&tempBuffer, 1, &workBuffer, 1, &smoothedAmplitudes, 1, count)
 
       return smoothedAmplitudes
     }
@@ -151,14 +152,14 @@
       var decayRate = configuration.peakDecayRate
 
       // tempBuffer = peakAmplitudes * decayRate
-      vDSP_vsmul(&peakAmplitudes, 1, &decayRate, &tempBuffer, 1, count)
+      unsafe vDSP_vsmul(&peakAmplitudes, 1, &decayRate, &tempBuffer, 1, count)
 
       if amplitudes.isEmpty {
         // If no new amplitudes, the decayed peaks are the new peaks
         peakAmplitudes = tempBuffer
       } else {
         // peakAmplitudes = max(amplitudes, tempBuffer)
-        vDSP_vmax(amplitudes, 1, &tempBuffer, 1, &peakAmplitudes, 1, count)
+        unsafe vDSP_vmax(amplitudes, 1, &tempBuffer, 1, &peakAmplitudes, 1, count)
       }
 
       return peakAmplitudes
@@ -170,7 +171,7 @@
 
       let count = data.count
       var result: Float = 0.0
-      vDSP_rmsqv(data, 1, &result, vDSP_Length(count))
+      unsafe vDSP_rmsqv(data, 1, &result, vDSP_Length(count))
 
       // Add to history for trend analysis
       rmsHistory.append(result)
@@ -186,7 +187,7 @@
       guard !amplitudes.isEmpty else { return 0.0 }
 
       var maxValue: Float = 0.0
-      vDSP_maxv(amplitudes, 1, &maxValue, vDSP_Length(amplitudes.count))
+      unsafe vDSP_maxv(amplitudes, 1, &maxValue, vDSP_Length(amplitudes.count))
 
       return maxValue
     }
@@ -200,8 +201,8 @@
 
     /// Reset all internal state
     public func reset() {
-      vDSP_vclr(&smoothedAmplitudes, 1, vDSP_Length(configuration.windowSize))
-      vDSP_vclr(&peakAmplitudes, 1, vDSP_Length(configuration.windowSize))
+      unsafe vDSP_vclr(&smoothedAmplitudes, 1, vDSP_Length(configuration.windowSize))
+      unsafe vDSP_vclr(&peakAmplitudes, 1, vDSP_Length(configuration.windowSize))
       rmsHistory.removeAll()
     }
   }

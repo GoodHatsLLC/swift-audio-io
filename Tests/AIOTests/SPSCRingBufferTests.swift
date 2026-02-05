@@ -13,14 +13,14 @@
       let buffer = SPSCRingBuffer<Int>(capacity: 4)
 
       let firstWrite = [1, 2, 3]
-      let written1 = firstWrite.withUnsafeBufferPointer { buffer.write($0) }
+      let written1 = unsafe firstWrite.withUnsafeBufferPointer { unsafe buffer.write($0) }
       try #require(written1 == 3)
 
       let read1 = read(buffer, count: 2)
       try #require(read1 == [1, 2])
 
       let secondWrite = [4, 5, 6]
-      let written2 = secondWrite.withUnsafeBufferPointer { buffer.write($0) }
+      let written2 = unsafe secondWrite.withUnsafeBufferPointer { unsafe buffer.write($0) }
       try #require(written2 == 3)
 
       let read2 = read(buffer, count: 4)
@@ -32,11 +32,11 @@
       let buffer = SPSCRingBuffer<Int>(capacity: 4)
 
       let write1 = [1, 2, 3, 4]
-      let written1 = write1.withUnsafeBufferPointer { buffer.write($0) }
+      let written1 = unsafe write1.withUnsafeBufferPointer { unsafe buffer.write($0) }
       try #require(written1 == 4)
 
       let write2 = [5, 6]
-      let written2 = write2.withUnsafeBufferPointer { buffer.write($0) }
+      let written2 = unsafe write2.withUnsafeBufferPointer { unsafe buffer.write($0) }
       try #require(written2 == 0)
 
       let read1 = read(buffer, count: 4)
@@ -61,7 +61,7 @@
       )
 
       let samples: [Float] = [0, 1, 2, 3]
-      _ = samples.withUnsafeBufferPointer { buffers[0].write($0) }
+      _ = unsafe samples.withUnsafeBufferPointer { unsafe buffers[0].write($0) }
       var packet = TimingPacket(
         startSampleTime: 0,
         frameCount: samples.count,
@@ -69,8 +69,8 @@
         sourceSampleTime: nil,
         sourceSampleRate: nil
       )
-      withUnsafePointer(to: &packet) { pointer in
-        _ = timing.write(UnsafeBufferPointer(start: pointer, count: 1))
+      unsafe withUnsafePointer(to: &packet) { pointer in
+        _ = unsafe timing.write(UnsafeBufferPointer(start: pointer, count: 1))
       }
 
       let task = Task.detached {
@@ -104,10 +104,10 @@
     private func read(_ buffer: SPSCRingBuffer<Int>, count: Int) -> [Int] {
       guard count > 0 else { return [] }
       let storage = UnsafeMutablePointer<Int>.allocate(capacity: count)
-      defer { storage.deallocate() }
-      let read = buffer.read(into: UnsafeMutableBufferPointer(start: storage, count: count))
+      defer { unsafe storage.deallocate() }
+      let read = unsafe buffer.read(into: UnsafeMutableBufferPointer(start: storage, count: count))
       guard read > 0 else { return [] }
-      return Array(UnsafeBufferPointer(start: storage, count: read))
+      return unsafe Array(UnsafeBufferPointer(start: storage, count: read))
     }
   }
 
@@ -135,12 +135,12 @@
     }
 
     nonisolated func processBuffer(_ data: UnsafeBufferPointer<Float>) {
-      processBuffer(data, timing: BufferTiming(sampleTime: 0, sampleRate: 48_000))
+      unsafe processBuffer(data, timing: BufferTiming(sampleTime: 0, sampleRate: 48_000))
     }
 
     nonisolated func processBuffer(_ data: UnsafeBufferPointer<Float>, timing: BufferTiming) {
       lock.lock()
-      storedValues = Array(data)
+      storedValues = unsafe Array(data)
       storedTiming = timing
       lock.unlock()
       control.cancelRequested.store(true, ordering: .relaxed)

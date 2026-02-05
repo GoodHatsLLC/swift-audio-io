@@ -1,5 +1,5 @@
 #if !os(macOS) || targetEnvironment(macCatalyst)
-  @preconcurrency import AVFoundation
+  import AVFoundation
   import Foundation
   import SystemLog
   import Tools
@@ -42,7 +42,9 @@
       log.info("Handling route change: \(String(describing: event.reason), privacy: .public)")
 
       let session = AVAudioSession.sharedInstance()
-      let newInputFormat = runOnEngineControlQueue { engine.inputNode.outputFormat(forBus: 0) }
+      let newInputFormat = runOnEngineControlQueue { [engine = unsafe engine] in
+        engine.inputNode.outputFormat(forBus: 0)
+      }
 
       guard
         let (processingFormat, initialFormat): (AVAudioFormat, AVAudioFormat) = state({
@@ -131,7 +133,7 @@
 
       let (engineIsRunning, playerIsPlaying) = await withEngineControlQueue { [weak self] in
         guard let self else { return (false, false) }
-        return (self.engine.isRunning, self.player.isPlaying)
+        return unsafe (self.engine.isRunning, self.player.isPlaying)
       }
 
       if resume.wasPlaying {
@@ -215,13 +217,12 @@
 
     @MainActor
     func resetEngineForMediaServices() async {
-      await withEngineControlQueue { [weak self] in
-        guard let self else { return }
-        self.player.stop()
-        self.engine.stop()
-        self.engine.reset()
-        if self.engine.attachedNodes.contains(self.player) == false {
-          self.engine.attach(self.player)
+      await withEngineControlQueue {
+        unsafe self.player.stop()
+        unsafe self.engine.stop()
+        unsafe self.engine.reset()
+        if unsafe self.engine.attachedNodes.contains(self.player) == false {
+          unsafe self.engine.attach(self.player)
         }
       }
     }
@@ -286,9 +287,9 @@
       // Remove old tap and stop engine before reconfiguring.
       let currentInputFormat = runOnEngineControlQueue { [weak self] in
         guard let self else { return newInputFormat }
-        self.engine.inputNode.removeTap(onBus: self.state[locked: \.installedTapBus] ?? 0)
-        self.engine.stop()
-        return self.engine.inputNode.outputFormat(forBus: 0)
+        unsafe self.engine.inputNode.removeTap(onBus: self.state[locked: \.installedTapBus] ?? 0)
+        unsafe self.engine.stop()
+        return unsafe self.engine.inputNode.outputFormat(forBus: 0)
       }
       state[locked: \.installedTapBus] = nil
 
@@ -296,7 +297,9 @@
       // installTap throws an uncatchable NSException if the format is invalid.
       guard currentInputFormat.channelCount > 0 else {
         let session = AVAudioSession.sharedInstance()
-        let hardwareFormat = runOnEngineControlQueue { engine.inputNode.inputFormat(forBus: 0) }
+        let hardwareFormat = runOnEngineControlQueue {
+          unsafe engine.inputNode.inputFormat(forBus: 0)
+        }
         let recordPermission = AVAudioApplication.shared.recordPermission
         log.warning(
           """
@@ -313,7 +316,9 @@
 
       guard currentInputFormat.sampleRate > 0 else {
         let session = AVAudioSession.sharedInstance()
-        let hardwareFormat = runOnEngineControlQueue { engine.inputNode.inputFormat(forBus: 0) }
+        let hardwareFormat = runOnEngineControlQueue {
+          unsafe engine.inputNode.inputFormat(forBus: 0)
+        }
         let recordPermission = AVAudioApplication.shared.recordPermission
         log.warning(
           """
@@ -379,7 +384,7 @@
       // Install new tap with updated format
       let startResult = runOnEngineControlQueueResult { [weak self] in
         guard let self else { return }
-        self.engine.inputNode.installTap(
+        unsafe self.engine.inputNode.installTap(
           onBus: tapConfiguration.bus,
           bufferSize: tapConfiguration.bufferSize,
           format: tapFormat
@@ -390,7 +395,7 @@
             to: processingFormat
           )
         }
-        try self.engine.start()
+        try unsafe self.engine.start()
       }
       if case .failure(let error) = startResult {
         throw .engineStartFailed(error: ErrorContext(error))

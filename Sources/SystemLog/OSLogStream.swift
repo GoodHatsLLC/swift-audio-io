@@ -184,7 +184,7 @@ public struct OSLogStream: AsyncSequence {
     batchSize: Int = 200,
     scope: OSLogStore.Scope = .currentProcessIdentifier,
     filter: Filter = .any
-  ) -> AsyncThrowingStream<[LogEntry], Error> {
+  ) -> AsyncThrowingStream<[LogEntry], any Error> {
     AsyncThrowingStream { continuation in
       let task = Task.detached(priority: .userInitiated) {
         do {
@@ -828,7 +828,7 @@ extension OSLogStream {
             in: container, debugDescription: "Unknown EntryType: \(str)")
         }
       }
-      public func encode(to encoder: Encoder) throws {
+      public func encode(to encoder: any Encoder) throws {
         var container = encoder.singleValueContainer()
         try container.encode(self.rawValue)
       }
@@ -849,7 +849,7 @@ extension OSLogStream {
             in: container, debugDescription: "Unknown SignpostType: \(str)")
         }
       }
-      public func encode(to encoder: Encoder) throws {
+      public func encode(to encoder: any Encoder) throws {
         var container = encoder.singleValueContainer()
         try container.encode(self.rawValue)
       }
@@ -958,7 +958,7 @@ extension OSLogStream {
             in: container, debugDescription: "Unknown LogLevel: \(str)")
         }
       }
-      public func encode(to encoder: Encoder) throws {
+      public func encode(to encoder: any Encoder) throws {
         var container = encoder.singleValueContainer()
         try container.encode(self.rawValue)
       }
@@ -1006,7 +1006,7 @@ extension OSLogStream {
             in: container, debugDescription: "Unknown StoreCategory: \(str)")
         }
       }
-      public func encode(to encoder: Encoder) throws {
+      public func encode(to encoder: any Encoder) throws {
         var container = encoder.singleValueContainer()
         try container.encode(self.rawValue)
       }
