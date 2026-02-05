@@ -723,6 +723,7 @@
     /// Resets all buffers and filter states.
     ///
     /// Call this when starting a new recording.
+    // swift-format-ignore
     public func reset() {
       // Reset filter states
       for i in unsafe filterStates.indices {
@@ -751,7 +752,7 @@
       unsafe rawWriteIndex.store(0, ordering: .relaxed)
       // Zero out raw buffers
       if let rawBandStorage = unsafe rawBandStorage {
-        for unsafeb in unsafe rawBandStorage.buffers {
+        for unsafe b in unsafe rawBandStorage.buffers {
           unsafe b.initialize(repeating: 0)
         }
       }
