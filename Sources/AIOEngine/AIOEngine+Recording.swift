@@ -482,6 +482,27 @@
           hardStop()
         }
       }
+      // Ensure the engine is in a clean state before warming for recording.
+      // After playback, the engine may still be running with a playback-only
+      // graph (player -> mainMixerNode). The input node reports sampleRate: 0
+      // in this state because it was never initialized for recording input.
+      // Stopping and resetting allows engine.prepare() to properly initialize
+      // the input node after the audio session is reconfigured.
+      let engineWasRunning = runOnEngineControlQueue { [weak self] in
+        guard let self else { return false }
+        guard unsafe self.engine.isRunning else { return false }
+        unsafe self.player.stop()
+        unsafe self.engine.stop()
+        unsafe self.engine.reset()
+        if unsafe !self.engine.attachedNodes.contains(self.player) {
+          unsafe self.engine.attach(self.player)
+        }
+        return true
+      }
+      if engineWasRunning {
+        log.info("Reset engine left running (e.g. after playback) before recording warm-up")
+      }
+
       log.info("engine requires warming")
       do {
 
