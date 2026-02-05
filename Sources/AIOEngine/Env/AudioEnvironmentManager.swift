@@ -198,6 +198,40 @@
       assert(isReady)
     }
 
+    /// A handler invoked when UI requests a change to the audio session active state.
+    ///
+    /// Set this to route activation/deactivation through the appropriate service
+    /// (e.g. `RecordingService`) that can ensure the audio environment is running first.
+    public var onRequestAudioSessionActive: (@MainActor (Bool) -> Void)?
+
+    /// Bindable audio session active state.
+    ///
+    /// The getter returns the actual session state. The setter invokes
+    /// ``onRequestAudioSessionActive`` to request a state change; the actual state
+    /// reconciles once the request completes (or remains unchanged on failure).
+    public var audioSessionActive: Bool {
+      get { isAudioSessionActive }
+      set {
+        guard newValue != isAudioSessionActive else { return }
+        if let handler = onRequestAudioSessionActive {
+          handler(newValue)
+        } else {
+          do {
+            try setAudioSessionActive(newValue)
+          } catch {
+            errorManager.enqueue(
+              error,
+              visibility: .userInterrupting,
+              userMessage: newValue
+                ? "Couldn't enable the microphone."
+                : "Couldn't disable the microphone.",
+              context: "Audio session"
+            )
+          }
+        }
+      }
+    }
+
     /// A callback that is invoked when the audio route changes.
     public var onRouteChange: (@Sendable @MainActor (AudioRouteChangeEvent) async -> Void)?
 
