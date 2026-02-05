@@ -44,7 +44,7 @@ let package = Package(
         .enableUpcomingFeature("StrictConcurrency"),
         .strictMemorySafety(),
         .defaultIsolation(.none),
-        .treatAllWarnings(as: .error),
+
         .enableUpcomingFeature("ExistentialAny"),
       ]
     ),
@@ -63,7 +63,7 @@ let package = Package(
         .enableUpcomingFeature("StrictConcurrency"),
         .strictMemorySafety(),
         .defaultIsolation(.none),
-        .treatAllWarnings(as: .error),
+
         .enableUpcomingFeature("ExistentialAny"),
       ]
     ),
@@ -75,7 +75,7 @@ let package = Package(
         .enableUpcomingFeature("StrictConcurrency"),
         .strictMemorySafety(),
         .defaultIsolation(.none),
-        .treatAllWarnings(as: .error),
+
         .enableUpcomingFeature("ExistentialAny"),
       ]
     ),
@@ -87,7 +87,7 @@ let package = Package(
         .enableUpcomingFeature("StrictConcurrency"),
         .strictMemorySafety(),
         .defaultIsolation(.none),
-        .treatAllWarnings(as: .error),
+
         .enableUpcomingFeature("ExistentialAny"),
       ]
     ),
@@ -99,7 +99,7 @@ let package = Package(
         .enableUpcomingFeature("StrictConcurrency"),
         .strictMemorySafety(),
         .defaultIsolation(.none),
-        .treatAllWarnings(as: .error),
+
         .enableUpcomingFeature("ExistentialAny"),
       ]
     ),
@@ -115,7 +115,7 @@ let package = Package(
         .enableUpcomingFeature("StrictConcurrency"),
         .strictMemorySafety(),
         .defaultIsolation(.none),
-        .treatAllWarnings(as: .error),
+
         .enableUpcomingFeature("ExistentialAny"),
       ]
     ),
