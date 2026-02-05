@@ -49,11 +49,11 @@
       guard let buffer else { return }
       buffer.frameLength = frameCount
 
-      if let channelData = buffer.floatChannelData {
+      if let channelData = unsafe buffer.floatChannelData {
         let twoPiFrequency = 2.0 * Double.pi * 440.0
         for i in 0..<Int(frameCount) {
           let t = Double(i) / sampleRate
-          channelData[0][i] = Float(sin(twoPiFrequency * t))
+          unsafe channelData[0][i] = Float(sin(twoPiFrequency * t))
         }
       }
 
@@ -67,7 +67,7 @@
 
       let config = MultiBandLODConfiguration(
         bandCount: 5, lodRatio: 128, bufferSeconds: 1, sampleRate: Int(sampleRate))
-      let snapshot = try await MultiBandLODProcessor.generateFromFile(
+      let snapshot = try unsafe await MultiBandLODProcessor.generateFromFile(
         url: url, configuration: config)
 
       #expect(snapshot.rawBufferLength == Int(frameCount) + config.lodRatio)
@@ -86,14 +86,14 @@
         bufferSeconds: 10,
         sampleRate: 44100
       )
-      let processor = MultiBandLODProcessor(configuration: config)
+      let processor = unsafe MultiBandLODProcessor(configuration: config)
 
       // Process some samples
       let samples = generateSineWave(frequency: 440, sampleRate: 44100, samples: 1024)
-      processor.process(samples)
+      unsafe processor.process(samples)
 
       // Get snapshot (should not block)
-      let snapshot = processor.snapshot()
+      let snapshot = unsafe processor.snapshot()
       #expect(snapshot.bandCount == 3)
       #expect(snapshot.lodRatio == 64)
     }
@@ -101,41 +101,41 @@
     @Test("Processor snapshotRef returns valid reference")
     func testProcessorSnapshotRef() {
       let config = MultiBandLODConfiguration(bandCount: 5, lodRatio: 128, bufferSeconds: 10)
-      let processor = MultiBandLODProcessor(configuration: config)
+      let processor = unsafe MultiBandLODProcessor(configuration: config)
 
       let samples = generateSineWave(frequency: 440, sampleRate: 44100, samples: 2048)
-      processor.process(samples)
+      unsafe processor.process(samples)
 
-      let ref = processor.snapshotRef()
-      #expect(ref.bandCount == 5)
-      #expect(ref.lodRatio == 128)
-      #expect(ref.lodBufferLength > 0)
+      let ref = unsafe processor.snapshotRef()
+      unsafe #expect(ref.bandCount == 5)
+      unsafe #expect(ref.lodRatio == 128)
+      unsafe #expect(ref.lodBufferLength > 0)
     }
 
     @Test("LODSnapshotRef provides buffer access")
     func testSnapshotRefBufferAccess() {
       let config = MultiBandLODConfiguration(bandCount: 3, lodRatio: 64, bufferSeconds: 5)
-      let processor = MultiBandLODProcessor(configuration: config)
+      let processor = unsafe MultiBandLODProcessor(configuration: config)
 
       // Process enough data to fill some LOD buckets
       for _ in 0..<10 {
         let samples = generateSineWave(frequency: 440, sampleRate: 44100, samples: 1024)
-        processor.process(samples)
+        unsafe processor.process(samples)
       }
 
-      let ref = processor.snapshotRef()
+      let ref = unsafe processor.snapshotRef()
 
       // Test direct buffer access
-      ref.withMinBuffer(band: 0) { buffer in
-        #expect(buffer.count == ref.lodBufferLength)
+      unsafe ref.withMinBuffer(band: 0) { buffer in
+        unsafe #expect(buffer.count == ref.lodBufferLength)
       }
 
-      ref.withMaxBuffer(band: 0) { buffer in
-        #expect(buffer.count == ref.lodBufferLength)
+      unsafe ref.withMaxBuffer(band: 0) { buffer in
+        unsafe #expect(buffer.count == ref.lodBufferLength)
       }
 
-      ref.withRMSBuffer(band: 0) { buffer in
-        #expect(buffer.count == ref.lodBufferLength)
+      unsafe ref.withRMSBuffer(band: 0) { buffer in
+        unsafe #expect(buffer.count == ref.lodBufferLength)
       }
     }
 
@@ -149,7 +149,7 @@
         bufferSeconds: 60,
         snapshotSwapInterval: 3  // Fast swaps for testing
       )
-      let processor = MultiBandLODProcessor(configuration: config)
+      let processor = unsafe MultiBandLODProcessor(configuration: config)
 
       let iterations = 1000
       let readerCount = 4
@@ -165,8 +165,8 @@
               sampleRate: 44100,
               samples: 512
             )
-            processor.process(samples)
-            writeIndices.append(processor.currentWriteIndex)
+            unsafe processor.process(samples)
+            unsafe writeIndices.append(processor.currentWriteIndex)
 
             // Small delay to simulate real audio timing
             if i % 100 == 0 {
@@ -177,17 +177,17 @@
         }
 
         // Reader tasks - simulate render threads
-        for readerID in 0..<readerCount {
+        for _ in 0..<readerCount {
           group.addTask {
             var readIndices: [Int] = []
             for _ in 0..<(iterations / 2) {
               // Should never block
-              let ref = processor.snapshotRef()
-              readIndices.append(ref.writeIndex)
+              let ref = unsafe processor.snapshotRef()
+              unsafe readIndices.append(ref.writeIndex)
 
               // Access buffer data (verifies no crash from concurrent access)
-              ref.withMinBuffer(band: 0) { buffer in
-                _ = buffer.first
+              unsafe ref.withMinBuffer(band: 0) { buffer in
+                _ = unsafe buffer.first
               }
             }
             return readIndices
@@ -212,29 +212,29 @@
         bufferSeconds: 30,
         snapshotSwapInterval: 2
       )
-      let processor = MultiBandLODProcessor(configuration: config)
+      let processor = unsafe MultiBandLODProcessor(configuration: config)
 
       // Fill with known pattern
       for i in 0..<100 {
         let samples = [Float](repeating: Float(i % 10) * 0.1, count: 256)
-        processor.process(samples)
+        unsafe processor.process(samples)
       }
 
       // Read snapshot multiple times and verify consistency
       await withTaskGroup(of: Bool.self) { group in
         for _ in 0..<10 {
           group.addTask {
-            let ref = processor.snapshotRef()
+            let ref = unsafe processor.snapshotRef()
 
             // All bands should have same buffer length
-            for band in 0..<ref.bandCount {
+            for band in unsafe 0..<ref.bandCount {
               var minCount = 0
               var maxCount = 0
               var rmsCount = 0
 
-              ref.withMinBuffer(band: band) { buffer in minCount = buffer.count }
-              ref.withMaxBuffer(band: band) { buffer in maxCount = buffer.count }
-              ref.withRMSBuffer(band: band) { buffer in rmsCount = buffer.count }
+              unsafe ref.withMinBuffer(band: band) { buffer in minCount = buffer.count }
+              unsafe ref.withMaxBuffer(band: band) { buffer in maxCount = buffer.count }
+              unsafe ref.withRMSBuffer(band: band) { buffer in rmsCount = buffer.count }
 
               if minCount != maxCount || maxCount != rmsCount {
                 return false
@@ -259,7 +259,7 @@
         bufferSeconds: 10,
         snapshotSwapInterval: 1
       )
-      let fastProcessor = MultiBandLODProcessor(configuration: fastConfig)
+      let fastProcessor = unsafe MultiBandLODProcessor(configuration: fastConfig)
 
       // With interval=10, snapshot swaps every 10 LOD commits
       let slowConfig = MultiBandLODConfiguration(
@@ -268,7 +268,7 @@
         bufferSeconds: 10,
         snapshotSwapInterval: 10
       )
-      let slowProcessor = MultiBandLODProcessor(configuration: slowConfig)
+      let slowProcessor = unsafe MultiBandLODProcessor(configuration: slowConfig)
 
       // Process same amount of data through both
       var fastWriteIndices: Set<Int> = []
@@ -277,11 +277,11 @@
       for _ in 0..<50 {
         let samples = generateSineWave(frequency: 440, sampleRate: 44100, samples: 256)
 
-        fastProcessor.process(samples)
-        fastWriteIndices.insert(fastProcessor.snapshotRef().writeIndex)
+        unsafe fastProcessor.process(samples)
+        unsafe fastWriteIndices.insert(fastProcessor.snapshotRef().writeIndex)
 
-        slowProcessor.process(samples)
-        slowWriteIndices.insert(slowProcessor.snapshotRef().writeIndex)
+        unsafe slowProcessor.process(samples)
+        unsafe slowWriteIndices.insert(slowProcessor.snapshotRef().writeIndex)
       }
 
       // Fast processor should have seen more unique write indices
@@ -301,19 +301,19 @@
         lodRatio: 128,
         bufferSeconds: 300
       )
-      let processor = MultiBandLODProcessor(configuration: config)
+      let processor = unsafe MultiBandLODProcessor(configuration: config)
 
       // Fill with some data
       for _ in 0..<100 {
         let samples = generateSineWave(frequency: 440, sampleRate: 44100, samples: 1024)
-        processor.process(samples)
+        unsafe processor.process(samples)
       }
 
       let iterations = 10000
       let startTime = CFAbsoluteTimeGetCurrent()
 
       for _ in 0..<iterations {
-        _ = processor.snapshotRef()
+        _ = unsafe processor.snapshotRef()
       }
 
       let endTime = CFAbsoluteTimeGetCurrent()
@@ -339,24 +339,24 @@
         lodRatio: 128,
         bufferSeconds: 60
       )
-      let processor = MultiBandLODProcessor(configuration: config)
+      let processor = unsafe MultiBandLODProcessor(configuration: config)
 
       // Fill with data
       for _ in 0..<50 {
         let samples = generateSineWave(frequency: 440, sampleRate: 44100, samples: 1024)
-        processor.process(samples)
+        unsafe processor.process(samples)
       }
 
       let iterations = 5000
       let startTime = CFAbsoluteTimeGetCurrent()
 
       for _ in 0..<iterations {
-        let ref = processor.snapshotRef()
+        let ref = unsafe processor.snapshotRef()
         // Access all bands - should be zero-copy
-        for band in 0..<ref.bandCount {
-          ref.withMinBuffer(band: band) { _ = $0.first }
-          ref.withMaxBuffer(band: band) { _ = $0.first }
-          ref.withRMSBuffer(band: band) { _ = $0.first }
+        for band in unsafe 0..<ref.bandCount {
+          unsafe ref.withMinBuffer(band: band) { _ = unsafe $0.first }
+          unsafe ref.withMaxBuffer(band: band) { _ = unsafe $0.first }
+          unsafe ref.withRMSBuffer(band: band) { _ = unsafe $0.first }
         }
       }
 
@@ -381,26 +381,26 @@
     @Test("Reset clears all slots")
     func testResetClearsAllSlots() {
       let config = MultiBandLODConfiguration(bandCount: 3, lodRatio: 64, bufferSeconds: 10)
-      let processor = MultiBandLODProcessor(configuration: config)
+      let processor = unsafe MultiBandLODProcessor(configuration: config)
 
       // Process data
       for _ in 0..<20 {
         let samples = generateSineWave(frequency: 440, sampleRate: 44100, samples: 512)
-        processor.process(samples)
+        unsafe processor.process(samples)
       }
 
-      #expect(processor.currentWriteIndex > 0)
+      unsafe #expect(processor.currentWriteIndex > 0)
 
       // Reset
-      processor.reset()
+      unsafe processor.reset()
 
       // Verify reset
-      let ref = processor.snapshotRef()
-      #expect(ref.writeIndex == 0)
+      let ref = unsafe processor.snapshotRef()
+      unsafe #expect(ref.writeIndex == 0)
 
       // All buffers should be zero
-      ref.withMinBuffer(band: 0) { buffer in
-        let nonZero = buffer.contains { $0 != 0 }
+      unsafe ref.withMinBuffer(band: 0) { buffer in
+        let nonZero = unsafe buffer.contains { $0 != 0 }
         #expect(!nonZero, "Buffer should be zeroed after reset")
       }
     }
@@ -417,12 +417,12 @@
         crossoverMode: .mel(minFreq: 40, maxFreq: 15_000),
         snapshotSwapInterval: 1
       )
-      let processor = MultiBandLODProcessor(configuration: config)
+      let processor = unsafe MultiBandLODProcessor(configuration: config)
 
       let samples = generateSineWave(frequency: 200, sampleRate: 44_100, samples: 44_100 / 2)
-      processor.process(samples)
+      unsafe processor.process(samples)
 
-      let snapshot = processor.snapshotLocking()
+      let snapshot = unsafe processor.snapshotLocking()
       let averages = recentAverageRMS(snapshot, recentSamples: 16)
 
       let maxBand = averages.enumerated().max(by: { $0.element < $1.element })?.offset
@@ -439,12 +439,12 @@
         crossoverMode: .mel(minFreq: 40, maxFreq: 15_000),
         snapshotSwapInterval: 1
       )
-      let processor = MultiBandLODProcessor(configuration: config)
+      let processor = unsafe MultiBandLODProcessor(configuration: config)
 
       let samples = generateSineWave(frequency: 2000, sampleRate: 44_100, samples: 44_100 / 2)
-      processor.process(samples)
+      unsafe processor.process(samples)
 
-      let snapshot = processor.snapshotLocking()
+      let snapshot = unsafe processor.snapshotLocking()
       let averages = recentAverageRMS(snapshot, recentSamples: 16)
 
       let maxBand = averages.enumerated().max(by: { $0.element < $1.element })?.offset
@@ -462,12 +462,12 @@
         crossoverMode: .mel(minFreq: 40, maxFreq: 15_000),
         snapshotSwapInterval: 1
       )
-      let processor = MultiBandLODProcessor(configuration: config)
+      let processor = unsafe MultiBandLODProcessor(configuration: config)
 
       let samples = generateSineWave(frequency: 10_000, sampleRate: 44_100, samples: 44_100 / 2)
-      processor.process(samples)
+      unsafe processor.process(samples)
 
-      let snapshot = processor.snapshotLocking()
+      let snapshot = unsafe processor.snapshotLocking()
       let averages = recentAverageRMS(snapshot, recentSamples: 16)
 
       let maxBand = averages.enumerated().max(by: { $0.element < $1.element })?.offset

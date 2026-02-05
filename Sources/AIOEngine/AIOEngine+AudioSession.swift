@@ -1,5 +1,5 @@
 #if !os(macOS) || targetEnvironment(macCatalyst)
-  @preconcurrency import AVFoundation
+  import AVFoundation
   import SystemLog
   import Tools
 

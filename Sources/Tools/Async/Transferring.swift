@@ -1,7 +1,7 @@
-public struct Transferring<T>: Sendable {
-  public nonisolated(unsafe) var value: T
+public struct Transferring<T>: @unchecked Sendable {
+  public let value: T
 
-  public init(_ value: T) {
+  public init(_ value: consuming T) {
     self.value = value
   }
 }

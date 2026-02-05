@@ -5,7 +5,7 @@ import Foundation
 ///
 /// The producer writes full chunks or drops them when the buffer is full.
 /// The consumer reads without locking and advances the read index after copying.
-public final class SPSCRingBuffer<T>: @unchecked Sendable {
+@safe public final class SPSCRingBuffer<T>: @unchecked Sendable {
   private var buffer: UnsafeMutableBufferPointer<T>
   private let capacityMask: Int
   private var writeIndex: ManagedAtomic<Int>
@@ -20,15 +20,15 @@ public final class SPSCRingBuffer<T>: @unchecked Sendable {
     self.capacityMask = adjustedCapacity - 1
 
     let pointer = UnsafeMutablePointer<T>.allocate(capacity: self.capacity)
-    self.buffer = UnsafeMutableBufferPointer(start: pointer, count: self.capacity)
+    unsafe self.buffer = unsafe UnsafeMutableBufferPointer(start: pointer, count: self.capacity)
 
     self.writeIndex = ManagedAtomic<Int>(0)
     self.readIndex = ManagedAtomic<Int>(0)
   }
 
   deinit {
-    if buffer.baseAddress != nil {
-      buffer.deallocate()
+    if unsafe buffer.baseAddress != nil {
+      unsafe buffer.deallocate()
     }
   }
 
@@ -64,17 +64,17 @@ public final class SPSCRingBuffer<T>: @unchecked Sendable {
     let writePos = currentWrite & capacityMask
     let remainingToEnd = capacity - writePos
 
-    guard let bufferBase = buffer.baseAddress else { return 0 }
+    guard let bufferBase = unsafe buffer.baseAddress else { return 0 }
 
     if totalToWrite <= remainingToEnd {
-      bufferBase.advanced(by: writePos)
+      unsafe bufferBase.advanced(by: writePos)
         .update(from: sourceBaseAddress, count: totalToWrite)
     } else {
       let firstWrite = remainingToEnd
-      bufferBase.advanced(by: writePos)
+      unsafe bufferBase.advanced(by: writePos)
         .update(from: sourceBaseAddress, count: firstWrite)
       let remaining = totalToWrite - firstWrite
-      bufferBase
+      unsafe bufferBase
         .update(from: sourceBaseAddress.advanced(by: firstWrite), count: remaining)
     }
 
@@ -97,20 +97,26 @@ public final class SPSCRingBuffer<T>: @unchecked Sendable {
     let readPos = currentRead & capacityMask
     let remainingToEnd = capacity - readPos
 
-    guard let bufferBase = buffer.baseAddress else { return 0 }
+    guard let bufferBase = unsafe buffer.baseAddress else { return 0 }
 
     if toRead <= remainingToEnd {
-      dest.update(from: bufferBase.advanced(by: readPos), count: toRead)
+      unsafe dest.update(from: bufferBase.advanced(by: readPos), count: toRead)
     } else {
       let firstRead = remainingToEnd
-      dest.update(from: bufferBase.advanced(by: readPos), count: firstRead)
+      unsafe dest.update(from: bufferBase.advanced(by: readPos), count: firstRead)
       let remaining = toRead - firstRead
-      dest.advanced(by: firstRead)
+      unsafe dest.advanced(by: firstRead)
         .update(from: bufferBase, count: remaining)
     }
 
     readIndex.store(currentRead &+ toRead, ordering: .releasing)
     return toRead
+  }
+
+  /// Discard all pending data. Safe to call from the consumer (reader) thread.
+  public func clear() {
+    let currentWrite = writeIndex.load(ordering: .acquiring)
+    readIndex.store(currentWrite, ordering: .releasing)
   }
 
   #if DEBUG

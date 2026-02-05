@@ -1,5 +1,5 @@
 #if !os(macOS) || targetEnvironment(macCatalyst)
-  @preconcurrency import AVFoundation
+  import AVFoundation
   import AsyncAlgorithms
   import Atomics
   import Foundation
@@ -166,7 +166,7 @@
       do {
         let shouldClearPlayback = await withEngineControlQueue { [weak self] in
           guard let self else { return false }
-          return self.player.isPlaying
+          return unsafe self.player.isPlaying
         }
         if shouldClearPlayback {
           await stopPlayerIfNeeded()
@@ -198,7 +198,7 @@
           }
           let startResult = runOnEngineControlQueueResult { [weak self] in
             guard let self else { return }
-            try self.engine.start()
+            try unsafe self.engine.start()
           }
           if case .failure(let error) = startResult {
             throw AIOError.engineStartFailed(error: ErrorContext(error))
@@ -225,7 +225,7 @@
     @MainActor func startFileWriteLoop(
       flushing buffers: [SPSCRingBuffer<Float>],
       of processingFormat: AVAudioFormat,
-      to writer: RecordingFileWriter
+      to writer: any RecordingFileWriter
     ) {
       let control = WriterControl()
       let localMetrics = metrics
@@ -469,7 +469,7 @@
         return
       }
       log.info("warming with config: \(configuration, privacy: .public)")
-      let initialInput = runOnEngineControlQueue { engine.inputNode.outputFormat(forBus: 0) }
+      let initialInput = runOnEngineControlQueue { unsafe engine.inputNode.outputFormat(forBus: 0) }
       log.info("input format: \(initialInput, privacy: .public)")
       if let recordingConfiguration = state[locked: \.recordingConfiguration] {
         if configuration == recordingConfiguration {
@@ -490,7 +490,7 @@
 
         // Prepare the engine after audio session reconfiguration so the input node
         // picks up the new session settings (e.g. channel count for stereo).
-        runOnEngineControlQueue { engine.prepare() }
+        runOnEngineControlQueue { unsafe engine.prepare() }
 
         let (url, protection) = try resolveOutputURL(
           for: configuration,
@@ -500,13 +500,17 @@
         let writer = try makeRecordingWriter(url: url, configuration: configuration)
         applyFileProtectionIfNeeded(protection, to: url)
 
-        let inputFormat = runOnEngineControlQueue { engine.inputNode.outputFormat(forBus: 0) }
+        let inputFormat = runOnEngineControlQueue {
+          unsafe engine.inputNode.outputFormat(forBus: 0)
+        }
 
         // Validate input format before attempting to install tap.
         // installTap throws an uncatchable NSException if the format is invalid.
         guard inputFormat.channelCount > 0 else {
           let session = AVAudioSession.sharedInstance()
-          let hardwareFormat = runOnEngineControlQueue { engine.inputNode.inputFormat(forBus: 0) }
+          let hardwareFormat = runOnEngineControlQueue {
+            unsafe engine.inputNode.inputFormat(forBus: 0)
+          }
           let recordPermission = AVAudioApplication.shared.recordPermission
           log.warning(
             """
@@ -523,7 +527,9 @@
         }
         guard inputFormat.sampleRate > 0 else {
           let session = AVAudioSession.sharedInstance()
-          let hardwareFormat = runOnEngineControlQueue { engine.inputNode.inputFormat(forBus: 0) }
+          let hardwareFormat = runOnEngineControlQueue {
+            unsafe engine.inputNode.inputFormat(forBus: 0)
+          }
           let recordPermission = AVAudioApplication.shared.recordPermission
           log.warning(
             """
@@ -616,12 +622,12 @@
         // or 0 sample rate while the route change settles. Passing such a format to installTap
         // triggers an uncatchable NSException inside AVFAudio.
         let actualTapFormat: AVAudioFormat? = runOnEngineControlQueue {
-          engine.inputNode.removeTap(onBus: tapConfiguration.bus)
-          let currentInputFormat = engine.inputNode.outputFormat(forBus: 0)
+          unsafe engine.inputNode.removeTap(onBus: tapConfiguration.bus)
+          let currentInputFormat = unsafe engine.inputNode.outputFormat(forBus: 0)
           guard currentInputFormat.channelCount > 0, currentInputFormat.sampleRate > 0 else {
             return nil
           }
-          engine.inputNode.installTap(
+          unsafe engine.inputNode.installTap(
             onBus: tapConfiguration.bus,
             bufferSize: tapConfiguration.bufferSize,
             format: currentInputFormat
@@ -632,11 +638,13 @@
               to: processingFormat
             )
           }
-          engine.prepare()
+          unsafe engine.prepare()
           return currentInputFormat
         }
         guard let actualTapFormat else {
-          let transientFormat = runOnEngineControlQueue { engine.inputNode.outputFormat(forBus: 0) }
+          let transientFormat = runOnEngineControlQueue {
+            unsafe engine.inputNode.outputFormat(forBus: 0)
+          }
           log.warning(
             "Input format became invalid during tap install (transient route change). format: \(transientFormat, privacy: .public)"
           )
@@ -723,17 +731,17 @@
       runOnEngineControlQueue { [weak self] in
         guard let self else { return }
         if let tapBus {
-          self.engine.inputNode.removeTap(onBus: tapBus)
+          unsafe self.engine.inputNode.removeTap(onBus: tapBus)
         }
-        if self.engine.isRunning {
-          self.engine.stop()
+        if unsafe self.engine.isRunning {
+          unsafe self.engine.stop()
         }
-        if self.player.isPlaying {
-          self.player.stop()
+        if unsafe self.player.isPlaying {
+          unsafe self.player.stop()
         }
         // On iOS 26.x, explicit `disconnectNodeOutput(_:)` has been observed to occasionally
         // raise an uncatchable NSException after background transitions; prefer `reset()`.
-        self.engine.reset()
+        unsafe self.engine.reset()
       }
       let hasActiveWriter = writerSession != nil || !drainingWriterSessions.isEmpty
       if let current = writerSession {
@@ -751,9 +759,9 @@
         guard let self else { return }
         log.info("🛑 gracefulStop engine stop enqueued")
         if let tapBus = tapBus {
-          self.engine.inputNode.removeTap(onBus: tapBus)
+          unsafe self.engine.inputNode.removeTap(onBus: tapBus)
         }
-        self.engine.stop()
+        unsafe self.engine.stop()
       }
       log.info("🛑 gracefulStop draining writer sessions")
       let drainCompleted = await withTaskGroup(of: Bool.self) { group in
@@ -877,9 +885,10 @@
       convertedBuffer.frameLength = requestedCapacity
 
       var error: NSError? = nil
-      let status = converter.convert(to: convertedBuffer, error: &error) { _, outStatus in
-        outStatus.pointee = .haveData
-        return buffer
+      let b = Transferring(buffer)
+      let status = unsafe converter.convert(to: convertedBuffer, error: &error) { _, outStatus in
+        unsafe outStatus.pointee = .haveData
+        return b.value
       }
       guard status != .error else {
         recordTapError(.conversionFailed)
@@ -937,7 +946,7 @@
         (time?.isSampleTimeValid ?? false) ? time?.sampleRate : nil
       if writerCanWrite || receiverCanWrite {
         for i in 0..<effectiveChannelCount {
-          guard let channelData = convertedBuffer.floatChannelData?[i] else {
+          guard let channelData = unsafe convertedBuffer.floatChannelData?[i] else {
             if rtLoggingEnabled {
               log.error(
                 "Failed to access channel data for channel \(i, privacy: .public)"
@@ -946,12 +955,12 @@
             continue
           }
           if writerCanWrite {
-            audioBuffers[i].write(
+            unsafe audioBuffers[i].write(
               UnsafeBufferPointer(start: channelData, count: convertedFrameLength)
             )
           }
           if receiverCanWrite, let receiverBuffers, i < receiverBuffers.count {
-            receiverBuffers[i].write(
+            unsafe receiverBuffers[i].write(
               UnsafeBufferPointer(start: channelData, count: convertedFrameLength)
             )
           }
@@ -966,8 +975,8 @@
           sourceSampleTime: sourceSampleTime,
           sourceSampleRate: sourceSampleRate
         )
-        _ = withUnsafePointer(to: &packet) { pointer in
-          receiverTimingBuffer.write(UnsafeBufferPointer(start: pointer, count: 1))
+        _ = unsafe withUnsafePointer(to: &packet) { pointer in
+          unsafe receiverTimingBuffer.write(UnsafeBufferPointer(start: pointer, count: 1))
         }
       }
 
@@ -1025,7 +1034,7 @@
     }
 
     static func writerLoopSync(
-      writer: RecordingFileWriter,
+      writer: any RecordingFileWriter,
       format: AVAudioFormat,
       audioBuffers: [SPSCRingBuffer<Float>],
       control: WriterControl,
@@ -1142,24 +1151,24 @@
       guard channelCount > 0 else { return }
 
       let timingScratch = UnsafeMutableBufferPointer<TimingPacket>.allocate(capacity: 1)
-      defer { timingScratch.deallocate() }
+      defer { unsafe timingScratch.deallocate() }
 
       var scratchCapacity = 0
-      var scratchBuffers: [UnsafeMutableBufferPointer<Float>] = []
+      var scratchBuffers: [UnsafeMutableBufferPointer<Float>] = unsafe []
       func ensureScratchCapacity(_ needed: Int) {
         guard needed > scratchCapacity else { return }
-        for buffer in scratchBuffers {
-          buffer.baseAddress?.deallocate()
+        for unsafebuffer in unsafe scratchBuffers {
+          unsafe buffer.baseAddress?.deallocate()
         }
-        scratchBuffers = (0..<channelCount).map { _ in
+        unsafe scratchBuffers = unsafe (0..<channelCount).map { _ in
           let pointer = UnsafeMutablePointer<Float>.allocate(capacity: needed)
-          return UnsafeMutableBufferPointer(start: pointer, count: needed)
+          return unsafe UnsafeMutableBufferPointer(start: pointer, count: needed)
         }
         scratchCapacity = needed
       }
       defer {
-        for buffer in scratchBuffers {
-          buffer.baseAddress?.deallocate()
+        for unsafebuffer in unsafe scratchBuffers {
+          unsafe buffer.baseAddress?.deallocate()
         }
       }
 
@@ -1178,47 +1187,47 @@
         }
         var backlog = timing.availableToRead
         while backlog > maxBacklog && !control.cancelRequested.load(ordering: .relaxed) {
-          let droppedTimingRead = timing.read(into: timingScratch)
+          let droppedTimingRead = unsafe timing.read(into: timingScratch)
           guard droppedTimingRead > 0 else { break }
-          let droppedPacket = timingScratch[0]
+          let droppedPacket = unsafe timingScratch[0]
           guard droppedPacket.frameCount > 0 else {
             backlog = timing.availableToRead
             continue
           }
           ensureScratchCapacity(droppedPacket.frameCount)
           for index in 0..<channelCount {
-            let destination = UnsafeMutableBufferPointer(
+            let destination = unsafe UnsafeMutableBufferPointer(
               start: scratchBuffers[index].baseAddress,
               count: droppedPacket.frameCount
             )
-            _ = buffers[index].read(into: destination)
+            _ = unsafe buffers[index].read(into: destination)
           }
           onDrop?()
           backlog = timing.availableToRead
         }
-        let timingRead = timing.read(into: timingScratch)
+        let timingRead = unsafe timing.read(into: timingScratch)
         guard timingRead > 0 else {
           Thread.sleep(forTimeInterval: sleepInterval)
           continue
         }
-        let packet = timingScratch[0]
+        let packet = unsafe timingScratch[0]
         guard packet.frameCount > 0 else { continue }
 
         ensureScratchCapacity(packet.frameCount)
         var actualFrames = packet.frameCount
         for index in 0..<channelCount {
-          let destination = UnsafeMutableBufferPointer(
+          let destination = unsafe UnsafeMutableBufferPointer(
             start: scratchBuffers[index].baseAddress,
             count: packet.frameCount
           )
-          let read = buffers[index].read(into: destination)
+          let read = unsafe buffers[index].read(into: destination)
           actualFrames = min(actualFrames, read)
         }
         guard actualFrames > 0, actualFrames == packet.frameCount else {
           onUnderrun?()
           continue
         }
-        guard let base = scratchBuffers.first?.baseAddress else { continue }
+        guard let base = unsafe scratchBuffers.first?.baseAddress else { continue }
 
         let timing = BufferTiming(
           sampleTime: packet.startSampleTime,
@@ -1227,9 +1236,9 @@
           sourceSampleTime: packet.sourceSampleTime,
           sourceSampleRate: packet.sourceSampleRate
         )
-        let bufferPointer = UnsafeBufferPointer(start: base, count: actualFrames)
+        let bufferPointer = unsafe UnsafeBufferPointer(start: base, count: actualFrames)
         bufferReceivers({ $0 }).forEach {
-          $0.processBuffer(bufferPointer, timing: timing)
+          unsafe $0.processBuffer(bufferPointer, timing: timing)
         }
       }
     }
@@ -1238,8 +1247,8 @@
       size bufferSize: Int,
       from audioBuffers: [SPSCRingBuffer<Float>],
       in audioFormat: AVAudioFormat,
-      to writer: RecordingFileWriter
-    ) -> Result<WriteResult, Error> {
+      to writer: any RecordingFileWriter
+    ) -> Result<WriteResult, any Error> {
       let channelCount = Int(audioFormat.channelCount)
       let framesToRead = minimumAvailableFrames(
         channelCount: channelCount,
@@ -1263,11 +1272,11 @@
       var actualFrames = framesToRead
       // Dequeue from ring buffers using a consistent frame count per channel
       for i in 0..<channelCount {
-        guard let channelData = pcmBuffer.floatChannelData?[i] else {
+        guard let channelData = unsafe pcmBuffer.floatChannelData?[i] else {
           actualFrames = 0
           return .success(.init(framesRead: 0, writeDuration: nil))
         }
-        let readSize = audioBuffers[i].read(
+        let readSize = unsafe audioBuffers[i].read(
           into: UnsafeMutableBufferPointer(start: channelData, count: framesToRead))
         actualFrames = min(actualFrames, readSize)
       }

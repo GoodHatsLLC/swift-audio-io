@@ -1,5 +1,5 @@
 #if canImport(AVFoundation) && (!os(macOS) || targetEnvironment(macCatalyst))
-  @preconcurrency import AVFoundation
+  import AVFoundation
   import Foundation
 
   public struct AudioRouteChangeEvent: Sendable, Hashable {
@@ -130,7 +130,7 @@
         parts.append("inputUnavailable")
       }
       parts.append("\(inputNumberOfChannels)ch@\(Int(sampleRate))Hz")
-      parts.append("buffer=\(String(format: "%.3f", ioBufferDuration))s")
+      parts.append("buffer=\(ioBufferDuration/1000.0)s")
       return parts.joined(separator: " ")
     }
   }

@@ -100,31 +100,32 @@
   ///
   /// This storage is shared across all snapshots and updated lock-free by the audio thread.
   /// Readers (render thread) read from `buffers` up to `rawWriteIndex`.
-  final class RawBandStorage: @unchecked Sendable {
+  @unsafe final class RawBandStorage: @unchecked Sendable {
     let memory: UnsafeMutableBufferPointer<Float>
     let buffers: [UnsafeMutableBufferPointer<Float>]
     let length: Int
     let bandCount: Int
 
     init(bandCount: Int, length: Int) {
-      self.bandCount = bandCount
-      self.length = length
+      unsafe self.bandCount = bandCount
+      unsafe self.length = length
       let totalCount = bandCount * length
-      self.memory = UnsafeMutableBufferPointer<Float>.allocate(capacity: totalCount)
-      self.memory.initialize(repeating: 0)
+      unsafe self.memory = UnsafeMutableBufferPointer<Float>.allocate(capacity: totalCount)
+      unsafe self.memory.initialize(repeating: 0)
 
-      var slices: [UnsafeMutableBufferPointer<Float>] = []
+      var slices: [UnsafeMutableBufferPointer<Float>] = unsafe []
       for i in 0..<bandCount {
         let start = i * length
         // Create a slice (view) into the memory
-        let slice = UnsafeMutableBufferPointer(start: memory.baseAddress! + start, count: length)
-        slices.append(slice)
+        let slice = unsafe UnsafeMutableBufferPointer(
+          start: memory.baseAddress! + start, count: length)
+        unsafe slices.append(slice)
       }
-      self.buffers = slices
+      unsafe self.buffers = unsafe slices
     }
 
     deinit {
-      memory.deallocate()
+      unsafe memory.deallocate()
     }
   }
 
@@ -166,7 +167,7 @@
   ///   // ptr contains all bands concatenated
   /// }
   /// ```
-  public struct LODSnapshotRef: @unchecked Sendable, SnapshotProvider, LODSnapshot {
+  @unsafe public struct LODSnapshotRef: @unchecked Sendable, SnapshotProvider, LODSnapshot {
     fileprivate let slot: LODBufferSlot
     fileprivate let rawStorage: RawBandStorage?
     public let rawWriteIndexSnapshot: Int
@@ -174,45 +175,45 @@
     fileprivate init(
       _ slot: LODBufferSlot, rawStorage: RawBandStorage? = nil, rawWriteIndex: Int = 0
     ) {
-      self.slot = slot
-      self.rawStorage = rawStorage
-      self.rawWriteIndexSnapshot = rawWriteIndex
+      unsafe self.slot = slot
+      unsafe self.rawStorage = rawStorage
+      unsafe self.rawWriteIndexSnapshot = rawWriteIndex
     }
 
-    public var bandCount: Int { slot.bandCount }
-    public var writeIndex: Int { slot.writeIndex }
-    public var lodRatio: Int { slot.lodRatio }
-    public var rawBufferLength: Int { slot.rawBufferLength }
-    public var lodBufferLength: Int { slot.bands.first?.minBuffer.count ?? 0 }
+    public var bandCount: Int { unsafe slot.bandCount }
+    public var writeIndex: Int { unsafe slot.writeIndex }
+    public var lodRatio: Int { unsafe slot.lodRatio }
+    public var rawBufferLength: Int { unsafe slot.rawBufferLength }
+    public var lodBufferLength: Int { unsafe slot.bands.first?.minBuffer.count ?? 0 }
 
     /// Direct access to a band's min buffer.
     public func withMinBuffer<R>(band: Int, _ body: (UnsafeBufferPointer<Float>) -> R) -> R {
-      slot.bands[band].minBuffer.withUnsafeBufferPointer(body)
+      unsafe slot.bands[band].minBuffer.withUnsafeBufferPointer(body)
     }
 
     /// Direct access to a band's max buffer.
     public func withMaxBuffer<R>(band: Int, _ body: (UnsafeBufferPointer<Float>) -> R) -> R {
-      slot.bands[band].maxBuffer.withUnsafeBufferPointer(body)
+      unsafe slot.bands[band].maxBuffer.withUnsafeBufferPointer(body)
     }
 
     /// Direct access to a band's RMS buffer.
     public func withRMSBuffer<R>(band: Int, _ body: (UnsafeBufferPointer<Float>) -> R) -> R {
-      slot.bands[band].rmsBuffer.withUnsafeBufferPointer(body)
+      unsafe slot.bands[band].rmsBuffer.withUnsafeBufferPointer(body)
     }
 
     /// Direct access to a band's raw buffer.
     public func withRawBuffer<R>(band: Int, _ body: (UnsafeBufferPointer<Float>) -> R) -> R {
-      guard let storage = rawStorage, band < storage.buffers.count else {
-        return body(UnsafeBufferPointer(start: nil, count: 0))
+      guard let storage = unsafe rawStorage, unsafe band < storage.buffers.count else {
+        return unsafe body(UnsafeBufferPointer(start: nil, count: 0))
       }
-      return body(UnsafeBufferPointer(storage.buffers[band]))
+      return unsafe body(UnsafeBufferPointer(storage.buffers[band]))
     }
 
     /// Access the flat contiguous raw buffer (containing all bands).
     /// Used for single-copy upload to GPU.
     public func withFlatRawBuffer<R>(_ body: (UnsafeBufferPointer<Float>?) -> R) -> R {
-      guard let storage = rawStorage else { return body(nil) }
-      return body(UnsafeBufferPointer(storage.memory))
+      guard let storage = unsafe rawStorage else { return body(nil) }
+      return unsafe body(UnsafeBufferPointer(storage.memory))
     }
 
     /// Creates a flat copy of min buffers for all bands (for GPU upload).
@@ -222,8 +223,8 @@
     /// - Parameter body: Closure receiving the flat buffer pointer.
     /// - Returns: The result of the body closure.
     public func copyFlatMinBuffer<R>(_ body: (UnsafeBufferPointer<Float>) -> R) -> R {
-      let flat = slot.bands.flatMap { Array($0.minBuffer) }
-      return flat.withUnsafeBufferPointer(body)
+      let flat = unsafe slot.bands.flatMap { Array($0.minBuffer) }
+      return unsafe flat.withUnsafeBufferPointer(body)
     }
 
     /// Creates a flat copy of max buffers for all bands (for GPU upload).
@@ -231,8 +232,8 @@
     /// - Note: This method **allocates** a temporary array. For zero-copy access,
     ///   use `withMaxBuffer(band:)` to upload each band separately.
     public func copyFlatMaxBuffer<R>(_ body: (UnsafeBufferPointer<Float>) -> R) -> R {
-      let flat = slot.bands.flatMap { Array($0.maxBuffer) }
-      return flat.withUnsafeBufferPointer(body)
+      let flat = unsafe slot.bands.flatMap { Array($0.maxBuffer) }
+      return unsafe flat.withUnsafeBufferPointer(body)
     }
 
     /// Creates a flat copy of RMS buffers for all bands (for GPU upload).
@@ -240,13 +241,13 @@
     /// - Note: This method **allocates** a temporary array. For zero-copy access,
     ///   use `withRMSBuffer(band:)` to upload each band separately.
     public func copyFlatRMSBuffer<R>(_ body: (UnsafeBufferPointer<Float>) -> R) -> R {
-      let flat = slot.bands.flatMap { Array($0.rmsBuffer) }
-      return flat.withUnsafeBufferPointer(body)
+      let flat = unsafe slot.bands.flatMap { Array($0.rmsBuffer) }
+      return unsafe flat.withUnsafeBufferPointer(body)
     }
 
     /// Convert to a copying snapshot (for compatibility or file export).
     public func toSnapshot() -> MultiBandLODSnapshot? {
-      slot.toSnapshot()
+      unsafe slot.toSnapshot()
     }
   }
 
@@ -265,7 +266,7 @@
   ///
   /// Uses triple-buffering to provide lock-free snapshot access for 60fps rendering.
   /// The render thread can always read a consistent snapshot without blocking on audio processing.
-  public final class MultiBandLODProcessor: @unchecked Sendable {
+  @unsafe public final class MultiBandLODProcessor: @unchecked Sendable {
 
     // MARK: - Configuration
 
@@ -364,7 +365,7 @@
     private var deltaWrittenCount: Int = 0
 
     /// Direct reference to write slot's bands for fast access.
-    private var writeSlot: LODBufferSlot { bufferSlots[writeSlotIndex] }
+    private var writeSlot: LODBufferSlot { unsafe bufferSlots[writeSlotIndex] }
 
     /// The writer's current write index (diagnostics only).
     private let writerWriteIndexAtomic: ManagedAtomic<Int>
@@ -383,7 +384,7 @@
       configuration: MultiBandLODConfiguration = .default,
       allocateRawStorage: Bool = true
     ) {
-      self.configuration = configuration
+      unsafe self.configuration = configuration
 
       // Compute crossover frequencies
       let frequencies = configuration.crossoverMode.computeCrossoverFrequencies(
@@ -393,7 +394,7 @@
 
       // Calculate Biquad coefficients for each crossover (Linkwitz-Riley 2nd Order Lowpass)
       // LR2 = Q of 0.5
-      self.filterCoefficients = frequencies.map { freq in
+      unsafe self.filterCoefficients = frequencies.map { freq in
         let w0 = 2.0 * Float.pi * freq / Float(configuration.sampleRate)
         let cosW = cos(w0)
         let sinW = sin(w0)
@@ -418,33 +419,34 @@
 
       // Initialize filter states (one per crossover)
       // Note: frequencies.count is bandCount - 1
-      self.filterStates = Array(repeating: BiquadState(), count: frequencies.count)
+      unsafe self.filterStates = Array(repeating: BiquadState(), count: frequencies.count)
 
-      self.windowStats = Array(repeating: RunningStats(), count: configuration.bandCount)
-      self.rawBandStorage =
-        allocateRawStorage
+      unsafe self.windowStats = Array(repeating: RunningStats(), count: configuration.bandCount)
+      unsafe self.rawBandStorage =
+        unsafe allocateRawStorage
         ? RawBandStorage(
           bandCount: configuration.bandCount,
           length: configuration.rawBufferLength
         )
         : nil
-      self.rawWriteIndex = ManagedAtomic(0)
+      unsafe self.rawWriteIndex = ManagedAtomic(0)
 
       // Initialize triple-buffered LOD slots (pre-allocated, never reallocated)
-      self.bufferSlots = [
+      unsafe self.bufferSlots = [
         LODBufferSlot(configuration: configuration),
         LODBufferSlot(configuration: configuration),
         LODBufferSlot(configuration: configuration),
       ]
 
       // Slot 0 starts as write, slot 1 starts as current for reading, slot 2 is retiring.
-      self.writeSlotIndex = 0
-      self.currentSlotIndex = ManagedAtomic(1)
-      self.retiringSlotIndex = 2
-      self.slotSwapInterval = configuration.snapshotSwapInterval
-      self.deltaStartWriteIndex = bufferSlots[writeSlotIndex].writeIndex
-      self.deltaWrittenCount = 0
-      self.writerWriteIndexAtomic = ManagedAtomic(bufferSlots[writeSlotIndex].writeIndex)
+      unsafe self.writeSlotIndex = 0
+      unsafe self.currentSlotIndex = ManagedAtomic(1)
+      unsafe self.retiringSlotIndex = 2
+      unsafe self.slotSwapInterval = configuration.snapshotSwapInterval
+      unsafe self.deltaStartWriteIndex = unsafe bufferSlots[writeSlotIndex].writeIndex
+      unsafe self.deltaWrittenCount = 0
+      unsafe self.writerWriteIndexAtomic = unsafe ManagedAtomic(
+        bufferSlots[writeSlotIndex].writeIndex)
 
       log.info(
         "Initialized with \(configuration.bandCount) bands, LOD ratio \(configuration.lodRatio), buffer \(configuration.bufferSeconds) seconds (triple-buffered)"
@@ -463,18 +465,18 @@
     public func process(_ samples: UnsafeBufferPointer<Float>) {
       guard !samples.isEmpty else { return }
 
-      let bandCount = configuration.bandCount
-      let lodRatio = configuration.lodRatio
+      let bandCount = unsafe configuration.bandCount
+      let lodRatio = unsafe configuration.lodRatio
 
       // Cache raw storage pointer outside the loop. When nil (offline path),
       // we skip per-sample raw writes entirely — only LOD data is needed.
-      let rawStorage = rawBandStorage
-      let rawLength = rawStorage != nil ? configuration.rawBufferLength : 1
+      let rawStorage = unsafe rawBandStorage
+      let rawLength = unsafe rawStorage != nil ? configuration.rawBufferLength : 1
       // Get current raw write index
-      var currentRawWriteIndex = rawWriteIndex.load(ordering: .relaxed)
+      var currentRawWriteIndex = unsafe rawWriteIndex.load(ordering: .relaxed)
 
       for i in 0..<samples.count {
-        let x = samples[i]
+        let x = unsafe samples[i]
 
         // Cascading lowpass filter bank (Linkwitz-Riley 2nd Order)
         // Each band gets: (lowpass at cutoff) - (lowpass at previous cutoff)
@@ -488,11 +490,11 @@
             part = x - lowerBoundSignal
           } else {
             // Apply Biquad lowpass filter
-            let coeffs = filterCoefficients[b]
+            let coeffs = unsafe filterCoefficients[b]
             // We use `withUnsafeMutablePointer` or just direct access since strict aliasing isn't an issue here with structs.
             // Direct access to struct members in array is fast.
 
-            var state = filterStates[b]
+            var state = unsafe filterStates[b]
 
             // Direct Form 1:
             // y[n] = b0*x[n] + b1*x[n-1] + b2*x[n-2] - a1*y[n-1] - a2*y[n-2]
@@ -506,38 +508,38 @@
             state.y2 = state.y1
             state.y1 = lp
 
-            filterStates[b] = state  // Write back
+            unsafe filterStates[b] = state  // Write back
 
             // This band's contribution
             part = lp - lowerBoundSignal
             lowerBoundSignal = lp
           }
 
-          windowStats[b].add(part)
+          unsafe windowStats[b].add(part)
 
           // Write to raw buffer (skipped in offline mode)
-          if let rawStorage {
-            rawStorage.buffers[b][currentRawWriteIndex] = part
+          if let rawStorage = unsafe rawStorage {
+            unsafe rawStorage.buffers[b][currentRawWriteIndex] = part
           }
         }
 
         currentRawWriteIndex = (currentRawWriteIndex + 1) % rawLength
 
         // Check if we have enough samples for an LOD commit
-        if windowStats[0].count >= lodRatio {
-          commitLOD()
+        if unsafe windowStats[0].count >= lodRatio {
+          unsafe commitLOD()
         }
       }
 
-      rawWriteIndex.store(currentRawWriteIndex, ordering: .relaxed)
+      unsafe rawWriteIndex.store(currentRawWriteIndex, ordering: .relaxed)
     }
 
     /// Process samples from a contiguous array.
     ///
     /// - Parameter samples: Raw audio samples.
     public func process(_ samples: [Float]) {
-      samples.withUnsafeBufferPointer { buffer in
-        process(buffer)
+      unsafe samples.withUnsafeBufferPointer { buffer in
+        unsafe process(buffer)
       }
     }
 
@@ -546,24 +548,24 @@
     /// - Parameter buffer: Audio buffer to process.
     @available(iOS 13.0, macOS 10.15, *)
     public func process(_ buffer: AVFAudio.AVAudioPCMBuffer) {
-      guard let floatData = buffer.floatChannelData?[0] else { return }
-      let bufferPointer = UnsafeBufferPointer(
+      guard let floatData = unsafe buffer.floatChannelData?[0] else { return }
+      let bufferPointer = unsafe UnsafeBufferPointer(
         start: floatData,
         count: Int(buffer.frameLength)
       )
-      process(bufferPointer)
+      unsafe process(bufferPointer)
     }
 
     // MARK: - LOD Commit
 
     private func commitLOD() {
       // Write directly to pre-allocated triple-buffered slot (zero allocation)
-      let slot = writeSlot
+      let slot = unsafe writeSlot
       let wIdx = slot.writeIndex
-      let bandCount = configuration.bandCount
+      let bandCount = unsafe configuration.bandCount
 
       for b in 0..<bandCount {
-        let stats = windowStats[b]
+        let stats = unsafe windowStats[b]
         guard stats.count > 0 else { continue }
         let count = Float(stats.count)
 
@@ -573,19 +575,19 @@
         slot.bands[b].rmsBuffer[wIdx] = sqrt(stats.sumSq / count)
       }
 
-      slot.writeIndex = (wIdx + 1) % configuration.lodBufferLength
-      deltaWrittenCount += 1
-      writerWriteIndexAtomic.store(slot.writeIndex, ordering: .relaxed)
+      slot.writeIndex = unsafe (wIdx + 1) % configuration.lodBufferLength
+      unsafe deltaWrittenCount += 1
+      unsafe writerWriteIndexAtomic.store(slot.writeIndex, ordering: .relaxed)
 
-      for i in windowStats.indices {
-        windowStats[i].reset()
+      for i in unsafe windowStats.indices {
+        unsafe windowStats[i].reset()
       }
 
       // Periodically swap slots for lock-free reading (~60fps)
-      commitsSinceSlotSwap += 1
-      if commitsSinceSlotSwap >= slotSwapInterval {
-        commitsSinceSlotSwap = 0
-        swapSlots()
+      unsafe commitsSinceSlotSwap += 1
+      if unsafe commitsSinceSlotSwap >= slotSwapInterval {
+        unsafe commitsSinceSlotSwap = 0
+        unsafe swapSlots()
       }
     }
 
@@ -593,20 +595,20 @@
     /// Called periodically from commitLOD while holding the lock.
     private func swapSlots() {
       // Current slot is safe for readers; write slot contains freshly committed data.
-      let oldCurrent = currentSlotIndex.load(ordering: .acquiring)
-      let oldWrite = writeSlotIndex
-      let oldRetiring = retiringSlotIndex
+      let oldCurrent = unsafe currentSlotIndex.load(ordering: .acquiring)
+      let oldWrite = unsafe writeSlotIndex
+      let oldRetiring = unsafe retiringSlotIndex
 
       let newCurrent = oldWrite
       let newRetiring = oldCurrent
       let newWrite = oldRetiring
 
-      let publishedSlot = bufferSlots[newCurrent]
-      let nextWriteSlot = bufferSlots[newWrite]
+      let publishedSlot = unsafe bufferSlots[newCurrent]
+      let nextWriteSlot = unsafe bufferSlots[newWrite]
 
       // Copy only the indices written since the last publish into the next write slot,
       // so when it later becomes current it contains a coherent history buffer.
-      copyDeltaIndices(
+      unsafe copyDeltaIndices(
         from: publishedSlot,
         to: nextWriteSlot,
         startWriteIndex: deltaStartWriteIndex,
@@ -617,16 +619,16 @@
       nextWriteSlot.writeIndex = publishedSlot.writeIndex
 
       // Atomically publish the new current slot.
-      currentSlotIndex.store(newCurrent, ordering: .releasing)
+      unsafe currentSlotIndex.store(newCurrent, ordering: .releasing)
 
       // Rotate roles.
-      retiringSlotIndex = newRetiring
-      writeSlotIndex = newWrite
+      unsafe retiringSlotIndex = newRetiring
+      unsafe writeSlotIndex = newWrite
 
       // Next publish interval starts at the current write index.
-      deltaStartWriteIndex = nextWriteSlot.writeIndex
-      deltaWrittenCount = 0
-      writerWriteIndexAtomic.store(nextWriteSlot.writeIndex, ordering: .relaxed)
+      unsafe deltaStartWriteIndex = nextWriteSlot.writeIndex
+      unsafe deltaWrittenCount = 0
+      unsafe writerWriteIndexAtomic.store(nextWriteSlot.writeIndex, ordering: .relaxed)
     }
 
     private func copyDeltaIndices(
@@ -635,7 +637,7 @@
       startWriteIndex: Int,
       count: Int
     ) {
-      let lodLength = configuration.lodBufferLength
+      let lodLength = unsafe configuration.lodBufferLength
       guard lodLength > 0 else { return }
 
       let copyCount = min(max(count, 0), lodLength)
@@ -643,7 +645,7 @@
 
       if count >= lodLength {
         for idx in 0..<lodLength {
-          for b in 0..<configuration.bandCount {
+          for b in unsafe 0..<configuration.bandCount {
             destination.bands[b].minBuffer[idx] = source.bands[b].minBuffer[idx]
             destination.bands[b].maxBuffer[idx] = source.bands[b].maxBuffer[idx]
             destination.bands[b].rmsBuffer[idx] = source.bands[b].rmsBuffer[idx]
@@ -654,7 +656,7 @@
         if idx < 0 { idx += lodLength }
 
         for _ in 0..<copyCount {
-          for b in 0..<configuration.bandCount {
+          for b in unsafe 0..<configuration.bandCount {
             destination.bands[b].minBuffer[idx] = source.bands[b].minBuffer[idx]
             destination.bands[b].maxBuffer[idx] = source.bands[b].maxBuffer[idx]
             destination.bands[b].rmsBuffer[idx] = source.bands[b].rmsBuffer[idx]
@@ -676,9 +678,10 @@
     ///
     /// - Returns: Zero-copy reference to LOD data for GPU rendering.
     public func snapshotRef() -> LODSnapshotRef {
-      let index = currentSlotIndex.load(ordering: .acquiring)
-      let rawWIdx = rawWriteIndex.load(ordering: .relaxed)
-      return LODSnapshotRef(bufferSlots[index], rawStorage: rawBandStorage, rawWriteIndex: rawWIdx)
+      let index = unsafe currentSlotIndex.load(ordering: .acquiring)
+      let rawWIdx = unsafe rawWriteIndex.load(ordering: .relaxed)
+      return unsafe LODSnapshotRef(
+        bufferSlots[index], rawStorage: rawBandStorage, rawWriteIndex: rawWIdx)
     }
 
     /// Creates a snapshot of current LOD data for rendering.
@@ -688,8 +691,8 @@
     ///
     /// - Returns: Complete LOD snapshot ready for GPU rendering.
     public func snapshot() -> MultiBandLODSnapshot {
-      let index = currentSlotIndex.load(ordering: .acquiring)
-      return bufferSlots[index].toSnapshot()
+      let index = unsafe currentSlotIndex.load(ordering: .acquiring)
+      return unsafe bufferSlots[index].toSnapshot()
     }
 
     /// Creates a snapshot with explicit locking (for diagnostics).
@@ -699,7 +702,7 @@
     ///
     /// - Returns: Most up-to-date LOD snapshot.
     public func snapshotLocking() -> MultiBandLODSnapshot {
-      return writeSlot.toSnapshot()
+      return unsafe writeSlot.toSnapshot()
     }
 
     /// Flushes any partially-accumulated LOD window into the buffers.
@@ -710,8 +713,8 @@
     ///
     /// This commits the current window if it contains at least one sample.
     public func finalize() {
-      if windowStats.first?.count ?? 0 > 0 {
-        commitLOD()
+      if unsafe windowStats.first?.count ?? 0 > 0 {
+        unsafe commitLOD()
       }
     }
 
@@ -722,33 +725,34 @@
     /// Call this when starting a new recording.
     public func reset() {
       // Reset filter states
-      for i in filterStates.indices {
-        filterStates[i].reset()
+      for i in unsafe filterStates.indices {
+        unsafe filterStates[i].reset()
       }
 
-      for i in windowStats.indices {
-        windowStats[i].reset()
+      for i in unsafe windowStats.indices {
+        unsafe windowStats[i].reset()
       }
 
       // Reset all triple-buffered slots (in-place, no allocation)
-      for slot in bufferSlots {
+      for slot in unsafe bufferSlots {
         slot.reset()
       }
 
       // Reset slot indices
-      writeSlotIndex = 0
-      currentSlotIndex.store(1, ordering: .releasing)
-      retiringSlotIndex = 2
-      commitsSinceSlotSwap = 0
-      deltaStartWriteIndex = bufferSlots[writeSlotIndex].writeIndex
-      deltaWrittenCount = 0
-      writerWriteIndexAtomic.store(bufferSlots[writeSlotIndex].writeIndex, ordering: .relaxed)
+      unsafe writeSlotIndex = 0
+      unsafe currentSlotIndex.store(1, ordering: .releasing)
+      unsafe retiringSlotIndex = 2
+      unsafe commitsSinceSlotSwap = 0
+      unsafe deltaStartWriteIndex = unsafe bufferSlots[writeSlotIndex].writeIndex
+      unsafe deltaWrittenCount = 0
+      unsafe writerWriteIndexAtomic.store(
+        bufferSlots[writeSlotIndex].writeIndex, ordering: .relaxed)
 
-      rawWriteIndex.store(0, ordering: .relaxed)
+      unsafe rawWriteIndex.store(0, ordering: .relaxed)
       // Zero out raw buffers
-      if let rawBandStorage {
-        for b in rawBandStorage.buffers {
-          b.initialize(repeating: 0)
+      if let rawBandStorage = unsafe rawBandStorage {
+        for unsafeb in unsafe rawBandStorage.buffers {
+          unsafe b.initialize(repeating: 0)
         }
       }
 
@@ -759,19 +763,19 @@
 
     /// The published write index (safe for renderers).
     public var publishedWriteIndex: Int {
-      let index = currentSlotIndex.load(ordering: .acquiring)
-      return bufferSlots[index].writeIndex
+      let index = unsafe currentSlotIndex.load(ordering: .acquiring)
+      return unsafe bufferSlots[index].writeIndex
     }
 
     /// The writer's current write index (diagnostics only).
     public var writerWriteIndex: Int {
-      writerWriteIndexAtomic.load(ordering: .relaxed)
+      unsafe writerWriteIndexAtomic.load(ordering: .relaxed)
     }
 
     /// Current write index in the circular buffer.
     ///
     /// This is the published write index (safe for renderers).
-    public var currentWriteIndex: Int { publishedWriteIndex }
+    public var currentWriteIndex: Int { unsafe publishedWriteIndex }
 
   }
 
@@ -820,8 +824,8 @@
       // With scaling, the LOD buffer is capped at ~maxOfflineLODSamplesPerBand entries
       // per band regardless of file length.
       let effectiveLodRatio: Int
-      if fileFrameCount > maxOfflineLODSamplesPerBand * configuration.lodRatio {
-        effectiveLodRatio = max(
+      if unsafe fileFrameCount > maxOfflineLODSamplesPerBand * configuration.lodRatio {
+        effectiveLodRatio = unsafe max(
           configuration.lodRatio,
           Int(ceil(Double(fileFrameCount) / Double(maxOfflineLODSamplesPerBand)))
         )
@@ -848,7 +852,7 @@
         rawBufferLengthOverride: rawBufferLengthOverride
       )
 
-      let processor = MultiBandLODProcessor(
+      let processor = unsafe MultiBandLODProcessor(
         configuration: adjustedConfig,
         allocateRawStorage: false
       )
@@ -878,23 +882,23 @@
         guard buffer.frameLength > 0 else { break }
 
         // If stereo, average channels
-        if let channels = buffer.floatChannelData {
+        if let channels = unsafe buffer.floatChannelData {
           let frameCount = Int(buffer.frameLength)
           let channelCount = Int(processingFormat.channelCount)
 
           if channelCount == 1 {
-            processor.process(buffer)
+            unsafe processor.process(buffer)
           } else {
             // Average channels
             var monoBuffer = [Float](repeating: 0, count: frameCount)
             for frame in 0..<frameCount {
               var sum: Float = 0
               for ch in 0..<channelCount {
-                sum += channels[ch][frame]
+                unsafe sum += channels[ch][frame]
               }
               monoBuffer[frame] = sum / Float(channelCount)
             }
-            processor.process(monoBuffer)
+            unsafe processor.process(monoBuffer)
           }
         }
 
@@ -902,11 +906,11 @@
       }
 
       // Ensure the final partial interval is included even if it didn't reach a full LOD window.
-      if processor.windowStats.first?.count ?? 0 > 0 {
-        processor.commitLOD()
+      if unsafe processor.windowStats.first?.count ?? 0 > 0 {
+        unsafe processor.commitLOD()
       }
 
-      return processor.snapshotLocking()
+      return unsafe processor.snapshotLocking()
     }
 
     /// Generate LOD data from specific segments of an audio file.
@@ -965,8 +969,8 @@
 
       // Scale lodRatio for long segment totals (same rationale as single-file variant).
       let effectiveLodRatio: Int
-      if totalFrames > maxOfflineLODSamplesPerBand * configuration.lodRatio {
-        effectiveLodRatio = max(
+      if unsafe totalFrames > maxOfflineLODSamplesPerBand * configuration.lodRatio {
+        effectiveLodRatio = unsafe max(
           configuration.lodRatio,
           Int(ceil(Double(totalFrames) / Double(maxOfflineLODSamplesPerBand)))
         )
@@ -989,7 +993,7 @@
         rawBufferLengthOverride: rawBufferLengthOverride
       )
 
-      let processor = MultiBandLODProcessor(
+      let processor = unsafe MultiBandLODProcessor(
         configuration: adjustedConfig,
         allocateRawStorage: false
       )
@@ -1019,22 +1023,22 @@
 
           guard buffer.frameLength > 0 else { break }
 
-          if let channels = buffer.floatChannelData {
+          if let channels = unsafe buffer.floatChannelData {
             let frameCount = Int(buffer.frameLength)
             let channelCount = Int(processingFormat.channelCount)
 
             if channelCount == 1 {
-              processor.process(buffer)
+              unsafe processor.process(buffer)
             } else {
               var monoBuffer = [Float](repeating: 0, count: frameCount)
               for frame in 0..<frameCount {
                 var sum: Float = 0
                 for ch in 0..<channelCount {
-                  sum += channels[ch][frame]
+                  unsafe sum += channels[ch][frame]
                 }
                 monoBuffer[frame] = sum / Float(channelCount)
               }
-              processor.process(monoBuffer)
+              unsafe processor.process(monoBuffer)
             }
           }
 
@@ -1042,11 +1046,11 @@
         }
       }
 
-      if processor.windowStats.first?.count ?? 0 > 0 {
-        processor.commitLOD()
+      if unsafe processor.windowStats.first?.count ?? 0 > 0 {
+        unsafe processor.commitLOD()
       }
 
-      return processor.snapshotLocking()
+      return unsafe processor.snapshotLocking()
     }
 
     /// Errors that can occur during LOD generation.

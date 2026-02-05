@@ -6,13 +6,13 @@ public final class Synchronized<Value>: Sendable {
   private let mut: Mut<Value>
 
   public borrowing func withLock<Result>(
-    _ body: (inout sending Value) -> sending Result
-  ) -> sending Result {
+    _ body: (inout Value) -> Result
+  ) -> Result {
     mut.withLock(body)
   }
 
   public borrowing func withLock<Result, E>(
-    _ body: (inout sending Value) throws(E) -> sending Result
+    _ body: (inout Value) throws(E) -> sending Result
   ) throws(E) -> sending Result where E: AudioError {
     try mut.withLock(body)
   }

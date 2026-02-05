@@ -1,6 +1,6 @@
 #if !os(macOS) || targetEnvironment(macCatalyst)
   #if DEBUG
-    @preconcurrency import AVFoundation
+    import AVFoundation
     import Atomics
     import Tools
 
@@ -157,12 +157,12 @@
         }
 
         for i in 0..<effectiveChannelCount {
-          channels[i].withUnsafeBufferPointer { buffer in
+          unsafe channels[i].withUnsafeBufferPointer { buffer in
             if writerCanWrite {
-              audioBuffers[i].write(buffer)
+              unsafe audioBuffers[i].write(buffer)
             }
             if receiverCanWrite, let receiverBuffers, i < receiverBuffers.count {
-              receiverBuffers[i].write(buffer)
+              unsafe receiverBuffers[i].write(buffer)
             }
           }
         }
@@ -176,8 +176,8 @@
             sourceSampleTime: sourceSampleTime,
             sourceSampleRate: sourceSampleRate
           )
-          _ = withUnsafePointer(to: &packet) { pointer in
-            timingBuffer.write(UnsafeBufferPointer(start: pointer, count: 1))
+          _ = unsafe withUnsafePointer(to: &packet) { pointer in
+            unsafe timingBuffer.write(UnsafeBufferPointer(start: pointer, count: 1))
           }
         }
 

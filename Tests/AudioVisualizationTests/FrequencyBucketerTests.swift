@@ -182,6 +182,7 @@
 
       // Peak should be higher than magnitude due to decay (not instant drop)
       #expect(decayedPeak >= buckets2.first?.magnitude ?? 0)
+      #expect(initialPeak >= decayedPeak)
     }
 
     @Test("Reset peak hold clears all values")

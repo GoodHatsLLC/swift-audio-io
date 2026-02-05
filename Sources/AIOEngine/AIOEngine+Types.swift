@@ -1,5 +1,5 @@
 #if !os(macOS) || targetEnvironment(macCatalyst)
-  @preconcurrency import AVFoundation
+  import AVFoundation
   import Atomics
   import Tools
 
@@ -48,7 +48,7 @@
     }
   }
 
-  final class ExtAudioFileWriter: @unchecked Sendable, RecordingFileWriter {
+  @safe final class ExtAudioFileWriter: @unchecked Sendable, RecordingFileWriter {
     let fileURL: URL
     private var file: ExtAudioFileRef?
 
@@ -59,9 +59,9 @@
       clientFormat: AVAudioFormat
     ) throws {
       self.fileURL = url
-      var asbd = outputFormat.streamDescription.pointee
+      var asbd = unsafe outputFormat.streamDescription.pointee
       var newFile: ExtAudioFileRef?
-      let status = ExtAudioFileCreateWithURL(
+      let status = unsafe ExtAudioFileCreateWithURL(
         url as CFURL,
         fileType,
         &asbd,
@@ -69,13 +69,13 @@
         AudioFileFlags.eraseFile.rawValue,
         &newFile
       )
-      guard status == noErr, let created = newFile else {
+      guard status == noErr, let created = unsafe newFile else {
         throw NSError(domain: NSOSStatusErrorDomain, code: Int(status), userInfo: nil)
       }
-      file = created
-      var clientASBD = clientFormat.streamDescription.pointee
+      unsafe file = unsafe created
+      var clientASBD = unsafe clientFormat.streamDescription.pointee
       let propertySize = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
-      let setStatus = ExtAudioFileSetProperty(
+      let setStatus = unsafe ExtAudioFileSetProperty(
         created,
         kExtAudioFileProperty_ClientDataFormat,
         propertySize,
@@ -87,18 +87,18 @@
     }
 
     func write(_ buffer: AVAudioPCMBuffer) throws {
-      guard let file else { return }
+      guard let file = unsafe file else { return }
       let frames = buffer.frameLength
-      let status = ExtAudioFileWrite(file, frames, buffer.audioBufferList)
+      let status = unsafe ExtAudioFileWrite(file, frames, buffer.audioBufferList)
       guard status == noErr else {
         throw NSError(domain: NSOSStatusErrorDomain, code: Int(status), userInfo: nil)
       }
     }
 
     func close() {
-      if let file {
-        ExtAudioFileDispose(file)
-        self.file = nil
+      if let file = unsafe file {
+        unsafe ExtAudioFileDispose(file)
+        unsafe self.file = nil
       }
     }
   }
@@ -149,7 +149,7 @@
   struct WriterSession: Sendable {
     let id: UUID
     let control: WriterControl
-    let writer: RecordingFileWriter
+    let writer: any RecordingFileWriter
     let fileURL: URL
   }
 
@@ -174,7 +174,7 @@
   }
 
   struct InternalState {
-    var recordingWriter: RecordingFileWriter?
+    var recordingWriter: (any RecordingFileWriter)?
     var recordingURL: URL?
     var recordingConfiguration: RecordingConfiguration?
     var playbackInstance: PlaybackInstance?

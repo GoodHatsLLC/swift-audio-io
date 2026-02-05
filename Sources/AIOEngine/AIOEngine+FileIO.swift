@@ -1,5 +1,5 @@
 #if !os(macOS) || targetEnvironment(macCatalyst)
-  @preconcurrency import AVFoundation
+  import AVFoundation
   import AudioToolbox
   import Foundation
   import SystemLog
@@ -154,7 +154,7 @@
     func makeRecordingWriter(
       url: URL,
       configuration: RecordingConfiguration
-    ) throws(AIOError) -> RecordingFileWriter {
+    ) throws(AIOError) -> any RecordingFileWriter {
       guard let fileSettings = configuration.fileSettings else {
         throw AIOError.invalidRecordingConfiguration(details: "(file format settings)")
       }
@@ -175,11 +175,30 @@
         guard let outputFormat = AVAudioFormat(settings: fileSettings) else {
           throw AIOError.invalidRecordingConfiguration(details: "file format settings")
         }
+        // ExtAudioFile ASBD describes the on-disk format, which must be interleaved
+        // for multi-channel audio. The client format (processing) stays non-interleaved.
+        let diskFormat: AVAudioFormat
+        if !outputFormat.isInterleaved, outputFormat.channelCount > 1 {
+          guard
+            let interleaved = AVAudioFormat(
+              commonFormat: outputFormat.commonFormat,
+              sampleRate: outputFormat.sampleRate,
+              channels: outputFormat.channelCount,
+              interleaved: true
+            )
+          else {
+            throw AIOError.invalidRecordingConfiguration(
+              details: "interleaved file format settings")
+          }
+          diskFormat = interleaved
+        } else {
+          diskFormat = outputFormat
+        }
         do {
           return try ExtAudioFileWriter(
             url: url,
             fileType: audioFileTypeID(for: configuration.outputConfiguration.fileFormat),
-            outputFormat: outputFormat,
+            outputFormat: diskFormat,
             clientFormat: processingFormat
           )
         } catch {
