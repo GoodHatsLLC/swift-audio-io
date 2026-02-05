@@ -159,6 +159,20 @@ let snapshot = try await MultiBandLODProcessor.generateFromFile(
 
 See `Sources/AIO.docc/MultiBandVisualization.md` for complete API documentation.
 
+## Documentation (DocC)
+
+**Location**: `Sources/AIO.docc/`
+
+Technical specs and design documents for the audio engine:
+
+- `SPEC_AIO.md` — AIO engine spec (architecture, recording pipeline, error handling)
+- `AUDIO_ENGINES.md` — Audio engine design comparison and rationale
+- `SPEC_AUDIO_VIZ.md` — Audio visualization pipeline spec
+- `waveform-and-segment-editing-infrastructure.md` — Waveform rendering and segment editing infrastructure
+- `waveform-memory-optimization-followups.md` — Memory optimization follow-ups for waveform data
+- `MultiBandVisualization.md` — Multi-band LOD API documentation
+- `MultiBandLODContract.md` — Multi-band LOD data contract
+
 ## Development Guidelines
 
 ### Concurrency
