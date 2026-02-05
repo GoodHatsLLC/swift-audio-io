@@ -115,7 +115,6 @@ let package = Package(
         .enableUpcomingFeature("StrictConcurrency"),
         .strictMemorySafety(),
         .defaultIsolation(.none),
-        .defaultIsolation(.none),
         .treatAllWarnings(as: .error),
         .enableUpcomingFeature("ExistentialAny"),
       ]
