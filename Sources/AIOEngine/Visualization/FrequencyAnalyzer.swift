@@ -334,9 +334,9 @@
     /// Format frequency for display labels
     private func formatFrequency(_ frequency: Float) -> String {
       if frequency >= 1000 {
-        return unsafe String(format: "%.1fk", frequency / 1000)
+        return "\((frequency / 1000).formatted(.number.precision(.fractionLength(1))))k"
       } else {
-        return unsafe String(format: "%.0f", frequency)
+        return frequency.formatted(.number.precision(.fractionLength(0)))
       }
     }
 
