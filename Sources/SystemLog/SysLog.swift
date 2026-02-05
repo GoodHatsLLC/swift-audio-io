@@ -377,6 +377,27 @@ public enum SystemLog {
     }
   }
 
+  enum DateSortOrder: String, CaseIterable, Identifiable {
+    case ascending
+    case descending
+
+    var id: Self { self }
+
+    var label: String {
+      switch self {
+      case .ascending: return "Oldest First"
+      case .descending: return "Newest First"
+      }
+    }
+
+    var systemImage: String {
+      switch self {
+      case .ascending: return "arrow.up"
+      case .descending: return "arrow.down"
+      }
+    }
+  }
+
   enum Level: String, Sendable, Codable, CustomStringConvertible {
     case undefined
     case debug
@@ -1142,7 +1163,8 @@ public enum SystemLog {
     fileprivate var isLoading: Bool = false
     @State private var isFilterSheetPresented: Bool = false
     @State private var isExportSheetPresented: Bool = false
-    @State private var window: LogWindow = .minutes15
+    @State private var window: LogWindow = .all
+    @State private var sortOrder: DateSortOrder = .descending
     @State private var filters: FilterSheet.Filters = {
       var filters = FilterSheet.Filters()
       if let bundleId = Bundle.main.bundleIdentifier {
@@ -1161,9 +1183,18 @@ public enum SystemLog {
       let window: LogWindow
     }
 
+    private var sortedLogs: [OSLogStream.LogEntry] {
+      switch sortOrder {
+      case .ascending:
+        model.logs
+      case .descending:
+        model.logs.reversed()
+      }
+    }
+
     var body: some View {
       List {
-        ForEach(model.logs) { log in
+        ForEach(sortedLogs) { log in
           LogCell(for: log)
             .listRowInsets(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
             .listRowSeparator(.hidden)
@@ -1187,6 +1218,7 @@ public enum SystemLog {
       .toolbar {
         ToolbarItemGroup(placement: .automatic) {
           loadOlderButton
+          sortOrderButton
           rangeMenu
           exportButton
           filterButton
@@ -1237,6 +1269,18 @@ public enum SystemLog {
       .disabled(model.logs.isEmpty)
       .help("Export logs")
       .keyboardShortcut("e", modifiers: .command)
+    }
+
+    private var sortOrderButton: some View {
+      Button {
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+          sortOrder = sortOrder == .ascending ? .descending : .ascending
+        }
+      } label: {
+        Label(sortOrder.label, systemImage: sortOrder.systemImage)
+          .symbolRenderingMode(.hierarchical)
+      }
+      .help(sortOrder == .ascending ? "Sort newest first" : "Sort oldest first")
     }
 
     private var rangeMenu: some View {
