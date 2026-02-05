@@ -340,8 +340,7 @@
     }
     /// A Boolean value that indicates whether the player is currently playing.
     @MainActor public var isPlaying: Bool {
-      // FIXME: player isPlaying would need to be mirrored as a stored variable to be safe
-      unsafe playback != nil && player.isPlaying
+      playback?.isPlaying == true
     }
 
     @MainActor var writerSession: WriterSession?
@@ -499,8 +498,7 @@
 
     // MARK: - Playback State Helpers
 
-    @MainActor
-    struct PlaybackStateSignature: Equatable {
+    struct PlaybackStateSignature: Sendable, Equatable {
       let id: UUID?
       let file: URL?
       let isPlaying: Bool
