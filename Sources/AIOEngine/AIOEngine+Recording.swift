@@ -1134,7 +1134,7 @@
       log.info("🧹 writerLoop exiting for \(writer.fileURL.lastPathComponent, privacy: .public)")
       Task { await control.drainSignal.signal() }
     }
-
+    // swift-format-ignore
     static func receiverLoopSync(
       buffers: [SPSCRingBuffer<Float>],
       timing: SPSCRingBuffer<TimingPacket>,
@@ -1157,7 +1157,7 @@
       var scratchBuffers: [UnsafeMutableBufferPointer<Float>] = unsafe []
       func ensureScratchCapacity(_ needed: Int) {
         guard needed > scratchCapacity else { return }
-        for unsafebuffer in unsafe scratchBuffers {
+        for unsafe buffer in unsafe scratchBuffers {
           unsafe buffer.baseAddress?.deallocate()
         }
         unsafe scratchBuffers = unsafe (0..<channelCount).map { _ in
@@ -1167,7 +1167,7 @@
         scratchCapacity = needed
       }
       defer {
-        for unsafebuffer in unsafe scratchBuffers {
+        for unsafe buffer in unsafe scratchBuffers {
           unsafe buffer.baseAddress?.deallocate()
         }
       }
