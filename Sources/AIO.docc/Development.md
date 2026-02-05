@@ -92,7 +92,7 @@ This is required before committing any changes.
 
 ### Coding Style & Naming Conventions
 
-*   Conform to Swift 6.1 idioms with 2-space indentation, 100-character lines, and trailing commas only in multiline argument lists.
+*   Conform to Swift 6.2 idioms with 2-space indentation, 100-character lines, and trailing commas only in multiline argument lists.
 *   Name types in UpperCamelCase (`AIOEngine`), methods and variables in lowerCamelCase, and async APIs using verbs plus context (`startRecording`).
 *   Run `./bin/format.sh` (swift-format) before committing.
 *   Keep shared helpers in `Sources/AIOEngine/Utils` instead of scattering extensions.
@@ -118,7 +118,7 @@ Example: `feat: add 96kHz sample rate support`
 
 ### Swift Language Requirements
 
-*   **Swift 6.1+** with strict concurrency enabled.
+*   **Swift 6.2+** with strict concurrency enabled.
 *   **Platforms**: iOS 18.0+, macOS 14.0+.
 *   **Dependencies**: swift-async-algorithms, swift-atomics, swift-collections.
 *   **Style**: 2-space indent, 100-char lines, UpperCamelCase types, lowerCamelCase methods.
