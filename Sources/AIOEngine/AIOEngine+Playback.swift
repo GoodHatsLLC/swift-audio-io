@@ -268,7 +268,7 @@
     @MainActor
     public func scrub(
       to time: TimeInterval,
-      play: Bool = true,
+      play: Bool,
       updatePlaybackTimer: Bool = true
     ) throws(AIOError) -> Playback? {
       if let initialInstance = state[locked: \.playbackInstance] {
