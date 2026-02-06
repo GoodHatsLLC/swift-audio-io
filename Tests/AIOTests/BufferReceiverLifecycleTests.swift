@@ -1,7 +1,6 @@
 #if canImport(AVFoundation) && (!os(macOS) || targetEnvironment(macCatalyst))
   import Atomics
   import Testing
-  import Tools
 
   @testable import AIOEngine
 

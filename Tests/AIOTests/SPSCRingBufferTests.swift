@@ -4,7 +4,7 @@
   import Testing
   import Tools
 
-  @_spi(TESTING) @testable import AIOEngine
+  @testable import AIOEngine
 
   @Suite
   struct SPSCRingBufferTests {
