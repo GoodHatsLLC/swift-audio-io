@@ -15,6 +15,10 @@ let package = Package(
       name: "AIOEngine",
       targets: ["AIOEngine"]
     ),
+    .library(
+      name: "SystemLog",
+      targets: ["SystemLog"]
+    ),
   ],
   dependencies: [
     .package(
@@ -44,7 +48,17 @@ let package = Package(
         .enableUpcomingFeature("StrictConcurrency"),
         .strictMemorySafety(),
         .defaultIsolation(.none),
-
+        .enableUpcomingFeature("ExistentialAny"),
+      ]
+    ),
+    .testTarget(
+      name: "ToolsTests",
+      dependencies: ["Tools"],
+      swiftSettings: [
+        .swiftLanguageMode(.v6),
+        .enableUpcomingFeature("StrictConcurrency"),
+        .strictMemorySafety(),
+        .defaultIsolation(.none),
         .enableUpcomingFeature("ExistentialAny"),
       ]
     ),
@@ -75,7 +89,6 @@ let package = Package(
         .enableUpcomingFeature("StrictConcurrency"),
         .strictMemorySafety(),
         .defaultIsolation(.none),
-
         .enableUpcomingFeature("ExistentialAny"),
       ]
     ),
@@ -91,23 +104,14 @@ let package = Package(
         .enableUpcomingFeature("ExistentialAny"),
       ]
     ),
-    .testTarget(
-      name: "ToolsTests",
-      dependencies: ["Tools"],
-      swiftSettings: [
-        .swiftLanguageMode(.v6),
-        .enableUpcomingFeature("StrictConcurrency"),
-        .strictMemorySafety(),
-        .defaultIsolation(.none),
-
-        .enableUpcomingFeature("ExistentialAny"),
-      ]
-    ),
     .target(
       name: "SystemLog",
       dependencies: [
         "Tools",
         .product(name: "AsyncAlgorithms", package: "swift-async-algorithms"),
+        .product(name: "Atomics", package: "swift-atomics"),
+        .product(name: "DequeModule", package: "swift-collections"),
+        .product(name: "OrderedCollections", package: "swift-collections"),
       ],
       swiftSettings: [
         .swiftLanguageMode(.v6),
@@ -115,7 +119,6 @@ let package = Package(
         .enableUpcomingFeature("StrictConcurrency"),
         .strictMemorySafety(),
         .defaultIsolation(.none),
-
         .enableUpcomingFeature("ExistentialAny"),
       ]
     ),
