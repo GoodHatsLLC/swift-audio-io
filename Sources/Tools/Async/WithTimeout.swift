@@ -10,7 +10,7 @@ public struct Timeout: AudioError, Hashable {
   let type: String
 
   public var description: String {
-    unsafe "withTimeout<\(type)> invocation at \(fromLocation.short) timed out after ~\(afterDuration.seconds.formatted(.number.precision(.fractionLength(2)))) seconds."
+    "withTimeout<\(type)> invocation at \(fromLocation.short) timed out after ~\(afterDuration.seconds.formatted(.number.precision(.fractionLength(2)))) seconds."
   }
 }
 
