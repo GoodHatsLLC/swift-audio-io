@@ -164,16 +164,22 @@
       configuration: RecordingConfiguration
     ) async throws(AIOError) {
       do {
-        let shouldClearPlayback = await withEngineControlQueue { [weak self] in
+        let shouldStopPlayer = await withEngineControlQueue { [weak self] in
           guard let self else { return false }
           return unsafe self.player.isPlaying
         }
-        if shouldClearPlayback {
+        if shouldStopPlayer {
           await stopPlayerIfNeeded()
         }
         try await MainActor.run {
-          // Stop any active playback before recording
-          if shouldClearPlayback {
+          // Clear any lingering playback state before recording.
+          // When shouldStopPlayer is true the player was still active and
+          // we already stopped it above.  But playback can also be stale after
+          // natural completion — the player has stopped yet the playback
+          // struct hasn't been nilled out because cleanupPlaybackInstance's
+          // MainActor Task hasn't run yet.  Clearing unconditionally prevents
+          // warm()'s `!isPlaying` guard from returning early on stale state.
+          if shouldStopPlayer || playback != nil {
             placeState(\.playbackInstance, nil)
             playback = nil
             onPlaybackUpdated?(nil)
@@ -483,21 +489,21 @@
         }
       }
       // Ensure the engine is in a clean state before warming for recording.
-      // After playback, the engine may still be running with a playback-only
-      // graph (player -> mainMixerNode). The input node reports sampleRate: 0
-      // in this state because it was never initialized for recording input.
-      // Stopping and resetting allows engine.prepare() to properly initialize
-      // the input node after the audio session is reconfigured.
+      // Always stop and reset unconditionally — not just when engine.isRunning
+      // is true. After playback the engine may have been stopped externally
+      // (session deactivation, interruption) but never reset, leaving a stale
+      // playback graph (player → mainMixerNode) that prevents engine.prepare()
+      // from properly initialising the input node (sampleRate: 0).
       let engineWasRunning = runOnEngineControlQueue { [weak self] in
         guard let self else { return false }
-        guard unsafe self.engine.isRunning else { return false }
+        let wasRunning = unsafe self.engine.isRunning
         unsafe self.player.stop()
         unsafe self.engine.stop()
         unsafe self.engine.reset()
         if unsafe !self.engine.attachedNodes.contains(self.player) {
           unsafe self.engine.attach(self.player)
         }
-        return true
+        return wasRunning
       }
       if engineWasRunning {
         log.info("Reset engine left running (e.g. after playback) before recording warm-up")

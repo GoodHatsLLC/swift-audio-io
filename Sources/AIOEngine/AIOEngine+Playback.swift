@@ -322,7 +322,22 @@
     /// Stops the current playback.
     @MainActor
     public func stopPlayback() async {
-      await stopPlayerIfNeeded()
+      // Stop the player AND the engine, then reset the graph so the engine
+      // is left in a clean idle state.  Previously only the player was
+      // stopped, leaving the engine running with a playback-only graph
+      // (player → mainMixerNode) where the input node has sampleRate: 0.
+      // If deactivateAudioSessionOnStop was true, the session could be
+      // deactivated while the engine was still running, further confusing
+      // subsequent recording warm-up.
+      await withEngineControlQueue { [weak self] in
+        guard let self else { return }
+        unsafe self.player.stop()
+        unsafe self.engine.stop()
+        unsafe self.engine.reset()
+        if unsafe !self.engine.attachedNodes.contains(self.player) {
+          unsafe self.engine.attach(self.player)
+        }
+      }
       let finishedFile: AVAudioFile? = state {
         if let foundInstance = $0.playbackInstance {
           $0.playbackInstance = nil
@@ -382,6 +397,21 @@
         }
       }
       if let finishedFile {
+        // Stop the engine now that playback has finished.  Dispatched
+        // asynchronously on the serial engine control queue so any
+        // subsequent recording warm-up or new playback start (which also
+        // dispatch to this queue) will see a clean, idle engine.
+        engineControlQueue.async { [weak self] in
+          guard let self else { return }
+          // Only tear down if no new playback instance started meanwhile.
+          guard self.state[locked: \.playbackInstance] == nil else { return }
+          unsafe self.player.stop()
+          unsafe self.engine.stop()
+          unsafe self.engine.reset()
+          if unsafe !self.engine.attachedNodes.contains(self.player) {
+            unsafe self.engine.attach(self.player)
+          }
+        }
         Task { @MainActor [weak self, state] in
           if state[locked: \.playbackInstance] == nil {
             self?.setPlayback(nil)
