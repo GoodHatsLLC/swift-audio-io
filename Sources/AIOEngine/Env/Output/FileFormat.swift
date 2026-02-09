@@ -1,4 +1,4 @@
-import UniformTypeIdentifiers
+public import UniformTypeIdentifiers
 
 public enum FileFormat: String, CaseIterable, CustomStringConvertible, Sendable, Identifiable,
   TypeDescribable

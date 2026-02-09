@@ -1,19 +1,18 @@
 import AsyncAlgorithms
-import Foundation
+public import Foundation
 import Observation
-import SwiftUI
-import Tools
+public import SwiftUI
+public import Tools
 import UniformTypeIdentifiers
 
-import class Foundation.Bundle
-import struct OSLog.Logger
 import class OSLog.OSLogEntryLog
 import struct OSLog.OSLogInterpolation
 import struct OSLog.OSLogPrivacy
 import class OSLog.OSLogStore
 import struct OSLog.OSLogType
+public import struct os.Logger
 
-public typealias SystemLogger = OSLog.Logger
+public typealias SystemLogger = Logger
 extension SystemLogger {
   @_spi(SysLog) public static func make(
     file: StaticString = #file,

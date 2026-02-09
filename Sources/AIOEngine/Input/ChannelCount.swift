@@ -1,5 +1,5 @@
 #if canImport(AVFoundation)
-  import AVFoundation
+  public import AVFoundation
 
   public struct ChannelCount: Sendable, Hashable, Identifiable,
     CustomStringConvertible, TypeDescribable, Comparable

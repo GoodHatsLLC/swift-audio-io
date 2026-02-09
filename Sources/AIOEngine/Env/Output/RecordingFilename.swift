@@ -1,4 +1,4 @@
-import Foundation
+public import Foundation
 
 /// Represents a semantic recording filename with UTC timestamp and identifier.
 ///

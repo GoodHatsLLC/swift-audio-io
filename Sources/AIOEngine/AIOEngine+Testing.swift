@@ -1,6 +1,6 @@
 #if !os(macOS) || targetEnvironment(macCatalyst)
   #if DEBUG
-    import AVFoundation
+    public import AVFoundation
     import Atomics
     import Tools
 

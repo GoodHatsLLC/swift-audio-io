@@ -1,6 +1,6 @@
 #if canImport(Accelerate)
   import Accelerate
-  import Foundation
+  public import Foundation
 
   /// A beat detector that uses energy-based detection with adaptive thresholding.
   ///

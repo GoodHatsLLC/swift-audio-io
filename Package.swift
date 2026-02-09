@@ -45,10 +45,13 @@ let package = Package(
       ],
       swiftSettings: [
         .swiftLanguageMode(.v6),
-        .enableUpcomingFeature("StrictConcurrency"),
         .strictMemorySafety(),
         .defaultIsolation(.none),
         .enableUpcomingFeature("ExistentialAny"),
+        .enableUpcomingFeature("ImmutableWeakCaptures"),
+        .enableUpcomingFeature("InternalImportsByDefault"),
+        .enableUpcomingFeature("MemberImportVisibility"),
+        .enableUpcomingFeature("NonisolatedNonsendingByDefault"),
       ]
     ),
     .testTarget(
@@ -56,10 +59,13 @@ let package = Package(
       dependencies: ["Tools"],
       swiftSettings: [
         .swiftLanguageMode(.v6),
-        .enableUpcomingFeature("StrictConcurrency"),
         .strictMemorySafety(),
         .defaultIsolation(.none),
         .enableUpcomingFeature("ExistentialAny"),
+        .enableUpcomingFeature("ImmutableWeakCaptures"),
+        .enableUpcomingFeature("InternalImportsByDefault"),
+        .enableUpcomingFeature("MemberImportVisibility"),
+        .enableUpcomingFeature("NonisolatedNonsendingByDefault"),
       ]
     ),
     .target(
@@ -74,11 +80,13 @@ let package = Package(
       ],
       swiftSettings: [
         .swiftLanguageMode(.v6),
-        .enableUpcomingFeature("StrictConcurrency"),
         .strictMemorySafety(),
         .defaultIsolation(.none),
-
         .enableUpcomingFeature("ExistentialAny"),
+        .enableUpcomingFeature("ImmutableWeakCaptures"),
+        .enableUpcomingFeature("InternalImportsByDefault"),
+        .enableUpcomingFeature("MemberImportVisibility"),
+        .enableUpcomingFeature("NonisolatedNonsendingByDefault"),
       ]
     ),
     .testTarget(
@@ -86,10 +94,13 @@ let package = Package(
       dependencies: ["AIOEngine"],
       swiftSettings: [
         .swiftLanguageMode(.v6),
-        .enableUpcomingFeature("StrictConcurrency"),
         .strictMemorySafety(),
         .defaultIsolation(.none),
         .enableUpcomingFeature("ExistentialAny"),
+        .enableUpcomingFeature("ImmutableWeakCaptures"),
+        .enableUpcomingFeature("InternalImportsByDefault"),
+        .enableUpcomingFeature("MemberImportVisibility"),
+        .enableUpcomingFeature("NonisolatedNonsendingByDefault"),
       ]
     ),
     .testTarget(
@@ -97,11 +108,13 @@ let package = Package(
       dependencies: ["AIOEngine"],
       swiftSettings: [
         .swiftLanguageMode(.v6),
-        .enableUpcomingFeature("StrictConcurrency"),
         .strictMemorySafety(),
         .defaultIsolation(.none),
-
         .enableUpcomingFeature("ExistentialAny"),
+        .enableUpcomingFeature("ImmutableWeakCaptures"),
+        .enableUpcomingFeature("InternalImportsByDefault"),
+        .enableUpcomingFeature("MemberImportVisibility"),
+        .enableUpcomingFeature("NonisolatedNonsendingByDefault"),
       ]
     ),
     .target(
@@ -116,10 +129,12 @@ let package = Package(
       swiftSettings: [
         .swiftLanguageMode(.v6),
         .strictMemorySafety(),
-        .enableUpcomingFeature("StrictConcurrency"),
-        .strictMemorySafety(),
         .defaultIsolation(.none),
         .enableUpcomingFeature("ExistentialAny"),
+        .enableUpcomingFeature("ImmutableWeakCaptures"),
+        .enableUpcomingFeature("InternalImportsByDefault"),
+        .enableUpcomingFeature("MemberImportVisibility"),
+        .enableUpcomingFeature("NonisolatedNonsendingByDefault"),
       ]
     ),
   ]

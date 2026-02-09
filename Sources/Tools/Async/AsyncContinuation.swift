@@ -1,4 +1,4 @@
-import Foundation
+public import Foundation
 import Synchronization
 
 /// A value `Value` which will eventually be resolved for access.

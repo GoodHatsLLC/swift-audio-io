@@ -1,6 +1,7 @@
 #if !os(macOS) || targetEnvironment(macCatalyst)
-  import AVFoundation
+  public import AVFoundation
   import Foundation
+  import os
   import SystemLog
   import Tools
 

@@ -1,5 +1,5 @@
-import AsyncAlgorithms
-import Foundation
+public import AsyncAlgorithms
+public import Foundation
 
 /// Type erasure of async sequences with a failure type.
 ///

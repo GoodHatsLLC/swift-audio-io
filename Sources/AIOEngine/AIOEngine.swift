@@ -1,11 +1,13 @@
 #if !os(macOS) || targetEnvironment(macCatalyst)
-  import AVFoundation
+  public import AVFoundation
   import AsyncAlgorithms
   import Atomics
   import Dispatch
-  import Foundation
+  public import Foundation
+  public import Observation
+  import os
   import SystemLog
-  import Tools
+  public import Tools
 
   private let log = SystemLog.make()
   #if DEBUG

@@ -1,4 +1,4 @@
-import Foundation
+public import Foundation
 
 /// Suspend until the current task context is cancelled, then execute the operation.
 public func withCancellationOperation<T: Sendable>(

@@ -1,6 +1,6 @@
 #if canImport(AVFoundation)
   import AVFoundation
-  import Tools
+  public import Tools
 
   public struct VerboseError: AudioError {
     public init(error: any Error) {

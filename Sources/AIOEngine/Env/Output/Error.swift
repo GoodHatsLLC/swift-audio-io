@@ -1,6 +1,6 @@
 import AVFAudio
 import Foundation
-import Tools
+public import Tools
 
 public enum AIOError: AudioError, Hashable {
   case unknown(ErrorContext)

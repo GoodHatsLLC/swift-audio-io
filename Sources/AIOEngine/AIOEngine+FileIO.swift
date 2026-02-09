@@ -2,6 +2,7 @@
   import AVFoundation
   import AudioToolbox
   import Foundation
+  import os
   import SystemLog
   import Tools
 

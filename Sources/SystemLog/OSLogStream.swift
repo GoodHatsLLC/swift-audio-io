@@ -1,9 +1,9 @@
 import AsyncAlgorithms
 import Dispatch
-import Foundation
-import OSLog
-import SwiftUI
-import Tools
+public import Foundation
+public import OSLog
+public import SwiftUI
+public import Tools
 
 public struct OSLogStream: AsyncSequence {
   public enum StreamError: AudioError, LocalizedError {

@@ -1,4 +1,4 @@
-import AVFAudio
+public import AVFAudio
 
 public enum EncodingQuality: Int, CaseIterable, Hashable, CustomStringConvertible, TypeDescribable,
   Identifiable, Sendable
