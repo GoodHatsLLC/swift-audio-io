@@ -1,5 +1,5 @@
 #if canImport(AVFoundation)
-  import AVFoundation
+  public import AVFoundation
 
   #if os(macOS)
     public typealias PlatformChannel = AudioChannelDescription

@@ -1,7 +1,7 @@
 #if canImport(AVFoundation) && (!os(macOS) || targetEnvironment(macCatalyst))
   import AVFAudio
-  import Foundation
-  import Observation
+  public import Foundation
+  public import Observation
 
   /// A class that manages the output configuration for audio recordings.
   @MainActor

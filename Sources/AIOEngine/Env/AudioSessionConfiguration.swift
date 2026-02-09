@@ -1,4 +1,4 @@
-import AVFoundation
+public import AVFoundation
 
 public struct AudioSessionConfiguration: Sendable, Hashable {
   public var category: AVAudioSession.Category

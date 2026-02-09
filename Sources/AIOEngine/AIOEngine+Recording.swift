@@ -2,7 +2,8 @@
   import AVFoundation
   import AsyncAlgorithms
   import Atomics
-  import Foundation
+  public import Foundation
+  import os
   import SystemLog
   import Tools
 

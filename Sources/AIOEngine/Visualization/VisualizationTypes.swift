@@ -1,6 +1,6 @@
 #if canImport(AVFAudio)
-  import Foundation
-  import Tools
+  public import Foundation
+  public import Tools
 
   // MARK: - Time Domain Data
 

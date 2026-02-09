@@ -3,6 +3,7 @@ import OrderedCollections
 import Synchronization
 import os
 
+@available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, *)
 public final class AsyncBroadcaster<Element: Sendable>: AsyncSequence, Sendable {
 
   public typealias Element = Element
@@ -33,10 +34,7 @@ public final class AsyncBroadcaster<Element: Sendable>: AsyncSequence, Sendable 
       self.underlying = underlying
     }
     private var underlying: AsyncStream<Element>.Iterator
-    public mutating func next() async -> Element? {
-      await underlying.next()
-    }
-    @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, *)
+
     public mutating func next(isolation: isolated (any Actor)?) async throws(Never)
       -> Element?
     {

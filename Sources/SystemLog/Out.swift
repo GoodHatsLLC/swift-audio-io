@@ -1,5 +1,5 @@
-import Foundation
-import Tools
+public import Foundation
+public import Tools
 import os
 
 public enum Standard {

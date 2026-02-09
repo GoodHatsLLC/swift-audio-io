@@ -1,10 +1,10 @@
 #if canImport(AVFAudio)
   import Atomics
-  import AVFAudio
+  public import AVFAudio
   import Foundation
   import os
   import SystemLog
-  import Tools
+  public import Tools
 
   private let log = SystemLog.make()
 

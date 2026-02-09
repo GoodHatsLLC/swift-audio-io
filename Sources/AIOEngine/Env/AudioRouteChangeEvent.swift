@@ -1,5 +1,5 @@
 #if canImport(AVFoundation) && (!os(macOS) || targetEnvironment(macCatalyst))
-  import AVFoundation
+  public import AVFoundation
   import Foundation
 
   public struct AudioRouteChangeEvent: Sendable, Hashable {

@@ -1,7 +1,9 @@
 #if canImport(AVFoundation)
   import AVFoundation
-  import Foundation
+  public import Foundation
+  import os
   import SystemLog
+  import Tools
 
   private let log = SystemLog.make()
 

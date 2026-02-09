@@ -1,6 +1,6 @@
 #if canImport(AVFoundation)
-  import AVFAudio
-  import Tools
+  public import AVFAudio
+  public import Tools
 
   #if !os(macOS) || targetEnvironment(macCatalyst)
     public struct AudioSource: Hashable, Sendable, Identifiable, CustomStringConvertible, Comparable

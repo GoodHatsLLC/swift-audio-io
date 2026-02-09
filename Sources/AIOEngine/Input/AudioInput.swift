@@ -1,6 +1,6 @@
 #if canImport(AVFoundation) && (!os(macOS) || targetEnvironment(macCatalyst))
-  import AVFoundation
-  import Tools
+  public import AVFoundation
+  public import Tools
 
   public struct AudioInput: Hashable, Sendable, Identifiable, CustomStringConvertible {
     public enum PreferenceError: AudioError {

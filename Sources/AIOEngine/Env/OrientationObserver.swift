@@ -5,8 +5,9 @@
 //  Created by adamz on 2025-08-03.
 //
 
-import AVFAudio
+public import AVFAudio
 import Combine
+public import Observation
 import Tools
 
 #if canImport(SwiftUI)
@@ -14,7 +15,7 @@ import Tools
 #endif
 
 #if canImport(UIKit) && !os(macOS)
-  import UIKit
+  public import UIKit
 
   @MainActor
   @Observable

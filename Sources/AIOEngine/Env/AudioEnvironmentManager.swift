@@ -1,8 +1,10 @@
 #if canImport(AVFoundation) && (!os(macOS) || targetEnvironment(macCatalyst))
-  import Tools
-  import AVFAudio
+  public import Tools
+  public import AVFAudio
   import Combine
   import Foundation
+  public import Observation
+  import os
   import SystemLog
 
   private let log = SystemLog.make()

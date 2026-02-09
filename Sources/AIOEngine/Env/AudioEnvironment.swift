@@ -1,6 +1,7 @@
-import AVFoundation
+public import AVFoundation
 import SystemLog
-import Tools
+public import Tools
+import os
 
 private let log = SystemLog.make()
 
