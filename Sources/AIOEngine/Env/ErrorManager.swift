@@ -133,12 +133,6 @@ public final class ErrorManager: Sendable {
     reporter(visibility: .debug)
   }
 }
-
-#if canImport(SwiftUI)
-  import SwiftUI
-
   extension EnvironmentValues {
     @Entry public var errorManager: ErrorManager = .init()
   }
-
-#endif

@@ -2,7 +2,7 @@ import AsyncAlgorithms
 import Dispatch
 public import Foundation
 public import OSLog
-public import SwiftUI
+import SwiftUI
 public import Tools
 
 public struct OSLogStream: AsyncSequence {
