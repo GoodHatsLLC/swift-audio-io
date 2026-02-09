@@ -133,6 +133,6 @@ public final class ErrorManager: Sendable {
     reporter(visibility: .debug)
   }
 }
-  extension EnvironmentValues {
-    @Entry public var errorManager: ErrorManager = .init()
-  }
+extension EnvironmentValues {
+  @Entry public var errorManager: ErrorManager = .init()
+}
