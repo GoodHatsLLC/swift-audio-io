@@ -5,7 +5,7 @@
   public import Observation
   import os
   import SystemLog
-  public import Tools
+  import Tools
 
   private let log = SystemLog.make()
 

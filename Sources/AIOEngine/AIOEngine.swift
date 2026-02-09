@@ -1,5 +1,5 @@
 #if !os(macOS) || targetEnvironment(macCatalyst)
-  public import AVFoundation
+  import AVFoundation
   import AsyncAlgorithms
   import Atomics
   import Dispatch
