@@ -25,6 +25,11 @@
 
     private var cachedInputId: String?
     private var isRestoringFromDefaults: Bool = false
+    private var persistenceSuspensionDepth: Int = 0
+
+    private var isPersistenceSuspended: Bool {
+      persistenceSuspensionDepth > 0
+    }
 
     /// Creates a new `OutputConfigurationManager` instance.
     ///
@@ -40,6 +45,13 @@
       self.errorManager = errorManager
       self.defaults = defaults
       restoreFromDefaultsForCurrentInputIfNeeded()
+    }
+
+    /// Performs the given work without persisting configuration changes.
+    public func withPersistenceSuspended<T>(_ work: () throws -> T) rethrows -> T {
+      persistenceSuspensionDepth += 1
+      defer { persistenceSuspensionDepth -= 1 }
+      return try work()
     }
 
     /// The output file format for the recording.
@@ -165,6 +177,7 @@
 
     private func persistToDefaultsIfNeeded() {
       guard !isRestoringFromDefaults else { return }
+      guard !isPersistenceSuspended else { return }
       guard let config = outputConfiguration else { return }
 
       let persisted = PersistedOutputConfiguration(
