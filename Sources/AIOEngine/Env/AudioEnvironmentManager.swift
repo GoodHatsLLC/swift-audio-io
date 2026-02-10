@@ -289,37 +289,45 @@
         _selectedSampleRate
       }
       set {
-        errorManager.report {
-          try env.request(sampleRate: newValue)
-          _selectedSampleRate = newValue
-          Task { @MainActor in
-            let actual = env.sampleRate
-            if actual == newValue {
-              log.info("􁐚 Sample rate set to requested value: \(newValue, privacy: .public)")
-            } else {
-              log
-                .info(
-                  """
-                  􁐚 Sample rate \(newValue, privacy: .public) rejected. \
-                  Set to \(actual, privacy: .public)
-                  """
-                )
-              _selectedSampleRate = actual
-            }
+        setSampleRate(newValue, persistPreference: true)
+      }
+    }
+
+    public func setSampleRate(_ newValue: SampleRate, persistPreference: Bool) {
+      errorManager.report {
+        try env.request(sampleRate: newValue)
+        _selectedSampleRate = newValue
+        Task { @MainActor in
+          let actual = env.sampleRate
+          if actual == newValue {
+            log.info("􁐚 Sample rate set to requested value: \(newValue, privacy: .public)")
+          } else {
+            log
+              .info(
+                """
+                􁐚 Sample rate \(newValue, privacy: .public) rejected. \
+                Set to \(actual, privacy: .public)
+                """
+              )
+            _selectedSampleRate = actual
+          }
+          if persistPreference {
             persistInputPreferencesIfNeeded { prefs in
               prefs.sampleRateHz = newValue.rawValue
             }
           }
-        } catch: { error in
-          let actual = env.sampleRate
-          _selectedSampleRate = env.sampleRate
-          log
-            .error(
-              """
-              􁐚 Sample rate \(newValue, privacy: .public) failed with: \(error, privacy: .public) \
-              Rate is \(actual, privacy: .public).
-              """
-            )
+        }
+      } catch: { error in
+        let actual = env.sampleRate
+        _selectedSampleRate = env.sampleRate
+        log
+          .error(
+            """
+            􁐚 Sample rate \(newValue, privacy: .public) failed with: \(error, privacy: .public) \
+            Rate is \(actual, privacy: .public).
+            """
+          )
+        if persistPreference {
           persistInputPreferencesIfNeeded { prefs in
             prefs.sampleRateHz = newValue.rawValue
           }
@@ -485,7 +493,11 @@
     ///
     /// - Throws: An error if the audio session cannot be configured for mono.
     public func applyMono() throws(ManagerError) {
-      try applyMonoInternal(persistPreference: true)
+      try applyMono(persistPreference: true)
+    }
+
+    public func applyMono(persistPreference: Bool) throws(ManagerError) {
+      try applyMonoInternal(persistPreference: persistPreference)
     }
 
     private func applyMonoInternal(persistPreference: Bool) throws(ManagerError) {
@@ -613,7 +625,11 @@
     ///
     /// - Throws: An error if the audio session cannot be configured for stereo.
     public func applyStereo() throws(ManagerError) {
-      try applyStereoInternal(persistPreference: true)
+      try applyStereo(persistPreference: true)
+    }
+
+    public func applyStereo(persistPreference: Bool) throws(ManagerError) {
+      try applyStereoInternal(persistPreference: persistPreference)
     }
 
     private func applyStereoInternal(persistPreference: Bool) throws(ManagerError) {
