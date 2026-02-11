@@ -248,6 +248,20 @@
     /// A callback that is invoked when media services are reset.
     public var onMediaServicesReset: (@Sendable @MainActor () async -> Void)?
 
+    private var routeChangeSubscribers:
+      [UUID: (@Sendable @MainActor (AudioRouteChangeEvent) async -> Void)] =
+        [:]
+    private var interruptionSubscribers:
+      [UUID:
+        (
+          @Sendable @MainActor (
+            AVAudioSession.InterruptionType, AVAudioSession.InterruptionOptions?
+          )
+            async -> Void
+        )] = [:]
+    private var mediaServicesLostSubscribers: [UUID: (@Sendable @MainActor () async -> Void)] = [:]
+    private var mediaServicesResetSubscribers: [UUID: (@Sendable @MainActor () async -> Void)] = [:]
+
     /// A Boolean value that indicates whether the manager is currently running.
     public private(set) var isRunning: Bool = false
 
@@ -260,6 +274,52 @@
     private var _selectedSampleRate: SampleRate
     private var _availableInputs: [AudioInput]
     private var _availableSources: [AudioSource]
+
+    @discardableResult
+    public func addRouteChangeSubscriber(
+      _ handler: @escaping @Sendable @MainActor (AudioRouteChangeEvent) async -> Void
+    ) -> UUID {
+      let id = UUID()
+      routeChangeSubscribers[id] = handler
+      return id
+    }
+
+    @discardableResult
+    public func addInterruptionSubscriber(
+      _ handler:
+        @escaping @Sendable @MainActor (
+          AVAudioSession.InterruptionType, AVAudioSession.InterruptionOptions?
+        ) async -> Void
+    ) -> UUID {
+      let id = UUID()
+      interruptionSubscribers[id] = handler
+      return id
+    }
+
+    @discardableResult
+    public func addMediaServicesLostSubscriber(
+      _ handler: @escaping @Sendable @MainActor () async -> Void
+    ) -> UUID {
+      let id = UUID()
+      mediaServicesLostSubscribers[id] = handler
+      return id
+    }
+
+    @discardableResult
+    public func addMediaServicesResetSubscriber(
+      _ handler: @escaping @Sendable @MainActor () async -> Void
+    ) -> UUID {
+      let id = UUID()
+      mediaServicesResetSubscribers[id] = handler
+      return id
+    }
+
+    public func removeSubscriber(_ id: UUID) {
+      routeChangeSubscribers.removeValue(forKey: id)
+      interruptionSubscribers.removeValue(forKey: id)
+      mediaServicesLostSubscribers.removeValue(forKey: id)
+      mediaServicesResetSubscribers.removeValue(forKey: id)
+    }
 
     /// The current orientation of the device.
     public var orientation: AVAudioSession.StereoOrientation {
@@ -1010,6 +1070,41 @@
       }
     }
 
+    @MainActor
+    private func dispatchInterruption(
+      type: AVAudioSession.InterruptionType,
+      options: AVAudioSession.InterruptionOptions?
+    ) async {
+      await onInterruption?(type, options)
+      for subscriber in interruptionSubscribers.values {
+        await subscriber(type, options)
+      }
+    }
+
+    @MainActor
+    private func dispatchRouteChange(_ event: AudioRouteChangeEvent) async {
+      await onRouteChange?(event)
+      for subscriber in routeChangeSubscribers.values {
+        await subscriber(event)
+      }
+    }
+
+    @MainActor
+    private func dispatchMediaServicesLost() async {
+      await onMediaServicesLost?()
+      for subscriber in mediaServicesLostSubscribers.values {
+        await subscriber()
+      }
+    }
+
+    @MainActor
+    private func dispatchMediaServicesReset() async {
+      await onMediaServicesReset?()
+      for subscriber in mediaServicesResetSubscribers.values {
+        await subscriber()
+      }
+    }
+
     private func subscribe() async {
       await withTaskGroup(of: Void.self) { group in
         let env = self.env
@@ -1020,11 +1115,15 @@
 
             switch notification.type {
             case .began:
-              // Forward interruption to audio engine
-              await self?.onInterruption?(notification.type, notification.options)
+              await self?.dispatchInterruption(
+                type: notification.type,
+                options: notification.options
+              )
             case .ended:
-              // Forward interruption end to audio engine (could be used for resuming)
-              await self?.onInterruption?(notification.type, notification.options)
+              await self?.dispatchInterruption(
+                type: notification.type,
+                options: notification.options
+              )
             @unknown default:
               continue
             }
@@ -1085,7 +1184,7 @@
               previousRoute: notification.previous,
               session: env.session
             )
-            await self.onRouteChange?(event)
+            await self.dispatchRouteChange(event)
           }
         }
         group.addTask { [weak self] in
@@ -1138,7 +1237,7 @@
     private func handleMediaServicesLost() async {
       log.warning("mediaServicesLost notification: audio services unavailable")
       isAudioSessionActive = false
-      await onMediaServicesLost?()
+      await dispatchMediaServicesLost()
     }
 
     @MainActor
@@ -1156,7 +1255,7 @@
       restorePreferredInputAndConfigurationIfPossible(
         reason: "mediaServicesReset notification"
       )
-      await onMediaServicesReset?()
+      await dispatchMediaServicesReset()
     }
   }
 
