@@ -609,10 +609,10 @@
 
     private func applyWork(_ work: VisualizationWork, sinks: VisualizationSinks) {
       let resolvedLodWork = work.lod ?? legacyLodWork
-      if resolvedLodWork != nil, unsafe sinks.lodSnapshot == nil {
+      if resolvedLodWork != nil, sinks.lodSnapshot == nil {
         log.warning("VisualizationWork.lod requested without a lodSnapshot sink.")
       }
-      let wantsLod = unsafe resolvedLodWork != nil && sinks.lodSnapshot != nil
+      let wantsLod = resolvedLodWork != nil && sinks.lodSnapshot != nil
       lodPublishRateHz = wantsLod ? resolvedLodWork?.publishRateHz : nil
 
       if let lodWork = resolvedLodWork, wantsLod {
@@ -923,9 +923,9 @@
       guard lodEnabledAtomic.load(ordering: .relaxed) else { return }
       let snapshot = unsafe lodProcessor?.snapshotRef()
       let sinks = sinksSnapshot()
-      guard unsafe sinks.lodSnapshot != nil else { return }
+      guard sinks.lodSnapshot != nil else { return }
       DispatchQueue.main.async {
-        unsafe sinks.lodSnapshot?(snapshot)
+        sinks.lodSnapshot?(snapshot)
       }
     }
 
