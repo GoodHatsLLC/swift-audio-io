@@ -722,8 +722,8 @@
           $0.tapConvertedBuffer = finalConvertedBuffer
           $0.installedTapBus = tapConfiguration.bus
           $0.recordingConfiguration = configuration
-          $0.initialInputFormat = inputFormat
-          $0.lastInputFormat = inputFormat
+          $0.initialInputFormat = actualTapFormat
+          $0.lastInputFormat = actualTapFormat
         }
       } catch let error as AIOError {
         log.error(
@@ -804,58 +804,66 @@
         return
       }
 
-      let currentInputFormat: AVAudioFormat? = runOnEngineControlQueue { [weak self] in
-        guard let self else { return nil }
+      let installResult = runOnEngineControlQueueResult {
+        [weak self]
+        () throws
+          -> (
+            inputFormat: AVAudioFormat,
+            tapConfiguration: TapConfiguration
+          ) in
+        guard let self else { throw AIOError.engineError }
+
         unsafe self.engine.inputNode.removeTap(onBus: self.state[locked: \.installedTapBus] ?? 0)
-        return unsafe self.engine.inputNode.outputFormat(forBus: 0)
-      }
+        self.state[locked: \.installedTapBus] = nil
 
-      guard let currentInputFormat else {
-        throw AIOError.invalidRecordingConfiguration(
-          details: "Input format unavailable during tap interval update"
+        let currentInputFormat = unsafe self.engine.inputNode.outputFormat(forBus: 0)
+        guard currentInputFormat.channelCount > 0, currentInputFormat.sampleRate > 0 else {
+          throw AIOError.invalidRecordingConfiguration(
+            details:
+              "Tap format invalid during tap interval update (channels: \(currentInputFormat.channelCount), sampleRate: \(currentInputFormat.sampleRate))"
+          )
+        }
+
+        guard
+          let tapConfiguration = configuration.tapConfiguration(
+            bus: 0,
+            input: currentInputFormat
+          )
+        else {
+          throw AIOError.invalidRecordingConfiguration(details: "Cannot create tap configuration")
+        }
+        guard tapConfiguration.bufferSize > 0 else {
+          throw AIOError.invalidRecordingConfiguration(details: "Tap bufferSize is 0")
+        }
+
+        let tapFormat = tapConfiguration.inputAVAudioFormat
+        guard let tapConverter = AVAudioConverter(from: tapFormat, to: processingFormat) else {
+          throw AIOError.formatConversionFailed
+        }
+
+        let tapFrameRatio = processingFormat.sampleRate / tapFormat.sampleRate
+        let maxTapFrames = max(
+          AVAudioFrameCount(ceil(Double(tapConfiguration.bufferSize) * tapFrameRatio)),
+          1
         )
-      }
+        guard
+          let tapConvertedBuffer = AVAudioPCMBuffer(
+            pcmFormat: processingFormat,
+            frameCapacity: maxTapFrames
+          )
+        else {
+          throw AIOError.formatConversionFailed
+        }
 
-      guard currentInputFormat.channelCount > 0, currentInputFormat.sampleRate > 0 else {
-        throw AIOError.invalidRecordingConfiguration(
-          details:
-            "Tap format invalid during tap interval update (channels: \(currentInputFormat.channelCount), sampleRate: \(currentInputFormat.sampleRate))"
-        )
-      }
+        self.state.withLock { state in
+          state.tapConverter = tapConverter
+          state.tapConverterInputFormat = tapFormat
+          state.tapConverterOutputFormat = processingFormat
+          state.tapConvertedBuffer = tapConvertedBuffer
+          state.installedTapBus = tapConfiguration.bus
+        }
 
-      guard
-        let tapConfiguration = configuration.tapConfiguration(
-          bus: 0,
-          input: currentInputFormat
-        )
-      else {
-        throw AIOError.invalidRecordingConfiguration(details: "Cannot create tap configuration")
-      }
-      guard tapConfiguration.bufferSize > 0 else {
-        throw AIOError.invalidRecordingConfiguration(details: "Tap bufferSize is 0")
-      }
-
-      let tapFormat = tapConfiguration.inputAVAudioFormat
-      guard let tapConverter = AVAudioConverter(from: tapFormat, to: processingFormat) else {
-        throw AIOError.formatConversionFailed
-      }
-
-      let tapFrameRatio = processingFormat.sampleRate / tapFormat.sampleRate
-      let maxTapFrames = max(
-        AVAudioFrameCount(ceil(Double(tapConfiguration.bufferSize) * tapFrameRatio)),
-        1
-      )
-      guard
-        let tapConvertedBuffer = AVAudioPCMBuffer(
-          pcmFormat: processingFormat,
-          frameCapacity: maxTapFrames
-        )
-      else {
-        throw AIOError.formatConversionFailed
-      }
-
-      let startResult = runOnEngineControlQueueResult { [weak self] in
-        guard let self else { return }
+        // Validate and install in one queue-critical section to avoid stale-format races.
         unsafe self.engine.inputNode.installTap(
           onBus: tapConfiguration.bus,
           bufferSize: tapConfiguration.bufferSize,
@@ -868,22 +876,21 @@
           )
         }
         unsafe self.engine.prepare()
+
+        return (
+          inputFormat: currentInputFormat,
+          tapConfiguration: tapConfiguration
+        )
       }
 
-      switch startResult {
-      case .success:
-        state.withLock { state in
-          state.tapConverter = tapConverter
-          state.tapConverterInputFormat = tapFormat
-          state.tapConverterOutputFormat = processingFormat
-          state.tapConvertedBuffer = tapConvertedBuffer
-          state.installedTapBus = tapConfiguration.bus
-        }
+      switch installResult {
+      case .success(let result):
+        let tapConfiguration = result.tapConfiguration
         log.info(
           "Updated tap interval to \(configuration.tapInterval, privacy: .public) (bufferSize: \(tapConfiguration.bufferSize, privacy: .public) frames interval=\(tapConfiguration.bufferSize == 0 ? 0.0 : (Double(tapConfiguration.bufferSize) / max(processingFormat.sampleRate, 1)), privacy: .public)s sampleRate=\(processingFormat.sampleRate, privacy: .public)Hz)"
         )
       case .failure(let error):
-        throw AIOError.engineStartFailed(error: ErrorContext(error))
+        throw (error as? AIOError) ?? AIOError.engineStartFailed(error: ErrorContext(error))
       }
     }
 
