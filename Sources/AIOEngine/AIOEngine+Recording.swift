@@ -616,6 +616,9 @@
         guard tapConfiguration.bufferSize > 0 else {
           throw AIOError.invalidRecordingConfiguration(details: "Tap bufferSize is 0")
         }
+        log.info(
+          "Installing tap: bufferSize=\(tapConfiguration.bufferSize, privacy: .public) frames interval=\(tapConfiguration.bufferSize == 0 ? 0.0 : (Double(tapConfiguration.bufferSize) / Double(max(sampleRate, 1))), privacy: .public)s sampleRate=\(sampleRate, privacy: .public)Hz"
+        )
         let timingCapacity = max(
           64,
           Int(ceil(Double(sampleRate) / Double(tapConfiguration.bufferSize))) * 4
@@ -786,13 +789,9 @@
 
       do {
         try reconfigureTapForIntervalChange(configuration: updated)
-      } catch let error as AIOError {
+      } catch let error {
         log.warning(
           "Failed to update tap interval to \(interval, privacy: .public): \(error, privacy: .public)"
-        )
-      } catch {
-        log.warning(
-          "Failed to update tap interval to \(interval, privacy: .public): \(String(describing: error), privacy: .public)"
         )
       }
     }
@@ -805,7 +804,7 @@
         return
       }
 
-      let currentInputFormat = runOnEngineControlQueue { [weak self] in
+      let currentInputFormat: AVAudioFormat? = runOnEngineControlQueue { [weak self] in
         guard let self else { return nil }
         unsafe self.engine.inputNode.removeTap(onBus: self.state[locked: \.installedTapBus] ?? 0)
         return unsafe self.engine.inputNode.outputFormat(forBus: 0)
@@ -881,7 +880,7 @@
           state.installedTapBus = tapConfiguration.bus
         }
         log.info(
-          "Updated tap interval to \(configuration.tapInterval, privacy: .public) (bufferSize: \(tapConfiguration.bufferSize, privacy: .public))"
+          "Updated tap interval to \(configuration.tapInterval, privacy: .public) (bufferSize: \(tapConfiguration.bufferSize, privacy: .public) frames interval=\(tapConfiguration.bufferSize == 0 ? 0.0 : (Double(tapConfiguration.bufferSize) / max(processingFormat.sampleRate, 1)), privacy: .public)s sampleRate=\(processingFormat.sampleRate, privacy: .public)Hz)"
         )
       case .failure(let error):
         throw AIOError.engineStartFailed(error: ErrorContext(error))

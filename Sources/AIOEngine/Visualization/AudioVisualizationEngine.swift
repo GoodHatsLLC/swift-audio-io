@@ -6,6 +6,7 @@
   import os
   import SystemLog
   import Tools
+  import QuartzCore
 
   private let log = SystemLog.make()
 
@@ -410,6 +411,9 @@
     private var analysisPipeline: AnalysisPipeline?
     private var analysisUpdateRateHz: Double?
     private var lodPublishRateHz: Double?
+    private var lastLodPublishLogTime: CFTimeInterval?
+    private var lastLodPublishTime: CFTimeInterval?
+    private var lodPublishIntervals: [Double] = []
 
     private var analysisTimer: (any DispatchSourceTimer)?
     private var lodPublishTimer: (any DispatchSourceTimer)?
@@ -628,6 +632,9 @@
           lodConfig = resolvedConfig
         }
         lodEnabledAtomic.store(true, ordering: .relaxed)
+        log.info(
+          "Visualization LOD: publishRate=\(lodWork.publishRateHz, privacy: .public)Hz snapshotSwapInterval=\(resolvedConfig.snapshotSwapInterval, privacy: .public) lodRatio=\(resolvedConfig.lodRatio, privacy: .public)"
+        )
       } else {
         lodEnabledAtomic.store(false, ordering: .relaxed)
         unsafe lodProcessor = nil
@@ -929,6 +936,31 @@
       let snapshot = unsafe lodProcessor?.snapshotRef()
       let sinks = sinksSnapshot()
       guard sinks.lodSnapshot != nil || sinks.lodSnapshotBackground != nil else { return }
+      let now = CACurrentMediaTime()
+      if let last = lastLodPublishTime {
+        let interval = max(now - last, 0)
+        lodPublishIntervals.append(interval)
+        if lodPublishIntervals.count > 60 {
+          lodPublishIntervals.removeFirst()
+        }
+      }
+      lastLodPublishTime = now
+      let shouldLog: Bool = {
+        guard let last = lastLodPublishLogTime else { return true }
+        return (now - last) >= 1.0
+      }()
+      if shouldLog {
+        lastLodPublishLogTime = now
+        if !lodPublishIntervals.isEmpty {
+          let avg = lodPublishIntervals.reduce(0, +) / Double(lodPublishIntervals.count)
+          let hz = avg > 0 ? (1.0 / avg) : 0
+          log.info(
+            "LOD publish cadence: \(hz, privacy: .public)Hz avg=\(avg, privacy: .public)s"
+          )
+        } else {
+          log.info("LOD publish cadence: insufficient samples")
+        }
+      }
       sinks.lodSnapshotBackground?(snapshot)
       if sinks.lodSnapshot != nil {
         DispatchQueue.main.async {
