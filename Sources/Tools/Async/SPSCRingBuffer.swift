@@ -5,6 +5,8 @@ import Foundation
 ///
 /// The producer writes full chunks or drops them when the buffer is full.
 /// The consumer reads without locking and advances the read index after copying.
+// SAFETY: Thread safety is guaranteed by the SPSC protocol (single producer, single consumer)
+// with atomic read/write indices; no shared mutable state beyond the atomics.
 @safe public final class SPSCRingBuffer<T>: @unchecked Sendable {
   private var buffer: UnsafeMutableBufferPointer<T>
   private let capacityMask: Int
