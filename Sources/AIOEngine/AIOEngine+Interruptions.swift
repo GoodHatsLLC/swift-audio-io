@@ -89,7 +89,6 @@
         do {
           if shouldReconfigureTap {
             try reconfigureTapForNewRoute(
-              newInputFormat: newInputFormat,
               processingFormat: processingFormat
             )
           } else {
@@ -282,76 +281,98 @@
 
     /// Reconfigure the audio tap for a new route
     func reconfigureTapForNewRoute(
-      newInputFormat: AVAudioFormat,
       processingFormat: AVAudioFormat
     ) throws(AIOError) {
-      // Remove old tap and stop engine before reconfiguring.
-      let currentInputFormat = runOnEngineControlQueue { [weak self] in
-        guard let self else { return newInputFormat }
-        unsafe self.engine.inputNode.removeTap(onBus: self.state[locked: \.installedTapBus] ?? 0)
+      let installResult = runOnEngineControlQueueResult {
+        [weak self]
+        () throws
+          -> (
+            actualInputFormat: AVAudioFormat,
+            tapConfiguration: TapConfiguration
+          ) in
+        guard let self else { throw AIOError.engineError }
+
+        let previousTapBus = self.state[locked: \.installedTapBus] ?? 0
+        unsafe self.engine.inputNode.removeTap(onBus: previousTapBus)
         unsafe self.engine.stop()
-        return unsafe self.engine.inputNode.outputFormat(forBus: 0)
-      }
-      state[locked: \.installedTapBus] = nil
+        self.state[locked: \.installedTapBus] = nil
 
-      // Validate the format before attempting to install tap.
-      // installTap throws an uncatchable NSException if the format is invalid.
-      guard currentInputFormat.channelCount > 0 else {
-        let session = AVAudioSession.sharedInstance()
-        let hardwareFormat = runOnEngineControlQueue {
-          unsafe engine.inputNode.inputFormat(forBus: 0)
+        let currentInputFormat = unsafe self.engine.inputNode.outputFormat(forBus: 0)
+
+        // Validate and install in one critical section to avoid stale-format NSException windows.
+        guard currentInputFormat.channelCount > 0 else {
+          let session = AVAudioSession.sharedInstance()
+          let hardwareFormat = unsafe self.engine.inputNode.inputFormat(forBus: 0)
+          let recordPermission = AVAudioApplication.shared.recordPermission
+          log.warning(
+            """
+            Input node has no channels after route change; cannot reconfigure tap.
+            recordPermission: \(String(describing: recordPermission), privacy: .public)
+            isInputAvailable: \(session.isInputAvailable, privacy: .public)
+            outputFormat(forBus: 0): \(currentInputFormat, privacy: .public)
+            inputFormat(forBus: 0): \(hardwareFormat, privacy: .public)
+            """
+          )
+          throw AIOError.invalidRecordingConfiguration(
+            details: "Input node has no channels after route change (channelCount: 0)")
         }
-        let recordPermission = AVAudioApplication.shared.recordPermission
-        log.warning(
-          """
-          Input node has no channels after route change; cannot reconfigure tap.
-          recordPermission: \(String(describing: recordPermission), privacy: .public)
-          isInputAvailable: \(session.isInputAvailable, privacy: .public)
-          outputFormat(forBus: 0): \(currentInputFormat, privacy: .public)
-          inputFormat(forBus: 0): \(hardwareFormat, privacy: .public)
-          """
-        )
-        throw AIOError.invalidRecordingConfiguration(
-          details: "Input node has no channels after route change (channelCount: 0)")
-      }
 
-      guard currentInputFormat.sampleRate > 0 else {
-        let session = AVAudioSession.sharedInstance()
-        let hardwareFormat = runOnEngineControlQueue {
-          unsafe engine.inputNode.inputFormat(forBus: 0)
+        guard currentInputFormat.sampleRate > 0 else {
+          let session = AVAudioSession.sharedInstance()
+          let hardwareFormat = unsafe self.engine.inputNode.inputFormat(forBus: 0)
+          let recordPermission = AVAudioApplication.shared.recordPermission
+          log.warning(
+            """
+            Input node has invalid sample rate after route change; cannot reconfigure tap.
+            recordPermission: \(String(describing: recordPermission), privacy: .public)
+            isInputAvailable: \(session.isInputAvailable, privacy: .public)
+            outputFormat(forBus: 0): \(currentInputFormat, privacy: .public)
+            inputFormat(forBus: 0): \(hardwareFormat, privacy: .public)
+            """
+          )
+          throw AIOError.invalidRecordingConfiguration(
+            details: "Input node has invalid sample rate after route change (sampleRate: 0)")
         }
-        let recordPermission = AVAudioApplication.shared.recordPermission
-        log.warning(
-          """
-          Input node has invalid sample rate after route change; cannot reconfigure tap.
-          recordPermission: \(String(describing: recordPermission), privacy: .public)
-          isInputAvailable: \(session.isInputAvailable, privacy: .public)
-          outputFormat(forBus: 0): \(currentInputFormat, privacy: .public)
-          inputFormat(forBus: 0): \(hardwareFormat, privacy: .public)
-          """
+
+        guard let currentConfig = self.state[locked: \.recordingConfiguration],
+          let tapConfiguration = currentConfig.tapConfiguration(bus: 0, input: currentInputFormat)
+        else {
+          throw AIOError.invalidRecordingConfiguration(details: "Cannot create tap configuration")
+        }
+        guard tapConfiguration.bufferSize > 0 else {
+          throw AIOError.invalidRecordingConfiguration(details: "Tap bufferSize is 0")
+        }
+
+        unsafe self.engine.inputNode.installTap(
+          onBus: tapConfiguration.bus,
+          bufferSize: tapConfiguration.bufferSize,
+          format: currentInputFormat
+        ) { @Sendable buffer, time in
+          self.processAudio(
+            buffer: buffer,
+            time: time,
+            to: processingFormat
+          )
+        }
+        unsafe self.engine.prepare()
+
+        return (
+          actualInputFormat: currentInputFormat,
+          tapConfiguration: tapConfiguration
         )
-        throw AIOError.invalidRecordingConfiguration(
-          details: "Input node has invalid sample rate after route change (sampleRate: 0)")
       }
 
-      // Get tap configuration using the current format (not the pre-stop format)
-      guard let currentConfig = state[locked: \.recordingConfiguration],
-        let tapConfiguration = currentConfig.tapConfiguration(bus: 0, input: currentInputFormat)
-      else {
-        throw AIOError.invalidRecordingConfiguration(details: "Cannot create tap configuration")
-      }
-      guard tapConfiguration.bufferSize > 0 else {
-        throw AIOError.invalidRecordingConfiguration(details: "Tap bufferSize is 0")
+      let actualTapFormat: AVAudioFormat
+      let tapConfiguration: TapConfiguration
+      switch installResult {
+      case .success(let result):
+        actualTapFormat = result.actualInputFormat
+        tapConfiguration = result.tapConfiguration
+      case .failure(let error):
+        throw (error as? AIOError) ?? .engineStartFailed(error: ErrorContext(error))
       }
 
-      // Final validation of the format we'll pass to installTap
       let tapFormat = tapConfiguration.inputAVAudioFormat
-      guard tapFormat.channelCount > 0, tapFormat.sampleRate > 0 else {
-        throw AIOError.invalidRecordingConfiguration(
-          details:
-            "Tap format is invalid (channels: \(tapFormat.channelCount), sampleRate: \(tapFormat.sampleRate))"
-        )
-      }
       guard let tapConverter = AVAudioConverter(from: tapFormat, to: processingFormat) else {
         throw AIOError.formatConversionFailed
       }
@@ -368,43 +389,25 @@
       else {
         throw AIOError.formatConversionFailed
       }
+
       state {
         $0.tapConverter = tapConverter
         $0.tapConverterInputFormat = tapFormat
         $0.tapConverterOutputFormat = processingFormat
         $0.tapConvertedBuffer = tapConvertedBuffer
+        $0.installedTapBus = tapConfiguration.bus
       }
 
-      log.info(
-        """
-        Installing tap with validated format:
-        - Current input format: \(currentInputFormat.channelCount, privacy: .public) ch @ \(currentInputFormat.sampleRate, privacy: .public) Hz
-        - Tap format: \(tapFormat.channelCount, privacy: .public) ch @ \(tapFormat.sampleRate, privacy: .public) Hz
-        """)
-
-      // Install new tap with updated format
-      let startResult = runOnEngineControlQueueResult { [weak self] in
+      let startResult = runOnEngineControlQueueResult {
+        [weak self] in
         guard let self else { return }
-        unsafe self.engine.inputNode.installTap(
-          onBus: tapConfiguration.bus,
-          bufferSize: tapConfiguration.bufferSize,
-          format: tapFormat
-        ) { @Sendable buffer, time in
-          self.processAudio(
-            buffer: buffer,
-            time: time,
-            to: processingFormat
-          )
-        }
         try unsafe self.engine.start()
       }
       if case .failure(let error) = startResult {
         throw .engineStartFailed(error: ErrorContext(error))
       }
 
-      state[locked: \.installedTapBus] = tapConfiguration.bus
-
-      log.info("Reconfigured tap for new route: \(currentInputFormat, privacy: .public)")
+      log.info("Reconfigured tap for new route: \(actualTapFormat, privacy: .public)")
     }
 
     /// Handle interruptions that cannot be recovered
