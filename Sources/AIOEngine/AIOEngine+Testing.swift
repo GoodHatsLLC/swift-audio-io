@@ -186,6 +186,51 @@
           ordering: .relaxed
         )
       }
+
+      /// Deterministically simulates route/input/sample-rate changes while recording.
+      ///
+      /// This bypasses `AVAudioEngine` graph mutation and only exercises continuation vs stop
+      /// decision logic, interruption callbacks, and stop cleanup.
+      @MainActor
+      public func simulateRouteChangeForTesting(
+        oldFormat: AVAudioFormat,
+        newFormat: AVAudioFormat,
+        processingFormat: AVAudioFormat,
+        isInputAvailable: Bool,
+        reason: AVAudioSession.RouteChangeReason = .routeConfigurationChange
+      ) async -> Bool {
+        guard isRecording || wantsRecording else { return false }
+
+        let canContinue = canContinueRecording(
+          from: oldFormat,
+          to: newFormat,
+          processingFormat: processingFormat,
+          isInputAvailable: isInputAvailable
+        )
+
+        if canContinue {
+          let qualityChange = createQualityChange(
+            from: oldFormat,
+            to: newFormat,
+            reason: describeRouteChangeReason(reason)
+          )
+          let event = AudioRouteChangeEvent(
+            reason: reason,
+            previousRoute: nil,
+            session: AVAudioSession.sharedInstance()
+          )
+          let interruption = RecordingInterruption.routeChangeContinuing(
+            event: event,
+            qualityChange: qualityChange
+          )
+          await onRecordingInterruption?(interruption)
+          placeState(\.lastInputFormat, newFormat)
+          return true
+        }
+
+        await handleUnrecoverableInterruption(reason: "No suitable audio route available")
+        return false
+      }
     }
   #endif
 #endif
