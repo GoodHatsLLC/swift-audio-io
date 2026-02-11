@@ -754,6 +754,140 @@
       }
     }
 
+    @MainActor
+    public func updateRecordingTapInterval(_ interval: Duration) {
+      guard interval > .zero else { return }
+
+      guard let currentConfig = state.withLock({ $0.recordingConfiguration }) else {
+        lastRecordingConfiguration = lastRecordingConfiguration.map {
+          RecordingConfiguration(
+            inputConfiguration: $0.inputConfiguration,
+            outputConfiguration: $0.outputConfiguration,
+            tapInterval: interval,
+            outputDestination: $0.outputDestination
+          )
+        }
+        return
+      }
+
+      let updated = RecordingConfiguration(
+        inputConfiguration: currentConfig.inputConfiguration,
+        outputConfiguration: currentConfig.outputConfiguration,
+        tapInterval: interval,
+        outputDestination: currentConfig.outputDestination
+      )
+
+      guard updated.tapInterval != currentConfig.tapInterval else { return }
+
+      state.withLock { $0.recordingConfiguration = updated }
+      lastRecordingConfiguration = updated
+
+      guard isRecording else { return }
+
+      do {
+        try reconfigureTapForIntervalChange(configuration: updated)
+      } catch let error as AIOError {
+        log.warning(
+          "Failed to update tap interval to \(interval, privacy: .public): \(error, privacy: .public)"
+        )
+      } catch {
+        log.warning(
+          "Failed to update tap interval to \(interval, privacy: .public): \(String(describing: error), privacy: .public)"
+        )
+      }
+    }
+
+    @MainActor
+    private func reconfigureTapForIntervalChange(
+      configuration: RecordingConfiguration
+    ) throws(AIOError) {
+      guard let processingFormat = state.withLock({ $0.tapConverterOutputFormat }) else {
+        return
+      }
+
+      let currentInputFormat = runOnEngineControlQueue { [weak self] in
+        guard let self else { return nil }
+        unsafe self.engine.inputNode.removeTap(onBus: self.state[locked: \.installedTapBus] ?? 0)
+        return unsafe self.engine.inputNode.outputFormat(forBus: 0)
+      }
+
+      guard let currentInputFormat else {
+        throw AIOError.invalidRecordingConfiguration(
+          details: "Input format unavailable during tap interval update"
+        )
+      }
+
+      guard currentInputFormat.channelCount > 0, currentInputFormat.sampleRate > 0 else {
+        throw AIOError.invalidRecordingConfiguration(
+          details:
+            "Tap format invalid during tap interval update (channels: \(currentInputFormat.channelCount), sampleRate: \(currentInputFormat.sampleRate))"
+        )
+      }
+
+      guard
+        let tapConfiguration = configuration.tapConfiguration(
+          bus: 0,
+          input: currentInputFormat
+        )
+      else {
+        throw AIOError.invalidRecordingConfiguration(details: "Cannot create tap configuration")
+      }
+      guard tapConfiguration.bufferSize > 0 else {
+        throw AIOError.invalidRecordingConfiguration(details: "Tap bufferSize is 0")
+      }
+
+      let tapFormat = tapConfiguration.inputAVAudioFormat
+      guard let tapConverter = AVAudioConverter(from: tapFormat, to: processingFormat) else {
+        throw AIOError.formatConversionFailed
+      }
+
+      let tapFrameRatio = processingFormat.sampleRate / tapFormat.sampleRate
+      let maxTapFrames = max(
+        AVAudioFrameCount(ceil(Double(tapConfiguration.bufferSize) * tapFrameRatio)),
+        1
+      )
+      guard
+        let tapConvertedBuffer = AVAudioPCMBuffer(
+          pcmFormat: processingFormat,
+          frameCapacity: maxTapFrames
+        )
+      else {
+        throw AIOError.formatConversionFailed
+      }
+
+      let startResult = runOnEngineControlQueueResult { [weak self] in
+        guard let self else { return }
+        unsafe self.engine.inputNode.installTap(
+          onBus: tapConfiguration.bus,
+          bufferSize: tapConfiguration.bufferSize,
+          format: currentInputFormat
+        ) { [weak self] buffer, time in
+          self?.processAudio(
+            buffer: buffer,
+            time: time,
+            to: processingFormat
+          )
+        }
+        unsafe self.engine.prepare()
+      }
+
+      switch startResult {
+      case .success:
+        state.withLock { state in
+          state.tapConverter = tapConverter
+          state.tapConverterInputFormat = tapFormat
+          state.tapConverterOutputFormat = processingFormat
+          state.tapConvertedBuffer = tapConvertedBuffer
+          state.installedTapBus = tapConfiguration.bus
+        }
+        log.info(
+          "Updated tap interval to \(configuration.tapInterval, privacy: .public) (bufferSize: \(tapConfiguration.bufferSize, privacy: .public))"
+        )
+      case .failure(let error):
+        throw AIOError.engineStartFailed(error: ErrorContext(error))
+      }
+    }
+
     @MainActor func hardStop() {
       let tapBus = state.consume(\.installedTapBus)
       runOnEngineControlQueue { [weak self] in

@@ -305,6 +305,10 @@
       label: "audio-visualization",
       qos: .userInteractive
     )
+    private let lodPublishQueue = DispatchQueue(
+      label: "audio-visualization.lod-publish",
+      qos: .userInteractive
+    )
 
     private struct ConsumerState {
       var consumerId: ObjectIdentifier?
@@ -609,10 +613,11 @@
 
     private func applyWork(_ work: VisualizationWork, sinks: VisualizationSinks) {
       let resolvedLodWork = work.lod ?? legacyLodWork
-      if resolvedLodWork != nil, sinks.lodSnapshot == nil {
+      let hasLodSink = sinks.lodSnapshot != nil || sinks.lodSnapshotBackground != nil
+      if resolvedLodWork != nil, !hasLodSink {
         log.warning("VisualizationWork.lod requested without a lodSnapshot sink.")
       }
-      let wantsLod = resolvedLodWork != nil && sinks.lodSnapshot != nil
+      let wantsLod = resolvedLodWork != nil && hasLodSink
       lodPublishRateHz = wantsLod ? resolvedLodWork?.publishRateHz : nil
 
       if let lodWork = resolvedLodWork, wantsLod {
@@ -797,8 +802,8 @@
       guard let rateHz = lodPublishRateHz else { return }
 
       let interval = 1.0 / max(rateHz, 1)
-      let timer = DispatchSource.makeTimerSource(queue: processingQueue)
-      timer.schedule(deadline: .now(), repeating: interval)
+      let timer = DispatchSource.makeTimerSource(queue: lodPublishQueue)
+      timer.schedule(deadline: .now(), repeating: interval, leeway: .milliseconds(1))
       timer.setEventHandler { [weak self] in
         self?.publishLODSnapshot()
       }
@@ -923,9 +928,12 @@
       guard lodEnabledAtomic.load(ordering: .relaxed) else { return }
       let snapshot = unsafe lodProcessor?.snapshotRef()
       let sinks = sinksSnapshot()
-      guard sinks.lodSnapshot != nil else { return }
-      DispatchQueue.main.async {
-        sinks.lodSnapshot?(snapshot)
+      guard sinks.lodSnapshot != nil || sinks.lodSnapshotBackground != nil else { return }
+      sinks.lodSnapshotBackground?(snapshot)
+      if sinks.lodSnapshot != nil {
+        DispatchQueue.main.async {
+          sinks.lodSnapshot?(snapshot)
+        }
       }
     }
 
