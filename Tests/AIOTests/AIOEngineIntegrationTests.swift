@@ -132,6 +132,157 @@
       #expect(size > 0)
     }
 
+    @Test
+    func testFaultInjectionStopsRecordingWhenSampleRateBecomesUnsupported() async throws {
+      let engine = AIOEngine()
+      let configuration = makeConfiguration()
+      let probe = RouteFaultProbe()
+
+      await MainActor.run {
+        engine.onRecordingInterruption = { interruption in
+          await probe.record(interruption)
+        }
+        engine.onRecordingFailed = {
+          Task { await probe.recordFailure() }
+        }
+      }
+
+      let url = try await engine.startTestRecording(configuration: configuration)
+      defer { try? FileManager.default.removeItem(at: url) }
+
+      let oldFormat = try #require(
+        AVAudioFormat(
+          standardFormatWithSampleRate: 48_000,
+          channels: 1
+        )
+      )
+      let unsupported = try #require(
+        AVAudioFormat(
+          standardFormatWithSampleRate: 7_000,
+          channels: oldFormat.channelCount
+        )
+      )
+
+      let continued = await engine.simulateRouteChangeForTesting(
+        oldFormat: oldFormat,
+        newFormat: unsupported,
+        processingFormat: oldFormat,
+        isInputAvailable: true,
+        reason: .routeConfigurationChange
+      )
+
+      #expect(continued == false)
+
+      let stopped = await waitUntil(timeout: .seconds(1)) {
+        await engine.isRecording == false
+      }
+      #expect(stopped == true)
+
+      let snapshot = await probe.snapshot()
+      #expect(snapshot.failureCount == 1)
+      #expect(
+        snapshot.interruptions.contains { interruption in
+          if case .stoppedByInterruption(let reason) = interruption {
+            return reason == "No suitable audio route available"
+          }
+          return false
+        }
+      )
+    }
+
+    @Test
+    func testFaultInjectionStopsRecordingWhenInputBecomesUnavailable() async throws {
+      let engine = AIOEngine()
+      let configuration = makeConfiguration()
+
+      let url = try await engine.startTestRecording(configuration: configuration)
+      defer { try? FileManager.default.removeItem(at: url) }
+
+      let oldFormat = try #require(
+        AVAudioFormat(
+          standardFormatWithSampleRate: 48_000,
+          channels: 1
+        )
+      )
+      let validNew = try #require(
+        AVAudioFormat(
+          standardFormatWithSampleRate: 48_000,
+          channels: oldFormat.channelCount
+        )
+      )
+
+      let continued = await engine.simulateRouteChangeForTesting(
+        oldFormat: oldFormat,
+        newFormat: validNew,
+        processingFormat: oldFormat,
+        isInputAvailable: false,
+        reason: .oldDeviceUnavailable
+      )
+
+      #expect(continued == false)
+      #expect(await engine.isRecording == false)
+    }
+
+    @Test
+    func testFaultInjectionContinuesRecordingAndEmitsQualityChange() async throws {
+      let engine = AIOEngine()
+      let configuration = makeConfiguration()
+      let probe = RouteFaultProbe()
+
+      await MainActor.run {
+        engine.onRecordingInterruption = { interruption in
+          await probe.record(interruption)
+        }
+      }
+
+      let url = try await engine.startTestRecording(configuration: configuration)
+      defer { try? FileManager.default.removeItem(at: url) }
+
+      let oldFormat = try #require(
+        AVAudioFormat(
+          standardFormatWithSampleRate: 48_000,
+          channels: 1
+        )
+      )
+      let changed = try #require(
+        AVAudioFormat(
+          standardFormatWithSampleRate: 16_000,
+          channels: 2
+        )
+      )
+
+      let continued = await engine.simulateRouteChangeForTesting(
+        oldFormat: oldFormat,
+        newFormat: changed,
+        processingFormat: oldFormat,
+        isInputAvailable: true,
+        reason: .newDeviceAvailable
+      )
+
+      #expect(continued == true)
+      #expect(await engine.isRecording == true)
+
+      let observed = await waitUntil(timeout: .seconds(1)) {
+        let snapshot = await probe.snapshot()
+        return snapshot.interruptions.isEmpty == false
+      }
+      #expect(observed == true)
+
+      let snapshot = await probe.snapshot()
+      #expect(
+        snapshot.interruptions.contains { interruption in
+          if case .routeChangeContinuing(_, let qualityChange) = interruption {
+            guard let qualityChange else { return false }
+            return qualityChange.currentChannels == 2
+              && abs(qualityChange.currentSampleRate - 16_000) < 0.5
+          }
+          return false
+        }
+      )
+
+      _ = try await engine.stopRecording()
+    }
+
     private func makeConfiguration() -> RecordingConfiguration {
       let input = InputConfiguration(
         sampleRate: SampleRate.common(.sr48000),
@@ -170,6 +321,19 @@
       guard count > 0 else { return [] }
       return (0..<count).map { Float($0) / Float(count) }
     }
+
+    private func waitUntil(
+      timeout: Duration,
+      condition: @escaping @Sendable () async -> Bool
+    ) async -> Bool {
+      let clock = ContinuousClock()
+      let deadline = clock.now.advanced(by: timeout)
+      while clock.now < deadline {
+        if await condition() { return true }
+        try? await Task.sleep(for: .milliseconds(10))
+      }
+      return await condition()
+    }
   }
 
   private final class CapturingReceiver: BufferReceiver, @unchecked Sendable {
@@ -196,5 +360,22 @@
     }
 
     nonisolated func endBufferTask() {}
+  }
+
+  private actor RouteFaultProbe {
+    private(set) var interruptions: [AIOEngine.RecordingInterruption] = []
+    private(set) var failureCount: Int = 0
+
+    func record(_ interruption: AIOEngine.RecordingInterruption) {
+      interruptions.append(interruption)
+    }
+
+    func recordFailure() {
+      failureCount += 1
+    }
+
+    func snapshot() -> (interruptions: [AIOEngine.RecordingInterruption], failureCount: Int) {
+      (interruptions, failureCount)
+    }
   }
 #endif

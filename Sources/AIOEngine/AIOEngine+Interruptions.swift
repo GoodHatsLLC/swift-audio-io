@@ -234,8 +234,23 @@
       processingFormat: AVAudioFormat,
       session: AVAudioSession
     ) -> Bool {
+      canContinueRecording(
+        from: oldFormat,
+        to: newFormat,
+        processingFormat: processingFormat,
+        isInputAvailable: session.isInputAvailable
+      )
+    }
+
+    /// Deterministic continuation predicate used by tests and route-change handling.
+    func canContinueRecording(
+      from oldFormat: AVAudioFormat,
+      to newFormat: AVAudioFormat,
+      processingFormat: AVAudioFormat,
+      isInputAvailable: Bool
+    ) -> Bool {
       // Check if there's any input available
-      guard session.isInputAvailable else {
+      guard isInputAvailable else {
         log.info("No input available")
         return false
       }
