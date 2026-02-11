@@ -30,6 +30,7 @@
     func close()
   }
 
+  // SAFETY: AVAudioFile is only accessed serially from the audio writer thread via WriterControl.
   final class AVAudioFileWriter: @unchecked Sendable, RecordingFileWriter {
     let file: AVAudioFile
     let fileURL: URL
@@ -48,6 +49,7 @@
     }
   }
 
+  // SAFETY: ExtAudioFileRef is only accessed serially from the audio writer thread via WriterControl.
   @safe final class ExtAudioFileWriter: @unchecked Sendable, RecordingFileWriter {
     let fileURL: URL
     private var file: ExtAudioFileRef?
@@ -138,6 +140,7 @@
     }
   }
 
+  // SAFETY: All fields are ManagedAtomic or an actor (WriterDrainSignal) — inherently thread-safe.
   final class WriterControl: @unchecked Sendable {
     let stopRequested = ManagedAtomic<Bool>(false)
     let cancelRequested = ManagedAtomic<Bool>(false)
@@ -153,6 +156,7 @@
     let fileURL: URL
   }
 
+  // SAFETY: Sole field is a ManagedAtomic<Bool> — inherently thread-safe.
   final class ReceiverControl: @unchecked Sendable {
     let cancelRequested = ManagedAtomic<Bool>(false)
   }
