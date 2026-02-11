@@ -313,7 +313,7 @@
           }
           if persistPreference {
             persistInputPreferencesIfNeeded { prefs in
-              prefs.sampleRateHz = newValue.rawValue
+              prefs.sampleRateHz = actual.rawValue
             }
           }
         }
@@ -328,8 +328,10 @@
             """
           )
         if persistPreference {
+          // Persist the actual device rate on failure so we don't repeatedly retry
+          // an unsupported preference for this input across route changes.
           persistInputPreferencesIfNeeded { prefs in
-            prefs.sampleRateHz = newValue.rawValue
+            prefs.sampleRateHz = actual.rawValue
           }
         }
       }
@@ -1067,9 +1069,9 @@
             await self.updateAudioInputs(reason: "routeChange notification: .\(reasonMsg)")
             await MainActor.run { [weak self] in
               guard let self else { return }
-              if !self.isAudioSessionActive,
-                notification.reason == .newDeviceAvailable
-                  || notification.reason == .oldDeviceUnavailable
+              if !self.isAudioSessionActive
+                && (notification.reason == .newDeviceAvailable
+                  || notification.reason == .oldDeviceUnavailable)
               {
                 self.restorePreferredInputAndConfigurationIfPossible(
                   reason: "routeChange notification: .\(reasonMsg)"
