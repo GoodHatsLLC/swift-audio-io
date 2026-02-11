@@ -67,6 +67,13 @@
   ///
   @Observable
   public final class AIOEngine: Sendable {
+    public enum AudioSessionPolicy: Sendable {
+      /// `AIOEngine` configures and activates/deactivates `AVAudioSession` directly.
+      case engineManaged
+      /// A higher-level owner (e.g. `AudioEnvironmentManager`) handles activation state.
+      case delegated(setActive: @MainActor @Sendable (Bool) throws -> Void)
+    }
+
     /// Errors that can occur during audio engine operations.
     public enum AIOError: AudioError, LocalizedError {
       public enum AudioSessionOperation: String, Sendable, Equatable, CustomStringConvertible {
@@ -301,6 +308,9 @@
     /// Preferred audio session category/mode/options for this engine.
     @MainActor public var recordingSessionConfiguration: AudioSessionConfiguration =
       .recorderDefault
+    /// Policy controlling whether the engine mutates `AVAudioSession` directly
+    /// or delegates activation to a higher-level session authority.
+    @MainActor public var audioSessionPolicy: AudioSessionPolicy = .engineManaged
     @MainActor public var sessionConfiguration: AudioSessionConfiguration {
       get { recordingSessionConfiguration }
       set { recordingSessionConfiguration = newValue }

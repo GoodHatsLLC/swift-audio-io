@@ -10,6 +10,18 @@
 
     @MainActor
     func configureAudioSession(for configuration: RecordingConfiguration) throws(AIOError) {
+      switch audioSessionPolicy {
+      case .engineManaged:
+        break
+      case .delegated(let setActive):
+        do {
+          try setActive(true)
+        } catch {
+          throw .audioSessionFailed(operation: .setActive, error: ErrorContext(error))
+        }
+        return
+      }
+
       let session = AVAudioSession.sharedInstance()
 
       try applyAudioSessionConfiguration(session, configuration: recordingSessionConfiguration)
@@ -58,6 +70,18 @@
 
     @MainActor
     func configureAudioSessionForPlayback() throws(AIOError) {
+      switch audioSessionPolicy {
+      case .engineManaged:
+        break
+      case .delegated(let setActive):
+        do {
+          try setActive(true)
+        } catch {
+          throw .audioSessionFailed(operation: .setActive, error: ErrorContext(error))
+        }
+        return
+      }
+
       let session = AVAudioSession.sharedInstance()
       // Don't change the audio session category for playback.
       // The existing .playAndRecord category already supports playback,
@@ -140,6 +164,22 @@
     func deactivateAudioSessionIfNeeded(reason: String) {
       guard deactivateAudioSessionOnStop else { return }
       guard !isRecording, !isPlayback, !wantsRecording else { return }
+
+      if case .delegated(let setActive) = audioSessionPolicy {
+        do {
+          try setActive(false)
+        } catch {
+          let wrapped = AIOError.audioSessionFailed(
+            operation: .setActive,
+            error: ErrorContext(error)
+          )
+          log.error(
+            "Failed to delegate audio session deactivation (\(reason, privacy: .public)): \(wrapped, privacy: .public)"
+          )
+          errorSubject.send(wrapped)
+        }
+        return
+      }
 
       let session = AVAudioSession.sharedInstance()
       do {
