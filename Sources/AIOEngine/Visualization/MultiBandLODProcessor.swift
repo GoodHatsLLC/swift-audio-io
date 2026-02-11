@@ -167,7 +167,7 @@
   ///   // ptr contains all bands concatenated
   /// }
   /// ```
-  @unsafe public struct LODSnapshotRef: @unchecked Sendable, SnapshotProvider, LODSnapshot {
+  @safe public struct LODSnapshotRef: @unchecked Sendable, SnapshotProvider, LODSnapshot {
     fileprivate let slot: LODBufferSlot
     fileprivate let rawStorage: RawBandStorage?
     public let rawWriteIndexSnapshot: Int
@@ -175,16 +175,16 @@
     fileprivate init(
       _ slot: LODBufferSlot, rawStorage: RawBandStorage? = nil, rawWriteIndex: Int = 0
     ) {
-      unsafe self.slot = slot
+      self.slot = slot
       unsafe self.rawStorage = rawStorage
-      unsafe self.rawWriteIndexSnapshot = rawWriteIndex
+      self.rawWriteIndexSnapshot = rawWriteIndex
     }
 
-    public var bandCount: Int { unsafe slot.bandCount }
-    public var writeIndex: Int { unsafe slot.writeIndex }
-    public var lodRatio: Int { unsafe slot.lodRatio }
-    public var rawBufferLength: Int { unsafe slot.rawBufferLength }
-    public var lodBufferLength: Int { unsafe slot.bands.first?.minBuffer.count ?? 0 }
+    public var bandCount: Int { slot.bandCount }
+    public var writeIndex: Int { slot.writeIndex }
+    public var lodRatio: Int { slot.lodRatio }
+    public var rawBufferLength: Int { slot.rawBufferLength }
+    public var lodBufferLength: Int { slot.bands.first?.minBuffer.count ?? 0 }
 
     /// Direct access to a band's min buffer.
     public func withMinBuffer<R>(band: Int, _ body: (UnsafeBufferPointer<Float>) -> R) -> R {
@@ -223,7 +223,7 @@
     /// - Parameter body: Closure receiving the flat buffer pointer.
     /// - Returns: The result of the body closure.
     public func copyFlatMinBuffer<R>(_ body: (UnsafeBufferPointer<Float>) -> R) -> R {
-      let flat = unsafe slot.bands.flatMap { Array($0.minBuffer) }
+      let flat = slot.bands.flatMap { Array($0.minBuffer) }
       return unsafe flat.withUnsafeBufferPointer(body)
     }
 
@@ -232,7 +232,7 @@
     /// - Note: This method **allocates** a temporary array. For zero-copy access,
     ///   use `withMaxBuffer(band:)` to upload each band separately.
     public func copyFlatMaxBuffer<R>(_ body: (UnsafeBufferPointer<Float>) -> R) -> R {
-      let flat = unsafe slot.bands.flatMap { Array($0.maxBuffer) }
+      let flat = slot.bands.flatMap { Array($0.maxBuffer) }
       return unsafe flat.withUnsafeBufferPointer(body)
     }
 
@@ -241,13 +241,13 @@
     /// - Note: This method **allocates** a temporary array. For zero-copy access,
     ///   use `withRMSBuffer(band:)` to upload each band separately.
     public func copyFlatRMSBuffer<R>(_ body: (UnsafeBufferPointer<Float>) -> R) -> R {
-      let flat = unsafe slot.bands.flatMap { Array($0.rmsBuffer) }
+      let flat = slot.bands.flatMap { Array($0.rmsBuffer) }
       return unsafe flat.withUnsafeBufferPointer(body)
     }
 
     /// Convert to a copying snapshot (for compatibility or file export).
     public func toSnapshot() -> MultiBandLODSnapshot? {
-      unsafe slot.toSnapshot()
+      slot.toSnapshot()
     }
   }
 

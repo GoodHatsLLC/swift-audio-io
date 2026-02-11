@@ -392,11 +392,11 @@
       self.timeDomain = timeDomain
       self.frequencyDomain = frequencyDomain
       self.beat = beat
-      unsafe self.lodSnapshot = lodSnapshot
+      self.lodSnapshot = lodSnapshot
       self.latestBufferTiming = latestBufferTiming
     }
 
-    public static let empty = unsafe VisualizationSinks()
+    public static let empty = VisualizationSinks()
   }
 
   /// A consumer that declares required work and exposes sinks for updates.
