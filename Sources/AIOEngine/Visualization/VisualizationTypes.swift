@@ -380,6 +380,7 @@
     public var frequencyDomain: (@MainActor (FrequencyDomainData) -> Void)?
     public var beat: (@MainActor (BeatInfo) -> Void)?
     public var lodSnapshot: (@MainActor (LODSnapshotRef?) -> Void)?
+    public var lodSnapshotBackground: (@Sendable (LODSnapshotRef?) -> Void)?
     public var latestBufferTiming: (@MainActor (BufferTiming?) -> Void)?
 
     public init(
@@ -387,12 +388,14 @@
       frequencyDomain: (@MainActor (FrequencyDomainData) -> Void)? = nil,
       beat: (@MainActor (BeatInfo) -> Void)? = nil,
       lodSnapshot: (@MainActor (LODSnapshotRef?) -> Void)? = nil,
+      lodSnapshotBackground: (@Sendable (LODSnapshotRef?) -> Void)? = nil,
       latestBufferTiming: (@MainActor (BufferTiming?) -> Void)? = nil
     ) {
       self.timeDomain = timeDomain
       self.frequencyDomain = frequencyDomain
       self.beat = beat
       self.lodSnapshot = lodSnapshot
+      self.lodSnapshotBackground = lodSnapshotBackground
       self.latestBufferTiming = latestBufferTiming
     }
 
