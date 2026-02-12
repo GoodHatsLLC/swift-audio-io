@@ -125,8 +125,22 @@
         }
       }
       try #require(rotatedFramesWritten == true)
+      let preStopWritten = await MainActor.run {
+        engine.debugCurrentWriterWrittenSampleTime()
+      }
+      print(
+        "rotate-test pre-stop first=\(firstURL.lastPathComponent) rotated=\(rotatedOutputURL.lastPathComponent) firstHasBytes=\(fileHasBytes(at: firstURL)) rotatedHasBytes=\(fileHasBytes(at: rotatedOutputURL)) written=\(preStopWritten)"
+      )
 
-      let finalURL = try await engine.stopRecording()
+      let finalURL: URL
+      do {
+        finalURL = try await engine.stopRecording()
+      } catch {
+        print(
+          "rotate-test stop-failed first=\(firstURL.lastPathComponent) rotated=\(rotatedOutputURL.lastPathComponent) firstExists=\(FileManager.default.fileExists(atPath: firstURL.path)) rotatedExists=\(FileManager.default.fileExists(atPath: rotatedOutputURL.path)) firstSize=\(String(describing: try? firstURL.resourceValues(forKeys: [.fileSizeKey]).fileSize)) rotatedSize=\(String(describing: try? rotatedOutputURL.resourceValues(forKeys: [.fileSizeKey]).fileSize)) error=\(error)"
+        )
+        throw error
+      }
       defer { try? FileManager.default.removeItem(at: finalURL) }
 
       let rotatedSize = try #require(rotatedURL.resourceValues(forKeys: [.fileSizeKey]).fileSize)
