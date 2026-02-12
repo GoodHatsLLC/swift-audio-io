@@ -38,6 +38,12 @@
         )
       }
 
+      public nonisolated func makeTapHandlerForTesting(
+        processingFormat: AVAudioFormat
+      ) -> @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void {
+        makeTapHandler(processingFormat: processingFormat)
+      }
+
       /// Starts a recording session without touching AVAudioSession or AVAudioEngine.
       /// Intended for integration tests that inject buffers directly.
       @MainActor

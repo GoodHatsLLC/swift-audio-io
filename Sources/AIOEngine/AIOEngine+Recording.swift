@@ -664,14 +664,9 @@
           unsafe engine.inputNode.installTap(
             onBus: tapConfiguration.bus,
             bufferSize: tapConfiguration.bufferSize,
-            format: nil
-          ) { @Sendable buffer, time in
-            self.processAudio(
-              buffer: buffer,
-              time: time,
-              to: processingFormat
-            )
-          }
+            format: nil,
+            block: self.makeTapHandler(processingFormat: processingFormat)
+          )
           unsafe engine.prepare()
           let postInstallFormat = unsafe engine.inputNode.outputFormat(forBus: 0)
           guard postInstallFormat.channelCount > 0, postInstallFormat.sampleRate > 0 else {
@@ -761,6 +756,19 @@
       let capacity = max(1, Int(Double(sampleRate) * maxBufferSeconds))
       return (0..<cappedChannels).map { _ in
         SPSCRingBuffer<Float>(capacity: capacity)
+      }
+    }
+
+    // Keep tap callbacks nonisolated so AVFAudio can invoke them on its realtime queue.
+    nonisolated func makeTapHandler(
+      processingFormat: AVAudioFormat
+    ) -> @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void {
+      { [weak self] buffer, time in
+        self?.processAudio(
+          buffer: buffer,
+          time: time,
+          to: processingFormat
+        )
       }
     }
 
@@ -874,14 +882,9 @@
         unsafe self.engine.inputNode.installTap(
           onBus: tapConfiguration.bus,
           bufferSize: tapConfiguration.bufferSize,
-          format: nil
-        ) { [weak self] buffer, time in
-          self?.processAudio(
-            buffer: buffer,
-            time: time,
-            to: processingFormat
-          )
-        }
+          format: nil,
+          block: self.makeTapHandler(processingFormat: processingFormat)
+        )
         unsafe self.engine.prepare()
         let postInstallFormat = unsafe self.engine.inputNode.outputFormat(forBus: 0)
         guard postInstallFormat.channelCount > 0, postInstallFormat.sampleRate > 0 else {
