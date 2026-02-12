@@ -3,6 +3,7 @@
   import AsyncAlgorithms
   import Atomics
   public import Foundation
+  import ObjCExceptionCatcher
   import os
   import SystemLog
   import Tools
@@ -658,15 +659,25 @@
           guard currentInputFormat.channelCount > 0, currentInputFormat.sampleRate > 0 else {
             return nil
           }
-          // Passing nil asks AVFAudio to bind the tap to the node's *current* bus format,
-          // which avoids NSException crashes when the route is still settling and a
-          // just-read AVAudioFormat becomes stale before installTap executes.
-          unsafe engine.inputNode.installTap(
-            onBus: tapConfiguration.bus,
-            bufferSize: tapConfiguration.bufferSize,
-            format: nil,
-            block: self.makeTapHandler(processingFormat: processingFormat)
-          )
+          // Wrap installTap in an ObjC @try/@catch — the format can become transiently
+          // invalid between the guard above and the actual installTap call, and AVFAudio
+          // raises an uncatchable NSException that Swift cannot handle.
+          let tapHandler = self.makeTapHandler(processingFormat: processingFormat)
+          var installException: NSException?
+          let tapInstalled = AIORunCatchingObjCException({
+            unsafe engine.inputNode.installTap(
+              onBus: tapConfiguration.bus,
+              bufferSize: tapConfiguration.bufferSize,
+              format: nil,
+              block: tapHandler
+            )
+          }, &installException)
+          guard tapInstalled else {
+            log.warning(
+              "installTap raised NSException during warm(): \(installException?.description ?? "unknown", privacy: .public)"
+            )
+            return nil
+          }
           unsafe engine.prepare()
           let postInstallFormat = unsafe engine.inputNode.outputFormat(forBus: 0)
           guard postInstallFormat.channelCount > 0, postInstallFormat.sampleRate > 0 else {
@@ -879,13 +890,24 @@
           state.installedTapBus = tapConfiguration.bus
         }
 
-        // Validate and install in one queue-critical section to avoid stale-format races.
-        unsafe self.engine.inputNode.installTap(
-          onBus: tapConfiguration.bus,
-          bufferSize: tapConfiguration.bufferSize,
-          format: nil,
-          block: self.makeTapHandler(processingFormat: processingFormat)
-        )
+        // Wrap installTap in ObjC @try/@catch — the format can become transiently invalid
+        // between the validation above and the installTap call, causing an uncatchable NSException.
+        let tapHandler = self.makeTapHandler(processingFormat: processingFormat)
+        var installException: NSException?
+        let tapInstalled = AIORunCatchingObjCException({
+          unsafe self.engine.inputNode.installTap(
+            onBus: tapConfiguration.bus,
+            bufferSize: tapConfiguration.bufferSize,
+            format: nil,
+            block: tapHandler
+          )
+        }, &installException)
+        guard tapInstalled else {
+          throw AIOError.invalidRecordingConfiguration(
+            details:
+              "installTap raised NSException during tap interval update: \(installException?.description ?? "unknown")"
+          )
+        }
         unsafe self.engine.prepare()
         let postInstallFormat = unsafe self.engine.inputNode.outputFormat(forBus: 0)
         guard postInstallFormat.channelCount > 0, postInstallFormat.sampleRate > 0 else {
