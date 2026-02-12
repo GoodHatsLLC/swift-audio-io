@@ -212,11 +212,11 @@ extension RecordingFilename {
 
 extension RecordingFilename {
 
-  /// Generates a random pronounceable word using CVC (consonant-vowel-consonant) pattern.
+  /// Generates a random pronounceable word using two CVC syllables.
   ///
-  /// Examples: "bix", "tov", "mup", "zaf", "ked"
+  /// Examples: "bixtov", "mupzaf", "kedlun"
   ///
-  /// Entropy: 20 × 5 × 20 = 2000 combinations per syllable
+  /// Entropy: (16 × 5 × 16)^2 = 1_638_400 combinations
   private static func generatePhoneticWord() -> String {
     // Consonants that work well at start and end of syllables
     let consonants: [Character] = [
@@ -227,11 +227,13 @@ extension RecordingFilename {
     // Simple vowels for clear pronunciation
     let vowels: [Character] = ["a", "e", "i", "o", "u"]
 
-    // Generate a single CVC syllable (3 chars, 1600 combinations)
-    let c1 = consonants.randomElement()!
-    let v = vowels.randomElement()!
-    let c2 = consonants.randomElement()!
+    func syllable() -> [Character] {
+      let c1 = consonants.randomElement()!
+      let v = vowels.randomElement()!
+      let c2 = consonants.randomElement()!
+      return [c1, v, c2]
+    }
 
-    return String([c1, v, c2])
+    return String(syllable() + syllable())
   }
 }
