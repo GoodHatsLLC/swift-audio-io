@@ -760,11 +760,12 @@
     }
 
     // Keep tap callbacks nonisolated so AVFAudio can invoke them on its realtime queue.
+    // Strong-capture `self` to avoid per-buffer weak-reference overhead on the render path.
     nonisolated func makeTapHandler(
       processingFormat: AVAudioFormat
     ) -> @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void {
-      { [weak self] buffer, time in
-        self?.processAudio(
+      { [self] buffer, time in
+        self.processAudio(
           buffer: buffer,
           time: time,
           to: processingFormat
@@ -940,10 +941,11 @@
 
     @MainActor func hardStop() {
       let tapBus = state.consume(\.installedTapBus)
+      let busesToRemove = Array(Set([tapBus, 0].compactMap { $0 }))
       runOnEngineControlQueue { [weak self] in
         guard let self else { return }
-        if let tapBus {
-          unsafe self.engine.inputNode.removeTap(onBus: tapBus)
+        for bus in busesToRemove {
+          unsafe self.engine.inputNode.removeTap(onBus: bus)
         }
         if unsafe self.engine.isRunning {
           unsafe self.engine.stop()
@@ -966,12 +968,13 @@
     @MainActor
     func gracefulStop() async {
       let tapBus = state.consume(\.installedTapBus)
+      let busesToRemove = Array(Set([tapBus, 0].compactMap { $0 }))
       log.info("🛑 gracefulStop starting (tapBus=\(String(describing: tapBus), privacy: .public))")
       engineControlQueue.async { [weak self] in
         guard let self else { return }
         log.info("🛑 gracefulStop engine stop enqueued")
-        if let tapBus = tapBus {
-          unsafe self.engine.inputNode.removeTap(onBus: tapBus)
+        for bus in busesToRemove {
+          unsafe self.engine.inputNode.removeTap(onBus: bus)
         }
         unsafe self.engine.stop()
       }
