@@ -117,6 +117,12 @@
       case audioSessionNotReady(details: String)
       /// The recording configuration is invalid.
       case invalidRecordingConfiguration(details: String)
+      /// The selected output encoder does not support the requested sample rate.
+      case unsupportedEncodedSampleRate(
+        fileFormat: FileFormat,
+        sampleRate: Double,
+        supportedSampleRates: [Double]
+      )
       /// The scrub time is invalid.
       case invalidScrubTime(details: Double)
       /// The scrub track is invalid.
@@ -132,29 +138,39 @@
 
       public var errorDescription: String? {
         switch self {
-        case .notRecording: "Not currently recording"
-        case .notPlaying: "Not currently playing"
-        case .alreadyRecording: "Already recording"
-        case .cannotPlayWhileRecording: "Cannot play audio while recording"
-        case .engineError: "Audio engine error"
-        case .formatConversionFailed: "Failed to convert audio format"
-        case .hardwareNotSupported: "Hardware configuration not supported"
+        case .notRecording: return "Not currently recording"
+        case .notPlaying: return "Not currently playing"
+        case .alreadyRecording: return "Already recording"
+        case .cannotPlayWhileRecording: return "Cannot play audio while recording"
+        case .engineError: return "Audio engine error"
+        case .formatConversionFailed: return "Failed to convert audio format"
+        case .hardwareNotSupported: return "Hardware configuration not supported"
         case .audioSessionNotReady(let details):
-          "Audio session not ready: \(details)"
+          return "Audio session not ready: \(details)"
         case .invalidRecordingConfiguration(let details):
-          "The recording configuration was not valid. \(details)"
+          return "The recording configuration was not valid. \(details)"
+        case .unsupportedEncodedSampleRate(let fileFormat, let sampleRate, let supportedRates):
+          let requested = Int((sampleRate / 1000).rounded())
+          let supportedDescription =
+            supportedRates
+            .map { Int(($0 / 1000).rounded()) }
+            .map { "\($0)kHz" }
+            .joined(separator: ", ")
+          return
+            "The selected \(fileFormat.description) format does not support \(requested)kHz. Supported rates: \(supportedDescription)"
         case .invalidScrubTime(let details):
-          "Progress can only be scrubbed between 0..<1. (value: \(details))"
+          return "Progress can only be scrubbed between 0..<1. (value: \(details))"
         case .invalidScrubTrack:
-          "A track must be playing to be scrubbed to a time"
+          return "A track must be playing to be scrubbed to a time"
         case .invalidTimeRange:
-          "The specified time range is invalid"
+          return "The specified time range is invalid"
         case .engineStartFailed(let error):
-          "Audio engine failed to start: \(error)"
+          return "Audio engine failed to start: \(error)"
         case .audioSessionFailed(let operation, let error):
-          "Audio session operation '\(operation)' failed: \(error)"
+          return "Audio session operation '\(operation)' failed: \(error)"
         case .audioFileFailed(let operation, let url, let error):
-          "Audio file operation '\(operation)' failed for \(url?.lastPathComponent ?? "missing URL"): \(error)"
+          return
+            "Audio file operation '\(operation)' failed for \(url?.lastPathComponent ?? "missing URL"): \(error)"
         }
       }
 
@@ -358,6 +374,17 @@
     @MainActor var writerSession: WriterSession?
     @MainActor var drainingWriterSessions: [WriterSession] = []
     @MainActor var lastWriteFailure: WriteFailure?
+    @MainActor var lastRecordingStartFailure: AIOError?
+
+    #if DEBUG
+      /// Test hook used by integration tests to bypass hardware input-format reads during route changes.
+      @MainActor var testRouteChangeInputFormatOverride: AVAudioFormat?
+      /// Test hook used by integration tests to control input availability during route changes.
+      @MainActor var testRouteChangeIsInputAvailableOverride: Bool?
+      /// Test hook used by integration tests to simulate tap reconfiguration outcomes during route changes.
+      @MainActor var testRouteTapReconfigureOverride:
+        (@MainActor (AVAudioFormat) throws(AIOError) -> Void)?
+    #endif
 
     @MainActor var playbackTask: Task<Void, Never>? {
       willSet {
@@ -381,6 +408,13 @@
     /// An asynchronous stream of errors that occur in the audio engine.
     public var errors: AsyncBroadcaster<any Error> {
       errorSubject.broadcaster
+    }
+
+    /// Returns the most recent failure encountered while starting recording and clears it.
+    @MainActor
+    public func consumeLastRecordingStartFailure() -> AIOError? {
+      defer { lastRecordingStartFailure = nil }
+      return lastRecordingStartFailure
     }
 
     // MARK: - Initialization
@@ -485,27 +519,45 @@
     {
       log.info(
         "🧹 awaitWriterDrain start for \(session.fileURL.lastPathComponent, privacy: .public)")
-      let clock = ContinuousClock()
-      let deadline = clock.now.advanced(by: writerDrainTimeout)
-      while clock.now < deadline {
-        if Task.isCancelled {
-          log.warning(
-            "🧹 awaitWriterDrain cancelled for \(session.fileURL.lastPathComponent, privacy: .public)"
-          )
-          return .timedOut
-        }
-        if await session.control.drainSignal.isSignaledValue() {
-          log.info(
-            "🧹 awaitWriterDrain completed for \(session.fileURL.lastPathComponent, privacy: .public)"
-          )
+      if Task.isCancelled {
+        log.warning(
+          "🧹 awaitWriterDrain cancelled for \(session.fileURL.lastPathComponent, privacy: .public)"
+        )
+        return .timedOut
+      }
+      if isDrainSatisfiedByTarget(session) {
+        return .targetSatisfied
+      }
+
+      let timeout = writerDrainTimeout
+      let outcome = await withTaskGroup(of: WriterDrainOutcome.self) { group in
+        group.addTask {
+          await session.control.drainSignal.wait()
           return .signaled
         }
-        if isDrainSatisfiedByTarget(session) {
+        group.addTask {
+          await session.control.targetSatisfiedSignal.wait()
           return .targetSatisfied
         }
-        try? await Task.sleep(for: .milliseconds(50))
+        group.addTask {
+          try? await Task.sleep(for: timeout)
+          return .timedOut
+        }
+
+        let first = await group.next() ?? .timedOut
+        group.cancelAll()
+        return first
       }
-      return isDrainSatisfiedByTarget(session) ? .targetSatisfied : .timedOut
+
+      if outcome == .timedOut, isDrainSatisfiedByTarget(session) {
+        return .targetSatisfied
+      }
+      if outcome == .signaled {
+        log.info(
+          "🧹 awaitWriterDrain completed for \(session.fileURL.lastPathComponent, privacy: .public)"
+        )
+      }
+      return outcome
     }
 
     // MARK: - Playback State Helpers

@@ -10,7 +10,6 @@
   public struct RecordingConfiguration: CustomStringConvertible, CustomDebugStringConvertible,
     Hashable, Identifiable, Sendable
   {
-
     #if os(iOS)
       public enum OutputDestination: Hashable, Sendable, CustomStringConvertible {
         case temporary
@@ -66,7 +65,9 @@
     }
 
     public var description: String {
-      "\(outputConfiguration.fileFormat): \(inputConfiguration.channels) \(inputConfiguration.sampleRate), \(outputConfiguration.bitDepth) \(outputConfiguration.fileFormat.requiresQuality ? "\(outputConfiguration.quality)" : "") (destination: \(outputDestination))"
+      let fileFormat = outputConfiguration.fileFormat
+      return
+        "\(fileFormat): \(inputConfiguration.channels) \(inputConfiguration.sampleRate), \(outputConfiguration.bitDepth) \(fileFormat.requiresQuality ? "\(outputConfiguration.quality)" : "") (destination: \(outputDestination))"
     }
 
     public var summary: String {
@@ -78,7 +79,7 @@
 
     public var debugDescription: String {
       """
-        fileFormat: \(fileFormat?.description ?? "nil")
+        fileFormat: \(outputConfiguration.fileFormat.description)
         sampleRate: \(inputConfiguration.sampleRate)
         channels: \(inputConfiguration.channels)
         bitDepth: \(outputConfiguration.bitDepth)
@@ -146,9 +147,14 @@
     var fileSettings: [String: Any]? {
       switch outputConfiguration.fileFormat {
       case .aac, .adts:
+        let sampleRate = inputConfiguration.sampleRate.rawValue
+        guard outputConfiguration.fileFormat.supportsEncodedSampleRate(sampleRate) else {
+          log.error("invalid sample rate: \(sampleRate, privacy: .public)")
+          return nil
+        }
         let settings: [String: Any] = [
           AVFormatIDKey: kAudioFormatMPEG4AAC,
-          AVSampleRateKey: inputConfiguration.sampleRate.rawValue,
+          AVSampleRateKey: sampleRate,
           AVNumberOfChannelsKey: inputConfiguration.channels.platform,
           AVEncoderAudioQualityKey: outputConfiguration.quality.platform,
         ]
@@ -204,9 +210,14 @@
     var fileFormat: AVAudioFormat? {
       switch outputConfiguration.fileFormat {
       case .aac, .adts:
+        let sampleRate = inputConfiguration.sampleRate.rawValue
+        guard outputConfiguration.fileFormat.supportsEncodedSampleRate(sampleRate) else {
+          log.error("invalid sample rate: \(sampleRate, privacy: .public)")
+          return nil
+        }
         let settings: [String: Any] = [
           AVFormatIDKey: kAudioFormatMPEG4AAC,
-          AVSampleRateKey: inputConfiguration.sampleRate.rawValue,
+          AVSampleRateKey: sampleRate,
           AVNumberOfChannelsKey: inputConfiguration.channels.platform,
           AVEncoderAudioQualityKey: outputConfiguration.quality.platform,
         ]
@@ -218,14 +229,10 @@
         }
 
         // Additional validation for AAC compatibility
-        let sampleRate = inputConfiguration.sampleRate.rawValue
         let channelCount = inputConfiguration.channels.platform
 
         // AAC supports limited sample rates and channel configurations
-        let validSampleRates: [Double] = [
-          8000, 11025, 12000, 16000, 22050, 24000, 32000, 44100, 48000, 64000, 88200, 96000,
-        ]
-        guard validSampleRates.contains(sampleRate) else {
+        guard outputConfiguration.fileFormat.supportsEncodedSampleRate(sampleRate) else {
           log.error("invalid sample rate: \(sampleRate, privacy: .public)")
           return nil
         }
