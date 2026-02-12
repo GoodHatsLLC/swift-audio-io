@@ -361,14 +361,9 @@
         unsafe self.engine.inputNode.installTap(
           onBus: tapConfiguration.bus,
           bufferSize: tapConfiguration.bufferSize,
-          format: nil
-        ) { @Sendable buffer, time in
-          self.processAudio(
-            buffer: buffer,
-            time: time,
-            to: processingFormat
-          )
-        }
+          format: nil,
+          block: self.makeTapHandler(processingFormat: processingFormat)
+        )
         unsafe self.engine.prepare()
         let postInstallFormat = unsafe self.engine.inputNode.outputFormat(forBus: 0)
         guard postInstallFormat.channelCount > 0, postInstallFormat.sampleRate > 0 else {

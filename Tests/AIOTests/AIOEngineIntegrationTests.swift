@@ -1,5 +1,6 @@
 #if canImport(UIKit)
   import AVFoundation
+  import Dispatch
   import Foundation
   import Testing
   import Tools
@@ -55,6 +56,31 @@
       #expect(snapshot.timing?.sampleTime == 0)
 
       _ = try await engine.stopRecording()
+    }
+
+    @Test
+    func testTapHandlerCanRunOffMainQueue() throws {
+      let engine = AIOEngine()
+      let processingFormat = try #require(
+        AVAudioFormat(
+          standardFormatWithSampleRate: 48_000,
+          channels: 1
+        )
+      )
+      let tapHandler = engine.makeTapHandlerForTesting(processingFormat: processingFormat)
+      let buffer = try #require(
+        AVAudioPCMBuffer(
+          pcmFormat: processingFormat,
+          frameCapacity: 64
+        )
+      )
+      buffer.frameLength = 64
+      let time = AVAudioTime(sampleTime: 0, atRate: processingFormat.sampleRate)
+
+      let queue = DispatchQueue(label: "AIOEngine.tap-handler-regression")
+      queue.sync {
+        tapHandler(buffer, time)
+      }
     }
 
     @Test

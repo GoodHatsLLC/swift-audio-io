@@ -10,7 +10,7 @@ private let log = SystemLog.make()
 public final class ErrorManager: Sendable {
   public nonisolated init() {}
 
-  public struct ErrorEvent: Identifiable {
+  public struct ErrorEvent: Identifiable, Hashable {
     public enum Visibility: Sendable {
       /// Visible only when debug toasts are enabled.
       case debug
