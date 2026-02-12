@@ -577,7 +577,6 @@
           error: ErrorContext(error)
         )
       }
-      //    try session.setPreferredInputOrientation(.none)
 
       // Prefer to keep the current input, but switch to a non-stereo polar pattern/source
       if let input = env.input {

@@ -27,15 +27,11 @@ extension SampleRate {
     SampleRate(rawValue: value.rawValue)
   }
   public enum Common: Double, CaseIterable, Comparable, Sendable, Codable {
-    // case sr8000 = 8000
-    // case sr11025 = 11025
     case sr16000 = 16000
     case sr22050 = 22050
     case sr24000 = 24000
-    // case sr32000 = 32000
     case sr44100 = 44100
     case sr48000 = 48000
-    // case sr88200 = 88200
     case sr96000 = 96000
     case sr192000 = 192000
 
