@@ -3,7 +3,6 @@
   import AsyncAlgorithms
   import Atomics
   public import Foundation
-  import ObjCExceptionCatcher
   import os
   import SystemLog
   import Tools
@@ -626,22 +625,11 @@
         )
         let receiverTiming = SPSCRingBuffer<TimingPacket>(capacity: timingCapacity)
         let tapFormat = tapConfiguration.inputAVAudioFormat
-        guard let tapConverter = AVAudioConverter(from: tapFormat, to: processingFormat) else {
-          throw AIOError.formatConversionFailed
-        }
-        let tapFrameRatio = processingFormat.sampleRate / tapFormat.sampleRate
-        let maxTapFrames = max(
-          AVAudioFrameCount(ceil(Double(tapConfiguration.bufferSize) * tapFrameRatio)),
-          1
+        let tapArtifacts = try makeTapConversionArtifacts(
+          inputFormat: tapFormat,
+          processingFormat: processingFormat,
+          tapBufferSize: tapConfiguration.bufferSize
         )
-        guard
-          let tapConvertedBuffer = AVAudioPCMBuffer(
-            pcmFormat: processingFormat,
-            frameCapacity: maxTapFrames
-          )
-        else {
-          throw AIOError.formatConversionFailed
-        }
         recordingSampleTimeAtomic.store(0, ordering: .relaxed)
         // Remove any existing tap and install the new one in a single engine-control-queue
         // dispatch. Re-read the input node format atomically to prevent a race where an audio
@@ -659,31 +647,23 @@
           guard currentInputFormat.channelCount > 0, currentInputFormat.sampleRate > 0 else {
             return nil
           }
-          // Wrap installTap in an ObjC @try/@catch — the format can become transiently
-          // invalid between the guard above and the actual installTap call, and AVFAudio
-          // raises an uncatchable NSException that Swift cannot handle.
-          let tapHandler = self.makeTapHandler(processingFormat: processingFormat)
-          var installException: NSException?
-          let tapInstalled = AIORunCatchingObjCException({
-            unsafe engine.inputNode.installTap(
-              onBus: tapConfiguration.bus,
+          let installResult = Result {
+            try self.installTapCatchingObjCException(
+              bus: tapConfiguration.bus,
               bufferSize: tapConfiguration.bufferSize,
-              format: nil,
-              block: tapHandler
+              processingFormat: processingFormat,
+              installContext: "warm()"
             )
-          }, &installException)
-          guard tapInstalled else {
+          }
+          switch installResult {
+          case .success(let postInstallFormat):
+            return postInstallFormat
+          case .failure(let error):
             log.warning(
-              "installTap raised NSException during warm(): \(installException?.description ?? "unknown", privacy: .public)"
+              "Failed to install tap during warm(): \(error, privacy: .public)"
             )
             return nil
           }
-          unsafe engine.prepare()
-          let postInstallFormat = unsafe engine.inputNode.outputFormat(forBus: 0)
-          guard postInstallFormat.channelCount > 0, postInstallFormat.sampleRate > 0 else {
-            return nil
-          }
-          return postInstallFormat
         }
         guard let actualTapFormat else {
           let transientFormat = runOnEngineControlQueue {
@@ -700,28 +680,13 @@
         // If the actual tap format diverged from the pre-computed format (e.g. the hardware
         // settled on a different channel count after the stereo session reconfiguration),
         // rebuild the converter and conversion buffer to match the real format.
-        var finalConverter = tapConverter
-        var finalConverterInputFormat = tapFormat
-        var finalConvertedBuffer = tapConvertedBuffer
-        if actualTapFormat.channelCount != tapFormat.channelCount
-          || actualTapFormat.sampleRate != tapFormat.sampleRate
-        {
-          log.warning(
-            "Tap format changed after install: expected \(tapFormat, privacy: .public), got \(actualTapFormat, privacy: .public)"
-          )
-          if let rebuilt = AVAudioConverter(from: actualTapFormat, to: processingFormat) {
-            let ratio = processingFormat.sampleRate / actualTapFormat.sampleRate
-            let frames = max(
-              AVAudioFrameCount(ceil(Double(tapConfiguration.bufferSize) * ratio)),
-              1
-            )
-            if let buf = AVAudioPCMBuffer(pcmFormat: processingFormat, frameCapacity: frames) {
-              finalConverter = rebuilt
-              finalConverterInputFormat = actualTapFormat
-              finalConvertedBuffer = buf
-            }
-          }
-        }
+        let finalArtifacts = try makeAdjustedTapConversionArtifactsIfNeeded(
+          initialArtifacts: tapArtifacts,
+          actualTapFormat: actualTapFormat,
+          processingFormat: processingFormat,
+          tapBufferSize: tapConfiguration.bufferSize,
+          logContext: "warm()"
+        )
 
         state {
           $0.recordingWriter = writer
@@ -729,10 +694,10 @@
           $0.audioBuffers = audioBuffers
           $0.receiverBuffers = receiverBuffers
           $0.receiverTiming = receiverTiming
-          $0.tapConverter = finalConverter
-          $0.tapConverterInputFormat = finalConverterInputFormat
+          $0.tapConverter = finalArtifacts.converter
+          $0.tapConverterInputFormat = finalArtifacts.inputFormat
           $0.tapConverterOutputFormat = processingFormat
-          $0.tapConvertedBuffer = finalConvertedBuffer
+          $0.tapConvertedBuffer = finalArtifacts.convertedBuffer
           $0.installedTapBus = tapConfiguration.bus
           $0.recordingConfiguration = configuration
           $0.initialInputFormat = actualTapFormat
@@ -836,7 +801,8 @@
         () throws
           -> (
             inputFormat: AVAudioFormat,
-            tapConfiguration: TapConfiguration
+            tapConfiguration: TapConfiguration,
+            initialTapArtifacts: TapConversionArtifacts
           ) in
         guard let self else { throw AIOError.engineError }
 
@@ -863,66 +829,22 @@
           throw AIOError.invalidRecordingConfiguration(details: "Tap bufferSize is 0")
         }
 
-        let tapFormat = tapConfiguration.inputAVAudioFormat
-        guard let tapConverter = AVAudioConverter(from: tapFormat, to: processingFormat) else {
-          throw AIOError.formatConversionFailed
-        }
-
-        let tapFrameRatio = processingFormat.sampleRate / tapFormat.sampleRate
-        let maxTapFrames = max(
-          AVAudioFrameCount(ceil(Double(tapConfiguration.bufferSize) * tapFrameRatio)),
-          1
+        let initialTapArtifacts = try self.makeTapConversionArtifacts(
+          inputFormat: tapConfiguration.inputAVAudioFormat,
+          processingFormat: processingFormat,
+          tapBufferSize: tapConfiguration.bufferSize
         )
-        guard
-          let tapConvertedBuffer = AVAudioPCMBuffer(
-            pcmFormat: processingFormat,
-            frameCapacity: maxTapFrames
-          )
-        else {
-          throw AIOError.formatConversionFailed
-        }
-
-        // Wrap installTap in ObjC @try/@catch — the format can become transiently invalid
-        // between the validation above and the installTap call, causing an uncatchable NSException.
-        let tapHandler = self.makeTapHandler(processingFormat: processingFormat)
-        var installException: NSException?
-        let tapInstalled = AIORunCatchingObjCException({
-          unsafe self.engine.inputNode.installTap(
-            onBus: tapConfiguration.bus,
-            bufferSize: tapConfiguration.bufferSize,
-            format: nil,
-            block: tapHandler
-          )
-        }, &installException)
-        guard tapInstalled else {
-          throw AIOError.invalidRecordingConfiguration(
-            details:
-              "installTap raised NSException during tap interval update: \(installException?.description ?? "unknown")"
-          )
-        }
-        unsafe self.engine.prepare()
-        let postInstallFormat = unsafe self.engine.inputNode.outputFormat(forBus: 0)
-        guard postInstallFormat.channelCount > 0, postInstallFormat.sampleRate > 0 else {
-          throw AIOError.invalidRecordingConfiguration(
-            details:
-              "Tap format invalid after tap interval update install (channels: \(postInstallFormat.channelCount), sampleRate: \(postInstallFormat.sampleRate))"
-          )
-        }
-
-        // Update state only after the tap is successfully installed — if installTap
-        // threw an NSException or the post-install format is invalid, we must not
-        // leave state claiming a tap exists that was never installed.
-        self.state.withLock { state in
-          state.tapConverter = tapConverter
-          state.tapConverterInputFormat = tapFormat
-          state.tapConverterOutputFormat = processingFormat
-          state.tapConvertedBuffer = tapConvertedBuffer
-          state.installedTapBus = tapConfiguration.bus
-        }
+        let postInstallFormat = try self.installTapCatchingObjCException(
+          bus: tapConfiguration.bus,
+          bufferSize: tapConfiguration.bufferSize,
+          processingFormat: processingFormat,
+          installContext: "tap interval update"
+        )
 
         return (
           inputFormat: postInstallFormat,
-          tapConfiguration: tapConfiguration
+          tapConfiguration: tapConfiguration,
+          initialTapArtifacts: initialTapArtifacts
         )
       }
 
@@ -930,31 +852,22 @@
       case .success(let result):
         let tapConfiguration = result.tapConfiguration
         let actualTapFormat = result.inputFormat
-        let tapFormat = tapConfiguration.inputAVAudioFormat
-        if actualTapFormat.channelCount != tapFormat.channelCount
-          || actualTapFormat.sampleRate != tapFormat.sampleRate
-        {
-          log.warning(
-            "Tap format changed during tap interval update: expected \(tapFormat, privacy: .public), got \(actualTapFormat, privacy: .public)"
-          )
-          guard let converter = AVAudioConverter(from: actualTapFormat, to: processingFormat) else {
-            throw AIOError.formatConversionFailed
-          }
-          let ratio = processingFormat.sampleRate / actualTapFormat.sampleRate
-          let frames = max(
-            AVAudioFrameCount(ceil(Double(tapConfiguration.bufferSize) * ratio)),
-            1
-          )
-          guard let buffer = AVAudioPCMBuffer(pcmFormat: processingFormat, frameCapacity: frames)
-          else {
-            throw AIOError.formatConversionFailed
-          }
-          state {
-            $0.tapConverter = converter
-            $0.tapConverterInputFormat = actualTapFormat
-            $0.tapConverterOutputFormat = processingFormat
-            $0.tapConvertedBuffer = buffer
-          }
+        let finalTapArtifacts = try makeAdjustedTapConversionArtifactsIfNeeded(
+          initialArtifacts: result.initialTapArtifacts,
+          actualTapFormat: actualTapFormat,
+          processingFormat: processingFormat,
+          tapBufferSize: tapConfiguration.bufferSize,
+          logContext: "tap interval update"
+        )
+        // Update state only after the tap is successfully installed and any needed
+        // artifact reconfiguration is complete, so state never claims a tap that
+        // failed to install.
+        state {
+          $0.tapConverter = finalTapArtifacts.converter
+          $0.tapConverterInputFormat = finalTapArtifacts.inputFormat
+          $0.tapConverterOutputFormat = processingFormat
+          $0.tapConvertedBuffer = finalTapArtifacts.convertedBuffer
+          $0.installedTapBus = tapConfiguration.bus
         }
         log.info(
           "Updated tap interval to \(configuration.tapInterval, privacy: .public) (bufferSize: \(tapConfiguration.bufferSize, privacy: .public) frames interval=\(tapConfiguration.bufferSize == 0 ? 0.0 : (Double(tapConfiguration.bufferSize) / max(processingFormat.sampleRate, 1)), privacy: .public)s sampleRate=\(processingFormat.sampleRate, privacy: .public)Hz)"
