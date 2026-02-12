@@ -882,14 +882,6 @@
           throw AIOError.formatConversionFailed
         }
 
-        self.state.withLock { state in
-          state.tapConverter = tapConverter
-          state.tapConverterInputFormat = tapFormat
-          state.tapConverterOutputFormat = processingFormat
-          state.tapConvertedBuffer = tapConvertedBuffer
-          state.installedTapBus = tapConfiguration.bus
-        }
-
         // Wrap installTap in ObjC @try/@catch — the format can become transiently invalid
         // between the validation above and the installTap call, causing an uncatchable NSException.
         let tapHandler = self.makeTapHandler(processingFormat: processingFormat)
@@ -915,6 +907,17 @@
             details:
               "Tap format invalid after tap interval update install (channels: \(postInstallFormat.channelCount), sampleRate: \(postInstallFormat.sampleRate))"
           )
+        }
+
+        // Update state only after the tap is successfully installed — if installTap
+        // threw an NSException or the post-install format is invalid, we must not
+        // leave state claiming a tap exists that was never installed.
+        self.state.withLock { state in
+          state.tapConverter = tapConverter
+          state.tapConverterInputFormat = tapFormat
+          state.tapConverterOutputFormat = processingFormat
+          state.tapConvertedBuffer = tapConvertedBuffer
+          state.installedTapBus = tapConfiguration.bus
         }
 
         return (
