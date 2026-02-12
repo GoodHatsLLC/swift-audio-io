@@ -86,16 +86,10 @@
     @Test
     func testRotateRecordingFileEmitsTwoFiles() async throws {
       let engine = AIOEngine()
-      let configuration = makeConfiguration()
-      let startedProbe = RecordingStartedProbe()
-
-      await MainActor.run {
-        engine.onRecordingStarted = { url, _ in
-          Task {
-            await startedProbe.record(url)
-          }
-        }
-      }
+      let outputDirectory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("AIOEngineIntegrationTests-\(UUID().uuidString)", isDirectory: true)
+      defer { try? FileManager.default.removeItem(at: outputDirectory) }
+      let configuration = makeConfiguration(outputDestination: .directory(outputDirectory))
 
       let firstURL = try await engine.startTestRecording(configuration: configuration)
       defer { try? FileManager.default.removeItem(at: firstURL) }
@@ -111,8 +105,9 @@
       #expect(rotatedURL == firstURL)
 
       let rotatedOutputURL = try #require(
-        await startedProbe.latest(excluding: firstURL)
+        await MainActor.run { engine.debugCurrentRecordingURL() }
       )
+      #expect(rotatedOutputURL != firstURL)
 
       engine.injectTestAudio(channels: [ramp(count: 256)])
       let rotatedFileReady = await waitUntil(timeout: .seconds(1)) {
@@ -125,22 +120,7 @@
         }
       }
       try #require(rotatedFramesWritten == true)
-      let preStopWritten = await MainActor.run {
-        engine.debugCurrentWriterWrittenSampleTime()
-      }
-      print(
-        "rotate-test pre-stop first=\(firstURL.lastPathComponent) rotated=\(rotatedOutputURL.lastPathComponent) firstHasBytes=\(fileHasBytes(at: firstURL)) rotatedHasBytes=\(fileHasBytes(at: rotatedOutputURL)) written=\(preStopWritten)"
-      )
-
-      let finalURL: URL
-      do {
-        finalURL = try await engine.stopRecording()
-      } catch {
-        print(
-          "rotate-test stop-failed first=\(firstURL.lastPathComponent) rotated=\(rotatedOutputURL.lastPathComponent) firstExists=\(FileManager.default.fileExists(atPath: firstURL.path)) rotatedExists=\(FileManager.default.fileExists(atPath: rotatedOutputURL.path)) firstSize=\(String(describing: try? firstURL.resourceValues(forKeys: [.fileSizeKey]).fileSize)) rotatedSize=\(String(describing: try? rotatedOutputURL.resourceValues(forKeys: [.fileSizeKey]).fileSize)) error=\(error)"
-        )
-        throw error
-      }
+      let finalURL = try await engine.stopRecording()
       defer { try? FileManager.default.removeItem(at: finalURL) }
 
       let rotatedSize = try #require(rotatedURL.resourceValues(forKeys: [.fileSizeKey]).fileSize)
@@ -350,7 +330,9 @@
       _ = try await engine.stopRecording()
     }
 
-    private func makeConfiguration() -> RecordingConfiguration {
+    private func makeConfiguration(
+      outputDestination: RecordingConfiguration.OutputDestination = .temporary
+    ) -> RecordingConfiguration {
       let input = InputConfiguration(
         sampleRate: SampleRate.common(.sr48000),
         channels: .mono
@@ -363,7 +345,7 @@
       return RecordingConfiguration(
         inputConfiguration: input,
         outputConfiguration: output,
-        outputDestination: .temporary
+        outputDestination: outputDestination
       )
     }
 
@@ -453,18 +435,6 @@
 
     func snapshot() -> (interruptions: [AIOEngine.RecordingInterruption], failureCount: Int) {
       (interruptions, failureCount)
-    }
-  }
-
-  private actor RecordingStartedProbe {
-    private var urls: [URL] = []
-
-    func record(_ url: URL) {
-      urls.append(url)
-    }
-
-    func latest(excluding excluded: URL) -> URL? {
-      urls.last { $0 != excluded }
     }
   }
 #endif

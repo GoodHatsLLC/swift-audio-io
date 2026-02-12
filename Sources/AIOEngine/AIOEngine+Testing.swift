@@ -43,6 +43,11 @@
         writerSession?.control.writtenSampleTime.load(ordering: .relaxed) ?? 0
       }
 
+      @MainActor
+      public func debugCurrentRecordingURL() -> URL? {
+        state[locked: \.recordingURL]
+      }
+
       public nonisolated func makeTapHandlerForTesting(
         processingFormat: AVAudioFormat
       ) -> @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void {
