@@ -1,5 +1,4 @@
-// SAFETY: Ownership-transfer wrapper — value is consumed at init and must not be accessed
-// from the original context after transfer.
+// SAFETY: Value is consumed at init and only exposed through this wrapper after transfer.
 public struct Transferring<T>: @unchecked Sendable {
   public let value: T
 

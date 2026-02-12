@@ -181,6 +181,7 @@ extension RecordingFilename {
   ///
   /// This type is `@unchecked Sendable` because `ISO8601DateFormatter` is not `Sendable`,
   /// but access is synchronized by an internal lock.
+  // SAFETY: Every formatter access is serialized under `lock`; no unsynchronized formatter use.
   private final class FormatterBox: @unchecked Sendable {
     private let lock = NSLock()
     private let formatter: ISO8601DateFormatter

@@ -27,6 +27,7 @@
   ///
   /// **Do not** access `LODBufferSlot` directly outside of `MultiBandLODProcessor`.
   /// Use `snapshotRef()` to obtain a safe `LODSnapshotRef` for reading.
+  // SAFETY: Slot writes are single-writer with atomic publication; readers never see write slot.
   final class LODBufferSlot: @unchecked Sendable {
     let bands: [MutableBandBuffers]
     var writeIndex: Int = 0
@@ -100,6 +101,7 @@
   ///
   /// This storage is shared across all snapshots and updated lock-free by the audio thread.
   /// Readers (render thread) read from `buffers` up to `rawWriteIndex`.
+  // SAFETY: Storage lifetime is processor-owned; writes are single-writer and reads are published-only.
   @unsafe final class RawBandStorage: @unchecked Sendable {
     let memory: UnsafeMutableBufferPointer<Float>
     let buffers: [UnsafeMutableBufferPointer<Float>]
@@ -167,6 +169,7 @@
   ///   // ptr contains all bands concatenated
   /// }
   /// ```
+  // SAFETY: References target atomically published non-writing slots and are frame-scoped.
   @safe public struct LODSnapshotRef: @unchecked Sendable, SnapshotProvider, LODSnapshot {
     fileprivate let slot: LODBufferSlot
     fileprivate let rawStorage: RawBandStorage?
@@ -266,6 +269,7 @@
   ///
   /// Uses triple-buffering to provide lock-free snapshot access for 60fps rendering.
   /// The render thread can always read a consistent snapshot without blocking on audio processing.
+  // SAFETY: The processor enforces a single audio-writer model with atomic publication to readers.
   @unsafe public final class MultiBandLODProcessor: @unchecked Sendable {
 
     // MARK: - Configuration
