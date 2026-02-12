@@ -538,14 +538,6 @@
         // picks up the new session settings (e.g. channel count for stereo).
         runOnEngineControlQueue { unsafe engine.prepare() }
 
-        let (url, protection) = try resolveOutputURL(
-          for: configuration,
-          allowExplicitFile: true
-        )
-
-        let writer = try makeRecordingWriter(url: url, configuration: configuration)
-        applyFileProtectionIfNeeded(protection, to: url)
-
         let inputFormat = runOnEngineControlQueue {
           unsafe engine.inputNode.outputFormat(forBus: 0)
         }
@@ -648,6 +640,15 @@
           processingFormat: processingFormat,
           tapBufferSize: tapConfiguration.bufferSize
         )
+        let sessionSampleRateBeforeInstall = AVAudioSession.sharedInstance().sampleRate
+        guard abs(sessionSampleRateBeforeInstall - inputFormat.sampleRate) <= 1 else {
+          log.warning(
+            "Audio route change still settling before tap install: inputSampleRate=\(inputFormat.sampleRate, privacy: .public) sessionSampleRate=\(sessionSampleRateBeforeInstall, privacy: .public)"
+          )
+          throw AIOError.audioSessionNotReady(
+            details: "Input format does not match active audio session sample rate"
+          )
+        }
         recordingSampleTimeAtomic.store(0, ordering: .relaxed)
         // Remove any existing tap and install the new one in a single engine-control-queue
         // dispatch. Re-read the input node format atomically to prevent a race where an audio
@@ -663,6 +664,13 @@
           unsafe engine.inputNode.removeTap(onBus: tapConfiguration.bus)
           let currentInputFormat = unsafe engine.inputNode.outputFormat(forBus: 0)
           guard currentInputFormat.channelCount > 0, currentInputFormat.sampleRate > 0 else {
+            return nil
+          }
+          let currentSessionSampleRate = AVAudioSession.sharedInstance().sampleRate
+          guard abs(currentSessionSampleRate - currentInputFormat.sampleRate) <= 1 else {
+            log.warning(
+              "Skipping tap install while audio session sample rate is still changing: inputSampleRate=\(currentInputFormat.sampleRate, privacy: .public) sessionSampleRate=\(currentSessionSampleRate, privacy: .public)"
+            )
             return nil
           }
           let installResult = Result {
@@ -705,6 +713,13 @@
           tapBufferSize: tapConfiguration.bufferSize,
           logContext: "warm()"
         )
+
+        let (url, protection) = try resolveOutputURL(
+          for: configuration,
+          allowExplicitFile: true
+        )
+        let writer = try makeRecordingWriter(url: url, configuration: configuration)
+        applyFileProtectionIfNeeded(protection, to: url)
 
         state {
           $0.recordingWriter = writer
