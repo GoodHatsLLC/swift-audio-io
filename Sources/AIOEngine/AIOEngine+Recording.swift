@@ -658,10 +658,13 @@
           guard currentInputFormat.channelCount > 0, currentInputFormat.sampleRate > 0 else {
             return nil
           }
+          // Passing nil asks AVFAudio to bind the tap to the node's *current* bus format,
+          // which avoids NSException crashes when the route is still settling and a
+          // just-read AVAudioFormat becomes stale before installTap executes.
           unsafe engine.inputNode.installTap(
             onBus: tapConfiguration.bus,
             bufferSize: tapConfiguration.bufferSize,
-            format: currentInputFormat
+            format: nil
           ) { @Sendable buffer, time in
             self.processAudio(
               buffer: buffer,
@@ -670,7 +673,11 @@
             )
           }
           unsafe engine.prepare()
-          return currentInputFormat
+          let postInstallFormat = unsafe engine.inputNode.outputFormat(forBus: 0)
+          guard postInstallFormat.channelCount > 0, postInstallFormat.sampleRate > 0 else {
+            return nil
+          }
+          return postInstallFormat
         }
         guard let actualTapFormat else {
           let transientFormat = runOnEngineControlQueue {
@@ -867,7 +874,7 @@
         unsafe self.engine.inputNode.installTap(
           onBus: tapConfiguration.bus,
           bufferSize: tapConfiguration.bufferSize,
-          format: currentInputFormat
+          format: nil
         ) { [weak self] buffer, time in
           self?.processAudio(
             buffer: buffer,
@@ -876,9 +883,16 @@
           )
         }
         unsafe self.engine.prepare()
+        let postInstallFormat = unsafe self.engine.inputNode.outputFormat(forBus: 0)
+        guard postInstallFormat.channelCount > 0, postInstallFormat.sampleRate > 0 else {
+          throw AIOError.invalidRecordingConfiguration(
+            details:
+              "Tap format invalid after tap interval update install (channels: \(postInstallFormat.channelCount), sampleRate: \(postInstallFormat.sampleRate))"
+          )
+        }
 
         return (
-          inputFormat: currentInputFormat,
+          inputFormat: postInstallFormat,
           tapConfiguration: tapConfiguration
         )
       }
@@ -886,6 +900,33 @@
       switch installResult {
       case .success(let result):
         let tapConfiguration = result.tapConfiguration
+        let actualTapFormat = result.inputFormat
+        let tapFormat = tapConfiguration.inputAVAudioFormat
+        if actualTapFormat.channelCount != tapFormat.channelCount
+          || actualTapFormat.sampleRate != tapFormat.sampleRate
+        {
+          log.warning(
+            "Tap format changed during tap interval update: expected \(tapFormat, privacy: .public), got \(actualTapFormat, privacy: .public)"
+          )
+          guard let converter = AVAudioConverter(from: actualTapFormat, to: processingFormat) else {
+            throw AIOError.formatConversionFailed
+          }
+          let ratio = processingFormat.sampleRate / actualTapFormat.sampleRate
+          let frames = max(
+            AVAudioFrameCount(ceil(Double(tapConfiguration.bufferSize) * ratio)),
+            1
+          )
+          guard let buffer = AVAudioPCMBuffer(pcmFormat: processingFormat, frameCapacity: frames)
+          else {
+            throw AIOError.formatConversionFailed
+          }
+          state {
+            $0.tapConverter = converter
+            $0.tapConverterInputFormat = actualTapFormat
+            $0.tapConverterOutputFormat = processingFormat
+            $0.tapConvertedBuffer = buffer
+          }
+        }
         log.info(
           "Updated tap interval to \(configuration.tapInterval, privacy: .public) (bufferSize: \(tapConfiguration.bufferSize, privacy: .public) frames interval=\(tapConfiguration.bufferSize == 0 ? 0.0 : (Double(tapConfiguration.bufferSize) / max(processingFormat.sampleRate, 1)), privacy: .public)s sampleRate=\(processingFormat.sampleRate, privacy: .public)Hz)"
         )

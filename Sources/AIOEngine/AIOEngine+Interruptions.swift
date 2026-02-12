@@ -361,7 +361,7 @@
         unsafe self.engine.inputNode.installTap(
           onBus: tapConfiguration.bus,
           bufferSize: tapConfiguration.bufferSize,
-          format: currentInputFormat
+          format: nil
         ) { @Sendable buffer, time in
           self.processAudio(
             buffer: buffer,
@@ -370,9 +370,16 @@
           )
         }
         unsafe self.engine.prepare()
+        let postInstallFormat = unsafe self.engine.inputNode.outputFormat(forBus: 0)
+        guard postInstallFormat.channelCount > 0, postInstallFormat.sampleRate > 0 else {
+          throw AIOError.invalidRecordingConfiguration(
+            details:
+              "Input node has invalid format after route-change tap install (channels: \(postInstallFormat.channelCount), sampleRate: \(postInstallFormat.sampleRate))"
+          )
+        }
 
         return (
-          actualInputFormat: currentInputFormat,
+          actualInputFormat: postInstallFormat,
           tapConfiguration: tapConfiguration
         )
       }
@@ -387,7 +394,7 @@
         throw (error as? AIOError) ?? .engineStartFailed(error: ErrorContext(error))
       }
 
-      let tapFormat = tapConfiguration.inputAVAudioFormat
+      let tapFormat = actualTapFormat
       guard let tapConverter = AVAudioConverter(from: tapFormat, to: processingFormat) else {
         throw AIOError.formatConversionFailed
       }
