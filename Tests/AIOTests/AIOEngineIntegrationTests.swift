@@ -87,17 +87,44 @@
     func testRotateRecordingFileEmitsTwoFiles() async throws {
       let engine = AIOEngine()
       let configuration = makeConfiguration()
+      let startedProbe = RecordingStartedProbe()
+
+      await MainActor.run {
+        engine.onRecordingStarted = { url, _ in
+          Task {
+            await startedProbe.record(url)
+          }
+        }
+      }
 
       let firstURL = try await engine.startTestRecording(configuration: configuration)
       defer { try? FileManager.default.removeItem(at: firstURL) }
 
       engine.injectTestAudio(channels: [ramp(count: 256)])
+      let firstFileReady = await waitUntil(timeout: .seconds(1)) {
+        fileHasBytes(at: firstURL)
+      }
+      try #require(firstFileReady == true)
 
       let rotatedURL = try await engine.rotateRecordingFile()
       defer { try? FileManager.default.removeItem(at: rotatedURL) }
       #expect(rotatedURL == firstURL)
 
+      let rotatedOutputURL = try #require(
+        await startedProbe.latest(excluding: firstURL)
+      )
+
       engine.injectTestAudio(channels: [ramp(count: 256)])
+      let rotatedFileReady = await waitUntil(timeout: .seconds(1)) {
+        fileHasBytes(at: rotatedOutputURL)
+      }
+      try #require(rotatedFileReady == true)
+      let rotatedFramesWritten = await waitUntil(timeout: .seconds(1)) {
+        await MainActor.run {
+          engine.debugCurrentWriterWrittenSampleTime() >= 256
+        }
+      }
+      try #require(rotatedFramesWritten == true)
 
       let finalURL = try await engine.stopRecording()
       defer { try? FileManager.default.removeItem(at: finalURL) }
@@ -360,6 +387,16 @@
       }
       return await condition()
     }
+
+    private func fileHasBytes(at url: URL) -> Bool {
+      guard FileManager.default.fileExists(atPath: url.path) else { return false }
+      do {
+        let values = try url.resourceValues(forKeys: [.fileSizeKey])
+        return (values.fileSize ?? 0) > 0
+      } catch {
+        return false
+      }
+    }
   }
 
   private final class CapturingReceiver: BufferReceiver, @unchecked Sendable {
@@ -402,6 +439,18 @@
 
     func snapshot() -> (interruptions: [AIOEngine.RecordingInterruption], failureCount: Int) {
       (interruptions, failureCount)
+    }
+  }
+
+  private actor RecordingStartedProbe {
+    private var urls: [URL] = []
+
+    func record(_ url: URL) {
+      urls.append(url)
+    }
+
+    func latest(excluding excluded: URL) -> URL? {
+      urls.last { $0 != excluded }
     }
   }
 #endif

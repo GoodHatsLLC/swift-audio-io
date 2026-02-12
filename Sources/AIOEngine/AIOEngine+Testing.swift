@@ -38,6 +38,11 @@
         )
       }
 
+      @MainActor
+      public func debugCurrentWriterWrittenSampleTime() -> Int64 {
+        writerSession?.control.writtenSampleTime.load(ordering: .relaxed) ?? 0
+      }
+
       public nonisolated func makeTapHandlerForTesting(
         processingFormat: AVAudioFormat
       ) -> @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void {
