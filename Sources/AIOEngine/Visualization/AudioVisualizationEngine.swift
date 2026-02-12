@@ -274,7 +274,6 @@
     @ObservationIgnored
     private var lodProcessor: MultiBandLODProcessor?
     private var lodConfig: MultiBandLODConfiguration?
-    private var legacyLodWork: LODWork?
 
     /// Current multi-band LOD snapshot for GPU rendering (creates a copy).
     /// Returns nil if multi-band LOD is not enabled.
@@ -411,8 +410,6 @@
     private var analysisPipeline: AnalysisPipeline?
     private var analysisUpdateRateHz: Double?
     private var lodPublishRateHz: Double?
-    private var lastLodPublishLogTime: CFTimeInterval?
-    private var lastLodPublishTime: CFTimeInterval?
     private var lodPublishIntervals: [Double] = []
 
     private var analysisTimer: (any DispatchSourceTimer)?
@@ -524,47 +521,6 @@
       isActive = shouldBeActive
     }
 
-    // MARK: - Multi-Band LOD
-
-    /// Enables multi-band LOD processing for Metal visualization.
-    ///
-    /// When enabled, audio samples are also processed through a multi-band filter
-    /// bank and downsampled for efficient GPU rendering. Access the data via
-    /// the `multiBandLOD` property.
-    ///
-    /// - Parameter configuration: LOD processing configuration.
-    public func enableMultiBandLOD(configuration: MultiBandLODConfiguration = .default) {
-      let resolvedSampleRate = max(Int(self.configuration.sampleRate.rounded()), 1)
-      let resolvedConfig = MultiBandLODConfiguration(
-        bandCount: configuration.bandCount,
-        lodRatio: configuration.lodRatio,
-        bufferSeconds: configuration.bufferSeconds,
-        sampleRate: resolvedSampleRate,
-        crossoverMode: configuration.crossoverMode,
-        snapshotSwapInterval: configuration.snapshotSwapInterval,
-        rawBufferLengthOverride: configuration.rawBufferLengthOverride
-      )
-      legacyLodWork = LODWork(configuration: resolvedConfig)
-      let snapshot = consumerSnapshot()
-      applyWork(snapshot.work, sinks: snapshot.sinks)
-      log.info("Multi-band LOD enabled: \(configuration.bandCount, privacy: .public) bands")
-    }
-
-    /// Disables multi-band LOD processing.
-    public func disableMultiBandLOD() {
-      legacyLodWork = nil
-      let snapshot = consumerSnapshot()
-      applyWork(snapshot.work, sinks: snapshot.sinks)
-      log.info("Multi-band LOD disabled")
-    }
-
-    /// Resets the multi-band LOD buffers.
-    ///
-    /// Call this when starting a new recording to clear history.
-    public func resetMultiBandLOD() {
-      unsafe lodProcessor?.reset()
-    }
-
     /// Processes an `AVAudioPCMBuffer` for visualization.
     ///
     /// - Parameter buffer: The audio buffer to process.
@@ -616,7 +572,7 @@
     }
 
     private func applyWork(_ work: VisualizationWork, sinks: VisualizationSinks) {
-      let resolvedLodWork = work.lod ?? legacyLodWork
+      let resolvedLodWork = work.lod
       let hasLodSink = sinks.lodSnapshot != nil || sinks.lodSnapshotBackground != nil
       if resolvedLodWork != nil, !hasLodSink {
         log.warning("VisualizationWork.lod requested without a lodSnapshot sink.")
@@ -936,31 +892,6 @@
       let snapshot = unsafe lodProcessor?.snapshotRef()
       let sinks = sinksSnapshot()
       guard sinks.lodSnapshot != nil || sinks.lodSnapshotBackground != nil else { return }
-      let now = CACurrentMediaTime()
-      if let last = lastLodPublishTime {
-        let interval = max(now - last, 0)
-        lodPublishIntervals.append(interval)
-        if lodPublishIntervals.count > 60 {
-          lodPublishIntervals.removeFirst()
-        }
-      }
-      lastLodPublishTime = now
-      let shouldLog: Bool = {
-        guard let last = lastLodPublishLogTime else { return true }
-        return (now - last) >= 1.0
-      }()
-      if shouldLog {
-        lastLodPublishLogTime = now
-        if !lodPublishIntervals.isEmpty {
-          let avg = lodPublishIntervals.reduce(0, +) / Double(lodPublishIntervals.count)
-          let hz = avg > 0 ? (1.0 / avg) : 0
-          log.info(
-            "LOD publish cadence: \(hz, privacy: .public)Hz avg=\(avg, privacy: .public)s"
-          )
-        } else {
-          log.info("LOD publish cadence: insufficient samples")
-        }
-      }
       sinks.lodSnapshotBackground?(snapshot)
       if sinks.lodSnapshot != nil {
         DispatchQueue.main.async {
