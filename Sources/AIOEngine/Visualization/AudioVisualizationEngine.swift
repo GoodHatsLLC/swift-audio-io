@@ -63,6 +63,7 @@
   /// - Optional LOD processing must be configured before the instance is attached as a
   ///   buffer receiver; it must not be enabled/disabled while active.
   @safe @Observable
+  // SAFETY: Cross-thread access is atomics/callback-boundary only; UI state is main-queue published.
   public final class AudioVisualizationEngine: @unchecked Sendable, Identifiable {
     // MARK: - Public Properties
 
