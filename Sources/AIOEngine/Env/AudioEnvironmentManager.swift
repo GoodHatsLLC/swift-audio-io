@@ -920,7 +920,11 @@
 
         // Wait for session configuration to complete before starting notifications
         var isConfigured = false
+        var configureAttempt = 0
+        var configureRetryDelay: Duration = .milliseconds(100)
+        let maxConfigureRetryDelay: Duration = .seconds(2)
         while !isConfigured {
+          configureAttempt += 1
           do {
             let (env, configuration) = await MainActor.run {
               (self.env, self.sessionConfiguration)
@@ -933,9 +937,16 @@
               return
             } else {
               log.error(
-                "Engine failed to configure audio session: \(String(describing: error), privacy: .public). retrying in 0.1s..."
+                """
+                Engine failed to configure audio session (attempt \(configureAttempt, privacy: .public)):
+                \(String(describing: error), privacy: .public)
+                Retrying in \(configureRetryDelay, privacy: .public)
+                """
               )
-              try? await Task.sleep(for: .seconds(0.1))
+              try? await Task.sleep(for: configureRetryDelay)
+              let nextRetryDelay = configureRetryDelay + configureRetryDelay
+              configureRetryDelay =
+                nextRetryDelay > maxConfigureRetryDelay ? maxConfigureRetryDelay : nextRetryDelay
             }
           }
         }
@@ -996,8 +1007,6 @@
         filteredSources.first(where: { $0 == source })
       }
       _availableSources = filteredSources
-      self._selectedSource = _selectedSource
-      self._availableSources = filteredSources
 
       let summary = AudioDeviceChangeSummary(
         previousInputs: previousInputs,
@@ -1205,10 +1214,16 @@
         group.addTask { @Sendable @MainActor [weak self] in
           while !Task.isCancelled {
             guard let self else { return }
-            if let changes = self.updateAudioInputs(reason: "periodic poll") {
-              log.info("􂡸 poll, device changes: \(changes, privacy: .public)")
+            let pollInterval: Duration
+            if self.isAudioSessionActive {
+              if let changes = self.updateAudioInputs(reason: "periodic poll") {
+                log.info("􂡸 poll, device changes: \(changes, privacy: .public)")
+              }
+              pollInterval = .seconds(15)
+            } else {
+              pollInterval = .seconds(30)
             }
-            try? await Task.sleep(for: .seconds(5))
+            try? await Task.sleep(for: pollInterval)
           }
         }
 

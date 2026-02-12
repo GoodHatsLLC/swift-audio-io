@@ -2,7 +2,7 @@
   import AVFoundation
   import ObjCExceptionCatcher
   import SystemLog
-
+  import os
   private let tapSetupLog = SystemLog.make()
 
   extension AIOEngine {
@@ -12,7 +12,6 @@
       let convertedBuffer: AVAudioPCMBuffer
     }
 
-    @MainActor
     func makeTapConversionArtifacts(
       inputFormat: AVAudioFormat,
       processingFormat: AVAudioFormat,
@@ -41,7 +40,7 @@
       )
     }
 
-    nonisolated func installTapCatchingObjCException(
+    func installTapCatchingObjCException(
       bus: Int,
       bufferSize: AVAudioFrameCount,
       processingFormat: AVAudioFormat,
@@ -57,14 +56,15 @@
 
       let tapHandler = makeTapHandler(processingFormat: processingFormat)
       var installException: NSException?
-      let tapInstalled = AIORunCatchingObjCException({
-        unsafe engine.inputNode.installTap(
-          onBus: bus,
-          bufferSize: bufferSize,
-          format: nil,
-          block: tapHandler
-        )
-      }, &installException)
+      let tapInstalled = unsafe AIORunCatchingObjCException(
+        {
+          unsafe engine.inputNode.installTap(
+            onBus: bus,
+            bufferSize: bufferSize,
+            format: nil,
+            block: tapHandler
+          )
+        }, &installException)
       guard tapInstalled else {
         throw AIOError.invalidRecordingConfiguration(
           details:
@@ -83,7 +83,6 @@
       return postInstallFormat
     }
 
-    @MainActor
     func makeAdjustedTapConversionArtifactsIfNeeded(
       initialArtifacts: TapConversionArtifacts,
       actualTapFormat: AVAudioFormat,

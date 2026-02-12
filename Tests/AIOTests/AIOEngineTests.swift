@@ -19,6 +19,50 @@
     }
 
     @Test
+    func testAACRejectsUnsupportedEncoderSampleRate() throws {
+      let config = RecordingConfiguration(
+        inputConfiguration: InputConfiguration(sampleRate: .common(.sr96000), channels: .mono),
+        outputConfiguration: .init(fileFormat: .aac, bitDepth: .pcmFloat32, quality: .high)
+      )
+
+      #expect(config.fileFormat == nil)
+      #expect(config.fileSettings == nil)
+    }
+
+    @Test
+    func testADTSRejectsUnsupportedEncoderSampleRate() throws {
+      let config = RecordingConfiguration(
+        inputConfiguration: InputConfiguration(sampleRate: .common(.sr96000), channels: .mono),
+        outputConfiguration: .init(fileFormat: .adts, bitDepth: .pcmFloat32, quality: .high)
+      )
+
+      #expect(config.fileFormat == nil)
+      #expect(config.fileSettings == nil)
+    }
+
+    @Test
+    func testAACCompatibleCommonSampleRateMatrix() {
+      let expectedAACRates: [SampleRate] = [
+        .common(.sr16000),
+        .common(.sr22050),
+        .common(.sr24000),
+        .common(.sr44100),
+        .common(.sr48000),
+      ]
+      #expect(FileFormat.aac.compatibleCommonSampleRates == expectedAACRates)
+      #expect(FileFormat.adts.compatibleCommonSampleRates == expectedAACRates)
+    }
+
+    @Test
+    func testPCMAndFLACSupportAllCommonSampleRates() {
+      let allCommonRates = SampleRate.commonCases
+      #expect(FileFormat.wav.compatibleCommonSampleRates == allCommonRates)
+      #expect(FileFormat.caf.compatibleCommonSampleRates == allCommonRates)
+      #expect(FileFormat.aiff.compatibleCommonSampleRates == allCommonRates)
+      #expect(FileFormat.flac.compatibleCommonSampleRates == allCommonRates)
+    }
+
+    @Test
     func testTapConfigurationPreservesBus() throws {
       let configuration = RecordingConfiguration(
         inputConfiguration: .init(

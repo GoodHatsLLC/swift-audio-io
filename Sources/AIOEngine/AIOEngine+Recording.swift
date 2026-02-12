@@ -34,6 +34,7 @@
       configuration: RecordingConfiguration? = nil
     ) {
       wantsRecording = desiredState
+      lastRecordingStartFailure = nil
       reconciliationTask = nil
 
       if desiredState {
@@ -70,6 +71,7 @@
       configuration: RecordingConfiguration
     ) async -> Bool {
       wantsRecording = true
+      lastRecordingStartFailure = nil
       reconciliationTask = nil
       lastRecordingConfiguration = configuration
       await reconcileRecordingState(desiredState: true, configuration: configuration)
@@ -106,7 +108,7 @@
         "Starting recording reconciliation (timeout: \(timeout, privacy: .public), interval: \(retryInterval, privacy: .public))"
       )
 
-      var lastError: (any Error)?
+      var lastError: AIOError?
 
       while !Task.isCancelled && wantsRecording {
         let elapsed = ContinuousClock.now - startTime
@@ -125,21 +127,33 @@
 
           // Success!
           log.info("Recording started successfully after \(elapsed, privacy: .public)")
+          lastRecordingStartFailure = nil
           return
         } catch let error where error.isTransient {
           // Transient error - wait and retry
           lastError = error
+          lastRecordingStartFailure = error
           log.info(
             "Transient error during reconciliation: \(error, privacy: .public), retrying..."
           )
           try? await Task.sleep(for: retryInterval)
           continue
-        } catch {
+        } catch let error as AIOError {
           // Non-transient error - give up immediately
           log.error(
             "Non-transient error during reconciliation: \(error, privacy: .public)"
           )
           lastError = error
+          lastRecordingStartFailure = error
+          break
+        } catch {
+          // Non-transient error - give up immediately
+          let mapped = AIOError.engineStartFailed(error: ErrorContext(error))
+          log.error(
+            "Non-transient error during reconciliation: \(mapped, privacy: .public)"
+          )
+          lastError = mapped
+          lastRecordingStartFailure = mapped
           break
         }
       }
@@ -327,9 +341,12 @@
     func prepareDrain(for session: WriterSession, targetSampleTime: Int64, logBuffers: Bool) {
       session.control.stopRequested.store(true, ordering: .relaxed)
       session.control.targetSampleTime.store(targetSampleTime, ordering: .relaxed)
+      let written = session.control.writtenSampleTime.load(ordering: .relaxed)
+      if written >= targetSampleTime {
+        Task { await session.control.targetSatisfiedSignal.signal() }
+      }
       if logBuffers {
         let counts = state.withLock { $0.audioBuffers?.map { $0.availableToRead } ?? [] }
-        let written = session.control.writtenSampleTime.load(ordering: .relaxed)
         log.info(
           "🧹 Stop target set: target=\(targetSampleTime, privacy: .public) written=\(written, privacy: .public) buffers=\(counts, privacy: .public)"
         )
@@ -475,6 +492,7 @@
       guard !isRecording && !isPlaying else {
         return
       }
+      try validateEncoderCompatibility(for: configuration)
       log.info("warming with config: \(configuration, privacy: .public)")
       let initialInput = runOnEngineControlQueue { unsafe engine.inputNode.outputFormat(forBus: 0) }
       log.info("input format: \(initialInput, privacy: .public)")
@@ -732,6 +750,23 @@
       let capacity = max(1, Int(Double(sampleRate) * maxBufferSeconds))
       return (0..<cappedChannels).map { _ in
         SPSCRingBuffer<Float>(capacity: capacity)
+      }
+    }
+
+    @MainActor
+    func validateEncoderCompatibility(
+      for configuration: RecordingConfiguration
+    ) throws(AIOError) {
+      let fileFormat = configuration.outputConfiguration.fileFormat
+      guard fileFormat == .aac || fileFormat == .adts else { return }
+
+      let sampleRate = configuration.inputConfiguration.sampleRate.rawValue
+      guard fileFormat.supportsEncodedSampleRate(sampleRate) else {
+        throw AIOError.unsupportedEncodedSampleRate(
+          fileFormat: fileFormat,
+          sampleRate: sampleRate,
+          supportedSampleRates: FileFormat.aacCompatibleSampleRates
+        )
       }
     }
 
@@ -1205,6 +1240,7 @@
       var stopRequestedAt: ContinuousClock.Instant?
       var lastStallLog = clock.now
       var writtenSampleTime: Int64 = 0
+      var idleBackoffMillis: Double = 1
 
       while true {
         if shouldCancel() { break }
@@ -1224,11 +1260,13 @@
           if didWrite, framesRead > 0 {
             writtenSampleTime &+= Int64(framesRead)
             control.writtenSampleTime.store(writtenSampleTime, ordering: .relaxed)
+            idleBackoffMillis = 1
           }
           let stopRequested = control.stopRequested.load(ordering: .relaxed)
           if stopRequested {
             let target = control.targetSampleTime.load(ordering: .relaxed)
             if writtenSampleTime >= target {
+              Task { await control.targetSatisfiedSignal.signal() }
               break
             }
           }
@@ -1254,6 +1292,7 @@
             if stopRequested {
               let target = control.targetSampleTime.load(ordering: .relaxed)
               if writtenSampleTime >= target {
+                Task { await control.targetSatisfiedSignal.signal() }
                 break
               }
             }
@@ -1276,7 +1315,11 @@
               }
             }
             if shouldCancel() { break }
-            Thread.sleep(forTimeInterval: 0.001)
+            let sleepMillis = stopRequested ? 1.0 : idleBackoffMillis
+            Thread.sleep(forTimeInterval: sleepMillis / 1000.0)
+            if !stopRequested {
+              idleBackoffMillis = min(idleBackoffMillis * 2, 8)
+            }
           }
         case .failure(let error):
           let context = ErrorContext(error)

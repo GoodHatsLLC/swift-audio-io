@@ -330,6 +330,136 @@
       _ = try await engine.stopRecording()
     }
 
+    @Test
+    func testHandleRouteChangeContinuesWhenTapReconfigureSucceeds() async throws {
+      let engine = AIOEngine()
+      let configuration = makeConfiguration()
+      let probe = RouteFaultProbe()
+      let reconfigureCalls = LockedCounter()
+
+      await MainActor.run {
+        engine.onRecordingInterruption = { interruption in
+          await probe.record(interruption)
+        }
+      }
+
+      let url = try await engine.startTestRecording(configuration: configuration)
+      defer { try? FileManager.default.removeItem(at: url) }
+      defer {
+        Task { @MainActor in
+          engine.clearRouteChangeTestOverrides()
+        }
+      }
+
+      let routeFormat = try #require(
+        AVAudioFormat(
+          standardFormatWithSampleRate: 16_000,
+          channels: 2
+        )
+      )
+      await MainActor.run {
+        engine.setRouteChangeTestOverrides(
+          inputFormat: routeFormat,
+          isInputAvailable: true,
+          reconfigureTap: { _ in
+            reconfigureCalls.increment()
+          }
+        )
+      }
+
+      let event = AudioRouteChangeEvent(
+        reason: .newDeviceAvailable,
+        previousRoute: nil,
+        session: AVAudioSession.sharedInstance()
+      )
+      await engine.handleRouteChange(event: event)
+
+      #expect(await engine.isRecording == true)
+      #expect(reconfigureCalls.snapshot() == 1)
+
+      let observed = await waitUntil(timeout: .seconds(1)) {
+        let snapshot = await probe.snapshot()
+        return snapshot.interruptions.isEmpty == false
+      }
+      #expect(observed == true)
+      let snapshot = await probe.snapshot()
+      #expect(
+        snapshot.interruptions.contains { interruption in
+          if case .routeChangeContinuing(_, let qualityChange) = interruption {
+            guard let qualityChange else { return false }
+            return qualityChange.currentChannels == 2
+              && abs(qualityChange.currentSampleRate - 16_000) < 0.5
+          }
+          return false
+        }
+      )
+
+      _ = try await engine.stopRecording()
+    }
+
+    @Test
+    func testHandleRouteChangeStopsWhenTapReconfigureFails() async throws {
+      let engine = AIOEngine()
+      let configuration = makeConfiguration()
+      let probe = RouteFaultProbe()
+
+      await MainActor.run {
+        engine.onRecordingInterruption = { interruption in
+          await probe.record(interruption)
+        }
+        engine.onRecordingFailed = {
+          Task { await probe.recordFailure() }
+        }
+      }
+
+      let url = try await engine.startTestRecording(configuration: configuration)
+      defer { try? FileManager.default.removeItem(at: url) }
+      defer {
+        Task { @MainActor in
+          engine.clearRouteChangeTestOverrides()
+        }
+      }
+
+      let routeFormat = try #require(
+        AVAudioFormat(
+          standardFormatWithSampleRate: 16_000,
+          channels: 1
+        )
+      )
+      await MainActor.run {
+        engine.setRouteChangeTestOverrides(
+          inputFormat: routeFormat,
+          isInputAvailable: true,
+          reconfigureTap: { (_: AVAudioFormat) throws(AIOEngine.AIOError) in
+            throw .engineError
+          }
+        )
+      }
+
+      let event = AudioRouteChangeEvent(
+        reason: .routeConfigurationChange,
+        previousRoute: nil,
+        session: AVAudioSession.sharedInstance()
+      )
+      await engine.handleRouteChange(event: event)
+
+      let stopped = await waitUntil(timeout: .seconds(1)) {
+        await engine.isRecording == false
+      }
+      #expect(stopped == true)
+
+      let snapshot = await probe.snapshot()
+      #expect(snapshot.failureCount == 1)
+      #expect(
+        snapshot.interruptions.contains { interruption in
+          if case .stoppedByInterruption(let reason) = interruption {
+            return reason == "Route change reconfiguration failed"
+          }
+          return false
+        }
+      )
+    }
+
     private func makeConfiguration(
       outputDestination: RecordingConfiguration.OutputDestination = .temporary
     ) -> RecordingConfiguration {
@@ -435,6 +565,23 @@
 
     func snapshot() -> (interruptions: [AIOEngine.RecordingInterruption], failureCount: Int) {
       (interruptions, failureCount)
+    }
+  }
+
+  private final class LockedCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: Int = 0
+
+    func increment() {
+      lock.lock()
+      value += 1
+      lock.unlock()
+    }
+
+    func snapshot() -> Int {
+      lock.lock()
+      defer { lock.unlock() }
+      return value
     }
   }
 #endif

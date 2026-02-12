@@ -116,7 +116,7 @@
 
   actor WriterDrainSignal {
     private var isSignaled = false
-    private var continuations: [CheckedContinuation<Void, Never>] = []
+    private var continuations: [UUID: CheckedContinuation<Void, Never>] = [:]
 
     func isSignaledValue() -> Bool {
       isSignaled
@@ -124,15 +124,31 @@
 
     func wait() async {
       if isSignaled { return }
-      await withCheckedContinuation { continuation in
-        continuations.append(continuation)
-      }
+      let waiterID = UUID()
+      await withTaskCancellationHandler(
+        operation: {
+          await withCheckedContinuation { continuation in
+            if isSignaled || Task.isCancelled {
+              continuation.resume()
+              return
+            }
+            continuations[waiterID] = continuation
+          }
+        },
+        onCancel: {
+          Task { await self.cancelWaiter(waiterID) }
+        })
+    }
+
+    private func cancelWaiter(_ waiterID: UUID) {
+      guard let continuation = continuations.removeValue(forKey: waiterID) else { return }
+      continuation.resume()
     }
 
     func signal() {
       guard !isSignaled else { return }
       isSignaled = true
-      let pending = continuations
+      let pending = Array(continuations.values)
       continuations.removeAll()
       for continuation in pending {
         continuation.resume()
@@ -145,6 +161,7 @@
     let stopRequested = ManagedAtomic<Bool>(false)
     let cancelRequested = ManagedAtomic<Bool>(false)
     let drainSignal = WriterDrainSignal()
+    let targetSatisfiedSignal = WriterDrainSignal()
     let writtenSampleTime = ManagedAtomic<Int64>(0)
     let targetSampleTime = ManagedAtomic<Int64>(0)
   }

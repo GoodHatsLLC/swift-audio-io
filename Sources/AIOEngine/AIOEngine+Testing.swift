@@ -54,6 +54,24 @@
         makeTapHandler(processingFormat: processingFormat)
       }
 
+      @MainActor
+      public func setRouteChangeTestOverrides(
+        inputFormat: AVAudioFormat? = nil,
+        isInputAvailable: Bool? = nil,
+        reconfigureTap: (@MainActor (AVAudioFormat) throws(AIOError) -> Void)? = nil
+      ) {
+        testRouteChangeInputFormatOverride = inputFormat
+        testRouteChangeIsInputAvailableOverride = isInputAvailable
+        testRouteTapReconfigureOverride = reconfigureTap
+      }
+
+      @MainActor
+      public func clearRouteChangeTestOverrides() {
+        testRouteChangeInputFormatOverride = nil
+        testRouteChangeIsInputAvailableOverride = nil
+        testRouteTapReconfigureOverride = nil
+      }
+
       /// Starts a recording session without touching AVAudioSession or AVAudioEngine.
       /// Intended for integration tests that inject buffers directly.
       @MainActor

@@ -43,9 +43,20 @@
       log.info("Handling route change: \(String(describing: event.reason), privacy: .public)")
 
       let session = AVAudioSession.sharedInstance()
-      let newInputFormat = runOnEngineControlQueue { [engine = unsafe engine] in
-        engine.inputNode.outputFormat(forBus: 0)
-      }
+      let newInputFormat: AVAudioFormat
+      #if DEBUG
+        if let override = testRouteChangeInputFormatOverride {
+          newInputFormat = override
+        } else {
+          newInputFormat = runOnEngineControlQueue { [engine = unsafe engine] in
+            engine.inputNode.outputFormat(forBus: 0)
+          }
+        }
+      #else
+        newInputFormat = runOnEngineControlQueue { [engine = unsafe engine] in
+          engine.inputNode.outputFormat(forBus: 0)
+        }
+      #endif
 
       guard
         let (processingFormat, initialFormat): (AVAudioFormat, AVAudioFormat) = state({
@@ -77,18 +88,37 @@
       }()
 
       // Check if we can continue recording
-      let canContinue = canContinueRecording(
-        from: previousFormat,
-        to: newInputFormat,
-        processingFormat: processingFormat,
-        session: session
-      )
+      let canContinue: Bool
+      #if DEBUG
+        if let isInputAvailable = testRouteChangeIsInputAvailableOverride {
+          canContinue = canContinueRecording(
+            from: previousFormat,
+            to: newInputFormat,
+            processingFormat: processingFormat,
+            isInputAvailable: isInputAvailable
+          )
+        } else {
+          canContinue = canContinueRecording(
+            from: previousFormat,
+            to: newInputFormat,
+            processingFormat: processingFormat,
+            session: session
+          )
+        }
+      #else
+        canContinue = canContinueRecording(
+          from: previousFormat,
+          to: newInputFormat,
+          processingFormat: processingFormat,
+          session: session
+        )
+      #endif
 
       if canContinue {
         // Attempt to continue recording with the new route
         do {
           if shouldReconfigureTap {
-            try reconfigureTapForNewRoute(
+            try reconfigureTapForRouteChange(
               processingFormat: processingFormat
             )
           } else {
@@ -122,6 +152,19 @@
           await handleUnrecoverableInterruption(reason: "No suitable audio route available")
         }
       }
+    }
+
+    @MainActor
+    func reconfigureTapForRouteChange(
+      processingFormat: AVAudioFormat
+    ) throws(AIOError) {
+      #if DEBUG
+        if let override = testRouteTapReconfigureOverride {
+          try override(processingFormat)
+          return
+        }
+      #endif
+      try reconfigureTapForNewRoute(processingFormat: processingFormat)
     }
 
     @MainActor
@@ -267,6 +310,16 @@
         return false
       }
 
+      guard newFormat.sampleRate.isFinite, processingFormat.sampleRate.isFinite else {
+        log.info("Route formats have non-finite sample rates")
+        return false
+      }
+
+      guard processingFormat.sampleRate > 0 else {
+        log.info("Processing format has invalid sample rate")
+        return false
+      }
+
       // Validate sample rates are reasonable (between 8kHz and 192kHz)
       // AVAudioConverter can handle conversions between standard audio sample rates
       let minSampleRate: Double = 8000.0
@@ -277,10 +330,18 @@
         return false
       }
 
+      guard AVAudioConverter(from: newFormat, to: processingFormat) != nil else {
+        log.info(
+          "Cannot continue route change: converter unavailable for \(newFormat, privacy: .public) -> \(processingFormat, privacy: .public)"
+        )
+        return false
+      }
+
       // We can continue recording with format conversion as long as:
       // 1. Audio input is available
       // 2. Both new and processing formats have valid channels
       // 3. Sample rate is within reasonable bounds for AVAudioConverter
+      // 4. AVAudioConverter can be created for the format transition
       // The processAudio method will handle format conversion via AVAudioConverter
 
       log.info(
