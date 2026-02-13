@@ -164,6 +164,7 @@
       var sampleRateHz: Double?
       var channelCount: Int?
       var sourceId: String?
+      var rejectedSampleRatesHz: [Double]?
     }
 
     private enum StorageKey {
@@ -343,6 +344,22 @@
       SampleRate.commonCases
     }
 
+    /// The sample rates likely to be honored for the currently selected input.
+    ///
+    /// This list starts from common rates and removes rates previously rejected by
+    /// the active route. The currently active sample rate is always included.
+    public var likelySupportedSampleRates: [SampleRate] {
+      let inputId = env.input?.id ?? "_default"
+      let rejected = Set(persistedInputPreferencesById[inputId]?.rejectedSampleRatesHz ?? [])
+
+      return commonSampleRates
+        .filter { !rejected.contains($0.rawValue) }
+        .appendingFrom(env.sampleRate)
+        .appendingFrom(_selectedSampleRate)
+        .removingDuplicates()
+        .sorted()
+    }
+
     /// The current sample rate.
     public var sampleRate: SampleRate {
       get {
@@ -361,6 +378,12 @@
           let actual = env.sampleRate
           if actual == newValue {
             log.info("􁐚 Sample rate set to requested value: \(newValue, privacy: .public)")
+            if persistPreference {
+              persistInputPreferencesIfNeeded { prefs in
+                prefs.rejectedSampleRatesHz = (prefs.rejectedSampleRatesHz ?? [])
+                  .filter { $0 != newValue.rawValue }
+              }
+            }
           } else {
             log
               .info(
@@ -369,6 +392,14 @@
                 Set to \(actual, privacy: .public)
                 """
               )
+            if persistPreference {
+              persistInputPreferencesIfNeeded { prefs in
+                var rejected = Set(prefs.rejectedSampleRatesHz ?? [])
+                rejected.insert(newValue.rawValue)
+                rejected.remove(actual.rawValue)
+                prefs.rejectedSampleRatesHz = rejected.sorted()
+              }
+            }
             _selectedSampleRate = actual
           }
           if persistPreference {
@@ -392,6 +423,10 @@
           // an unsupported preference for this input across route changes.
           persistInputPreferencesIfNeeded { prefs in
             prefs.sampleRateHz = actual.rawValue
+            var rejected = Set(prefs.rejectedSampleRatesHz ?? [])
+            rejected.insert(newValue.rawValue)
+            rejected.remove(actual.rawValue)
+            prefs.rejectedSampleRatesHz = rejected.sorted()
           }
         }
       }
