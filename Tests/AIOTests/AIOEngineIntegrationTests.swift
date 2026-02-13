@@ -330,6 +330,50 @@
       _ = try await engine.stopRecording()
     }
 
+
+    @Test
+    func testHandleRouteChangeReconfiguresTapWhenFormatAppearsUnchanged() async throws {
+      let engine = AIOEngine()
+      let configuration = makeConfiguration()
+      let reconfigureCalls = LockedCounter()
+
+      let url = try await engine.startTestRecording(configuration: configuration)
+      defer { try? FileManager.default.removeItem(at: url) }
+      defer {
+        Task { @MainActor in
+          engine.clearRouteChangeTestOverrides()
+        }
+      }
+
+      let unchangedFormat = try #require(
+        AVAudioFormat(
+          standardFormatWithSampleRate: 48_000,
+          channels: 1
+        )
+      )
+      await MainActor.run {
+        engine.setRouteChangeTestOverrides(
+          inputFormat: unchangedFormat,
+          isInputAvailable: true,
+          reconfigureTap: { _ in
+            reconfigureCalls.increment()
+          }
+        )
+      }
+
+      let event = AudioRouteChangeEvent(
+        reason: .routeConfigurationChange,
+        previousRoute: nil,
+        session: AVAudioSession.sharedInstance()
+      )
+      await engine.handleRouteChange(event: event)
+
+      #expect(await engine.isRecording == true)
+      #expect(reconfigureCalls.snapshot() == 1)
+
+      _ = try await engine.stopRecording()
+    }
+
     @Test
     func testHandleRouteChangeContinuesWhenTapReconfigureSucceeds() async throws {
       let engine = AIOEngine()
