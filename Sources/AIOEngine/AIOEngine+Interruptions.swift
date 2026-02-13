@@ -74,18 +74,9 @@
         return
       }
 
-      let (cachedInputFormat, cachedOutputFormat, previousFormat) = state.withLock { state in
-        (
-          state.tapConverterInputFormat, state.tapConverterOutputFormat,
-          state.lastInputFormat ?? initialFormat
-        )
+      let previousFormat = state.withLock { state in
+        state.lastInputFormat ?? initialFormat
       }
-      let shouldReconfigureTap: Bool = {
-        guard let cachedInputFormat, let cachedOutputFormat else { return true }
-        return
-          !(cachedInputFormat.isEqual(newInputFormat)
-          && cachedOutputFormat.isEqual(processingFormat))
-      }()
 
       // Check if we can continue recording
       let canContinue: Bool
@@ -117,13 +108,12 @@
       if canContinue {
         // Attempt to continue recording with the new route
         do {
-          if shouldReconfigureTap {
-            try reconfigureTapForRouteChange(
-              processingFormat: processingFormat
-            )
-          } else {
-            log.info("Skipping tap reconfigure; format unchanged")
-          }
+          // Always reinstall the tap on route changes. Hardware route swaps can disrupt
+          // capture even when the reported format appears unchanged, which leaves
+          // recording state active but no buffers flowing.
+          try reconfigureTapForRouteChange(
+            processingFormat: processingFormat
+          )
 
           // Notify about quality change if channels or sample rate differ
           let qualityChange = createQualityChange(
