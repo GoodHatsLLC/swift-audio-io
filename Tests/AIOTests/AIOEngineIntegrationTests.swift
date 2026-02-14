@@ -5,7 +5,7 @@
   import Testing
   import Tools
 
-  @_spi(TESTING) import AIOEngine
+  @_spi(TESTING) @testable import AIOEngine
 
   @Suite
   struct AIOEngineIntegrationTests {
@@ -87,7 +87,8 @@
     func testRotateRecordingFileEmitsTwoFiles() async throws {
       let engine = AIOEngine()
       let outputDirectory = FileManager.default.temporaryDirectory
-        .appendingPathComponent("AIOEngineIntegrationTests-\(UUID().uuidString)", isDirectory: true)
+        .appendingPathComponent(
+          "AIOEngineIntegrationTests-\(UUID().uuidString)", isDirectory: true)
       defer { try? FileManager.default.removeItem(at: outputDirectory) }
       let configuration = makeConfiguration(outputDestination: .directory(outputDirectory))
 
@@ -330,35 +331,29 @@
       _ = try await engine.stopRecording()
     }
 
-
     @Test
     func testHandleRouteChangeReconfiguresTapWhenFormatAppearsUnchanged() async throws {
       let engine = AIOEngine()
       let configuration = makeConfiguration()
-      let reconfigureCalls = LockedCounter()
+      let reinstallCalls = LockedCounter()
 
       let url = try await engine.startTestRecording(configuration: configuration)
       defer { try? FileManager.default.removeItem(at: url) }
-      defer {
-        Task { @MainActor in
-          engine.clearRouteChangeTestOverrides()
-        }
-      }
 
       let unchangedFormat = try #require(
-        AVAudioFormat(
-          standardFormatWithSampleRate: 48_000,
-          channels: 1
-        )
+        AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1)
       )
+
       await MainActor.run {
-        engine.setRouteChangeTestOverrides(
-          inputFormat: unchangedFormat,
-          isInputAvailable: true,
-          reconfigureTap: { _ in
-            reconfigureCalls.increment()
-          }
-        )
+        engine.setReinstallTapOverride {
+          (_, processingFormat) throws(AIOEngine.AIOError) in
+          reinstallCalls.increment()
+          return try makeMockTapInstallResult(
+            tapFormat: unchangedFormat, processingFormat: processingFormat)
+        }
+      }
+      defer {
+        Task { @MainActor in engine.setReinstallTapOverride(nil) }
       }
 
       let event = AudioRouteChangeEvent(
@@ -369,7 +364,7 @@
       await engine.handleRouteChange(event: event)
 
       #expect(await engine.isRecording == true)
-      #expect(reconfigureCalls.snapshot() == 1)
+      #expect(reinstallCalls.snapshot() == 1)
 
       _ = try await engine.stopRecording()
     }
@@ -379,7 +374,7 @@
       let engine = AIOEngine()
       let configuration = makeConfiguration()
       let probe = RouteFaultProbe()
-      let reconfigureCalls = LockedCounter()
+      let reinstallCalls = LockedCounter()
 
       await MainActor.run {
         engine.onRecordingInterruption = { interruption in
@@ -389,26 +384,21 @@
 
       let url = try await engine.startTestRecording(configuration: configuration)
       defer { try? FileManager.default.removeItem(at: url) }
-      defer {
-        Task { @MainActor in
-          engine.clearRouteChangeTestOverrides()
-        }
-      }
 
       let routeFormat = try #require(
-        AVAudioFormat(
-          standardFormatWithSampleRate: 16_000,
-          channels: 2
-        )
+        AVAudioFormat(standardFormatWithSampleRate: 16_000, channels: 2)
       )
+
       await MainActor.run {
-        engine.setRouteChangeTestOverrides(
-          inputFormat: routeFormat,
-          isInputAvailable: true,
-          reconfigureTap: { _ in
-            reconfigureCalls.increment()
-          }
-        )
+        engine.setReinstallTapOverride {
+          (_, processingFormat) throws(AIOEngine.AIOError) in
+          reinstallCalls.increment()
+          return try makeMockTapInstallResult(
+            tapFormat: routeFormat, processingFormat: processingFormat)
+        }
+      }
+      defer {
+        Task { @MainActor in engine.setReinstallTapOverride(nil) }
       }
 
       let event = AudioRouteChangeEvent(
@@ -419,7 +409,7 @@
       await engine.handleRouteChange(event: event)
 
       #expect(await engine.isRecording == true)
-      #expect(reconfigureCalls.snapshot() == 1)
+      #expect(reinstallCalls.snapshot() == 1)
 
       let observed = await waitUntil(timeout: .seconds(1)) {
         let snapshot = await probe.snapshot()
@@ -458,26 +448,17 @@
 
       let url = try await engine.startTestRecording(configuration: configuration)
       defer { try? FileManager.default.removeItem(at: url) }
-      defer {
-        Task { @MainActor in
-          engine.clearRouteChangeTestOverrides()
+
+      await MainActor.run {
+        engine.setReinstallTapOverride {
+          (
+            _: RecordingConfiguration, _: AVAudioFormat
+          ) throws(AIOEngine.AIOError) -> AIOEngine.TapInstallResult in
+          throw .engineError
         }
       }
-
-      let routeFormat = try #require(
-        AVAudioFormat(
-          standardFormatWithSampleRate: 16_000,
-          channels: 1
-        )
-      )
-      await MainActor.run {
-        engine.setRouteChangeTestOverrides(
-          inputFormat: routeFormat,
-          isInputAvailable: true,
-          reconfigureTap: { (_: AVAudioFormat) throws(AIOEngine.AIOError) in
-            throw .engineError
-          }
-        )
+      defer {
+        Task { @MainActor in engine.setReinstallTapOverride(nil) }
       }
 
       let event = AudioRouteChangeEvent(
@@ -569,6 +550,40 @@
     }
   }
 
+  private func makeMockTapInstallResult(
+    tapFormat: AVAudioFormat,
+    processingFormat: AVAudioFormat
+  ) throws(AIOEngine.AIOError) -> AIOEngine.TapInstallResult {
+    guard let converter = AVAudioConverter(from: tapFormat, to: processingFormat) else {
+      throw AIOEngine.AIOError.formatConversionFailed
+    }
+    guard
+      let buffer = AVAudioPCMBuffer(
+        pcmFormat: processingFormat,
+        frameCapacity: 1024
+      )
+    else {
+      throw AIOEngine.AIOError.formatConversionFailed
+    }
+    let artifacts = AIOEngine.TapConversionArtifacts(
+      converter: converter,
+      inputFormat: tapFormat,
+      convertedBuffer: buffer
+    )
+    let tapConfig = TapConfiguration(
+      bus: 0,
+      inputFormat: tapFormat,
+      outputFormat: processingFormat,
+      bufferSize: 1024
+    )
+    return AIOEngine.TapInstallResult(
+      tapFormat: tapFormat,
+      artifacts: artifacts,
+      tapConfiguration: tapConfig
+    )
+  }
+
+  // SAFETY: All mutable state is protected by NSLock, only accessed under lock.
   private final class CapturingReceiver: BufferReceiver, @unchecked Sendable {
     typealias T = Float
     private let lock = NSLock()
@@ -612,6 +627,7 @@
     }
   }
 
+  // SAFETY: All mutable state is protected by NSLock, only accessed under lock.
   private final class LockedCounter: @unchecked Sendable {
     private let lock = NSLock()
     private var value: Int = 0

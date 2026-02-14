@@ -485,225 +485,65 @@
       }
       try validateEncoderCompatibility(for: configuration)
       log.info("warming with config: \(configuration, privacy: .public)")
-      let initialInput = runOnEngineControlQueue { unsafe engine.inputNode.outputFormat(forBus: 0) }
-      log.info("input format: \(initialInput, privacy: .public)")
-      if let recordingConfiguration = state[locked: \.recordingConfiguration] {
-        if configuration == recordingConfiguration {
+
+      if let existing = state[locked: \.recordingConfiguration] {
+        if configuration == existing {
           log.info("engine already warmed")
           recordingSampleTimeAtomic.store(0, ordering: .relaxed)
           return
         } else {
-          log.info("engine requires hard stop")
-          // TODO: reconfigure active recording instead
           hardStop()
         }
       }
-      // Ensure the engine is in a clean state before warming for recording.
-      // Always stop and reset unconditionally — not just when engine.isRunning
-      // is true. After playback the engine may have been stopped externally
-      // (session deactivation, interruption) but never reset, leaving a stale
-      // playback graph (player → mainMixerNode) that prevents engine.prepare()
-      // from properly initialising the input node (sampleRate: 0).
-      let engineWasRunning = runOnEngineControlQueue { [weak self] in
-        guard let self else { return false }
-        let wasRunning = unsafe self.engine.isRunning
+
+      // Reset engine to clean state unconditionally. After playback the engine
+      // may have a stale graph that prevents prepare() from initialising the
+      // input node correctly.
+      runOnEngineControlQueue { [weak self] in
+        guard let self else { return }
         unsafe self.player.stop()
         unsafe self.engine.stop()
         unsafe self.engine.reset()
         if unsafe !self.engine.attachedNodes.contains(self.player) {
           unsafe self.engine.attach(self.player)
         }
-        return wasRunning
-      }
-      if engineWasRunning {
-        log.info("Reset engine left running (e.g. after playback) before recording warm-up")
       }
 
-      log.info("engine requires warming")
       do {
-
-        // Configure audio session
         try configureAudioSession(for: configuration)
-
-        // Prepare the engine after audio session reconfiguration so the input node
-        // picks up the new session settings (e.g. channel count for stereo).
-        runOnEngineControlQueue { unsafe engine.prepare() }
-
-        let inputFormat = runOnEngineControlQueue {
-          unsafe engine.inputNode.outputFormat(forBus: 0)
-        }
-
-        // Validate input format before attempting to install tap.
-        // installTap throws an uncatchable NSException if the format is invalid.
-        guard inputFormat.channelCount > 0 else {
-          let session = AVAudioSession.sharedInstance()
-          let hardwareFormat = runOnEngineControlQueue {
-            unsafe engine.inputNode.inputFormat(forBus: 0)
-          }
-          let recordPermission = AVAudioApplication.shared.recordPermission
-          log.warning(
-            """
-            Input node has no channels; audio input not ready.
-            recordPermission: \(String(describing: recordPermission), privacy: .public)
-            isInputAvailable: \(session.isInputAvailable, privacy: .public)
-            outputFormat(forBus: 0): \(inputFormat, privacy: .public)
-            inputFormat(forBus: 0): \(hardwareFormat, privacy: .public)
-            """
-          )
-          throw AIOError.audioSessionNotReady(
-            details: "Input node has no channels (channelCount: 0)"
-          )
-        }
-        guard inputFormat.sampleRate > 0 else {
-          let session = AVAudioSession.sharedInstance()
-          let hardwareFormat = runOnEngineControlQueue {
-            unsafe engine.inputNode.inputFormat(forBus: 0)
-          }
-          let recordPermission = AVAudioApplication.shared.recordPermission
-          log.warning(
-            """
-            Input node has invalid sample rate; audio input not ready.
-            recordPermission: \(String(describing: recordPermission), privacy: .public)
-            isInputAvailable: \(session.isInputAvailable, privacy: .public)
-            outputFormat(forBus: 0): \(inputFormat, privacy: .public)
-            inputFormat(forBus: 0): \(hardwareFormat, privacy: .public)
-            """
-          )
-          throw AIOError.audioSessionNotReady(
-            details: "Input node has invalid sample rate (sampleRate: 0)"
-          )
-        }
 
         guard let processingFormat = configuration.processingFormat else {
           throw AIOError.invalidRecordingConfiguration(details: "(processing format)")
         }
 
-        // Setup ring buffers with overflow protection
         let sampleRate = Int(processingFormat.sampleRate)
         let channelCount = Int(processingFormat.channelCount)
-
-        // Validate sample rate and channel count
-        // Note: Zero or negative values often indicate the audio session isn't ready yet
-        guard sampleRate > 0 && channelCount > 0 else {
-          log.warning(
-            "Audio format not ready: sampleRate=\(sampleRate, privacy: .public), channelCount=\(channelCount, privacy: .public)"
-          )
+        guard sampleRate > 0, channelCount > 0 else {
           throw AIOError.audioSessionNotReady(
             details: "Invalid format: \(sampleRate)Hz, \(channelCount)ch"
           )
         }
-
-        // Protect against overflow in buffer capacity calculation
         guard sampleRate < Int.max / channelCount / 2 else {
-          log.error(
-            "Sample rate too high for buffer allocation: sampleRate=\(sampleRate, privacy: .public), channelCount=\(channelCount, privacy: .public)"
-          )
           throw AIOError.hardwareNotSupported
         }
 
-        let audioBuffers = makeAudioBuffers(
-          sampleRate: sampleRate,
-          channelCount: channelCount
-        )
-        let receiverBuffers = makeAudioBuffers(
-          sampleRate: sampleRate,
-          channelCount: channelCount
+        recordingSampleTimeAtomic.store(0, ordering: .relaxed)
+
+        // Single call installs the tap — handles prepare(), format validation,
+        // converter creation, all on the engine control queue.
+        let tapResult = try reinstallTap(
+          configuration: configuration,
+          processingFormat: processingFormat,
+          stopEngine: false
         )
 
-        guard let tapConfiguration = configuration.tapConfiguration(bus: 0, input: inputFormat)
-        else {
-          throw AIOError.invalidRecordingConfiguration(details: "(Tap configuration)")
-        }
-        guard tapConfiguration.bufferSize > 0 else {
-          throw AIOError.invalidRecordingConfiguration(details: "Tap bufferSize is 0")
-        }
-        log.info(
-          "Installing tap: bufferSize=\(tapConfiguration.bufferSize, privacy: .public) frames interval=\(tapConfiguration.bufferSize == 0 ? 0.0 : (Double(tapConfiguration.bufferSize) / Double(max(sampleRate, 1))), privacy: .public)s sampleRate=\(sampleRate, privacy: .public)Hz"
-        )
+        let audioBuffers = makeAudioBuffers(sampleRate: sampleRate, channelCount: channelCount)
+        let receiverBuffers = makeAudioBuffers(sampleRate: sampleRate, channelCount: channelCount)
         let timingCapacity = max(
           64,
-          Int(ceil(Double(sampleRate) / Double(tapConfiguration.bufferSize))) * 4
+          Int(ceil(Double(sampleRate) / Double(tapResult.tapConfiguration.bufferSize))) * 4
         )
         let receiverTiming = SPSCRingBuffer<TimingPacket>(capacity: timingCapacity)
-        let tapFormat = tapConfiguration.inputAVAudioFormat
-        let tapArtifacts = try makeTapConversionArtifacts(
-          inputFormat: tapFormat,
-          processingFormat: processingFormat,
-          tapBufferSize: tapConfiguration.bufferSize
-        )
-        let sessionSampleRateBeforeInstall = AVAudioSession.sharedInstance().sampleRate
-        guard abs(sessionSampleRateBeforeInstall - inputFormat.sampleRate) <= 1 else {
-          log.warning(
-            "Audio route change still settling before tap install: inputSampleRate=\(inputFormat.sampleRate, privacy: .public) sessionSampleRate=\(sessionSampleRateBeforeInstall, privacy: .public)"
-          )
-          throw AIOError.audioSessionNotReady(
-            details: "Input format does not match active audio session sample rate"
-          )
-        }
-        recordingSampleTimeAtomic.store(0, ordering: .relaxed)
-        // Remove any existing tap and install the new one in a single engine-control-queue
-        // dispatch. Re-read the input node format atomically to prevent a race where an audio
-        // route change (triggered by the stereo session reconfiguration) shifts the format
-        // between the earlier read and the installTap call — which causes an uncatchable
-        // NSException inside AVFAudio.
-        //
-        // Validate the re-read format before calling installTap. During an audio source switch
-        // (e.g. AirPods → built-in mic) the input node format can transiently report 0 channels
-        // or 0 sample rate while the route change settles. Passing such a format to installTap
-        // triggers an uncatchable NSException inside AVFAudio.
-        let actualTapFormat: AVAudioFormat? = runOnEngineControlQueue {
-          unsafe engine.inputNode.removeTap(onBus: tapConfiguration.bus)
-          let currentInputFormat = unsafe engine.inputNode.outputFormat(forBus: 0)
-          guard currentInputFormat.channelCount > 0, currentInputFormat.sampleRate > 0 else {
-            return nil
-          }
-          let currentSessionSampleRate = AVAudioSession.sharedInstance().sampleRate
-          guard abs(currentSessionSampleRate - currentInputFormat.sampleRate) <= 1 else {
-            log.warning(
-              "Skipping tap install while audio session sample rate is still changing: inputSampleRate=\(currentInputFormat.sampleRate, privacy: .public) sessionSampleRate=\(currentSessionSampleRate, privacy: .public)"
-            )
-            return nil
-          }
-          let installResult = Result {
-            try self.installTapCatchingObjCException(
-              bus: tapConfiguration.bus,
-              bufferSize: tapConfiguration.bufferSize,
-              processingFormat: processingFormat,
-              installContext: "warm()"
-            )
-          }
-          switch installResult {
-          case .success(let postInstallFormat):
-            return postInstallFormat
-          case .failure(let error):
-            log.warning(
-              "Failed to install tap during warm(): \(error, privacy: .public)"
-            )
-            return nil
-          }
-        }
-        guard let actualTapFormat else {
-          let transientFormat = runOnEngineControlQueue {
-            unsafe engine.inputNode.outputFormat(forBus: 0)
-          }
-          log.warning(
-            "Input format became invalid during tap install (transient route change). format: \(transientFormat, privacy: .public)"
-          )
-          throw AIOError.audioSessionNotReady(
-            details: "Input format invalid during audio source switch"
-          )
-        }
-
-        // If the actual tap format diverged from the pre-computed format (e.g. the hardware
-        // settled on a different channel count after the stereo session reconfiguration),
-        // rebuild the converter and conversion buffer to match the real format.
-        let finalArtifacts = try makeAdjustedTapConversionArtifactsIfNeeded(
-          initialArtifacts: tapArtifacts,
-          actualTapFormat: actualTapFormat,
-          processingFormat: processingFormat,
-          tapBufferSize: tapConfiguration.bufferSize,
-          logContext: "warm()"
-        )
 
         let (url, protection) = try resolveOutputURL(
           for: configuration,
@@ -718,19 +558,11 @@
           $0.audioBuffers = audioBuffers
           $0.receiverBuffers = receiverBuffers
           $0.receiverTiming = receiverTiming
-          $0.tapConverter = finalArtifacts.converter
-          $0.tapConverterInputFormat = finalArtifacts.inputFormat
-          $0.tapConverterOutputFormat = processingFormat
-          $0.tapConvertedBuffer = finalArtifacts.convertedBuffer
-          $0.installedTapBus = tapConfiguration.bus
           $0.recordingConfiguration = configuration
-          $0.initialInputFormat = actualTapFormat
-          $0.lastInputFormat = actualTapFormat
         }
+        applyTapInstallResult(tapResult, processingFormat: processingFormat)
       } catch let error as AIOError {
-        log.error(
-          "Failed to warm engine: \(error, privacy: .public)"
-        )
+        log.error("Failed to warm engine: \(error, privacy: .public)")
         hardStop()
         onRecordingFailed?()
         throw error
@@ -837,85 +669,16 @@
         return
       }
 
-      let installResult = runOnEngineControlQueueResult {
-        [weak self]
-        () throws
-          -> (
-            inputFormat: AVAudioFormat,
-            tapConfiguration: TapConfiguration,
-            initialTapArtifacts: TapConversionArtifacts
-          ) in
-        guard let self else { throw AIOError.engineError }
+      let result = try reinstallTap(
+        configuration: configuration,
+        processingFormat: processingFormat,
+        stopEngine: false
+      )
+      applyTapInstallResult(result, processingFormat: processingFormat)
 
-        unsafe self.engine.inputNode.removeTap(onBus: self.state[locked: \.installedTapBus] ?? 0)
-        self.state[locked: \.installedTapBus] = nil
-
-        let currentInputFormat = unsafe self.engine.inputNode.outputFormat(forBus: 0)
-        guard currentInputFormat.channelCount > 0, currentInputFormat.sampleRate > 0 else {
-          throw AIOError.invalidRecordingConfiguration(
-            details:
-              "Tap format invalid during tap interval update (channels: \(currentInputFormat.channelCount), sampleRate: \(currentInputFormat.sampleRate))"
-          )
-        }
-
-        guard
-          let tapConfiguration = configuration.tapConfiguration(
-            bus: 0,
-            input: currentInputFormat
-          )
-        else {
-          throw AIOError.invalidRecordingConfiguration(details: "Cannot create tap configuration")
-        }
-        guard tapConfiguration.bufferSize > 0 else {
-          throw AIOError.invalidRecordingConfiguration(details: "Tap bufferSize is 0")
-        }
-
-        let initialTapArtifacts = try self.makeTapConversionArtifacts(
-          inputFormat: tapConfiguration.inputAVAudioFormat,
-          processingFormat: processingFormat,
-          tapBufferSize: tapConfiguration.bufferSize
-        )
-        let postInstallFormat = try self.installTapCatchingObjCException(
-          bus: tapConfiguration.bus,
-          bufferSize: tapConfiguration.bufferSize,
-          processingFormat: processingFormat,
-          installContext: "tap interval update"
-        )
-
-        return (
-          inputFormat: postInstallFormat,
-          tapConfiguration: tapConfiguration,
-          initialTapArtifacts: initialTapArtifacts
-        )
-      }
-
-      switch installResult {
-      case .success(let result):
-        let tapConfiguration = result.tapConfiguration
-        let actualTapFormat = result.inputFormat
-        let finalTapArtifacts = try makeAdjustedTapConversionArtifactsIfNeeded(
-          initialArtifacts: result.initialTapArtifacts,
-          actualTapFormat: actualTapFormat,
-          processingFormat: processingFormat,
-          tapBufferSize: tapConfiguration.bufferSize,
-          logContext: "tap interval update"
-        )
-        // Update state only after the tap is successfully installed and any needed
-        // artifact reconfiguration is complete, so state never claims a tap that
-        // failed to install.
-        state {
-          $0.tapConverter = finalTapArtifacts.converter
-          $0.tapConverterInputFormat = finalTapArtifacts.inputFormat
-          $0.tapConverterOutputFormat = processingFormat
-          $0.tapConvertedBuffer = finalTapArtifacts.convertedBuffer
-          $0.installedTapBus = tapConfiguration.bus
-        }
-        log.info(
-          "Updated tap interval to \(configuration.tapInterval, privacy: .public) (bufferSize: \(tapConfiguration.bufferSize, privacy: .public) frames interval=\(tapConfiguration.bufferSize == 0 ? 0.0 : (Double(tapConfiguration.bufferSize) / max(processingFormat.sampleRate, 1)), privacy: .public)s sampleRate=\(processingFormat.sampleRate, privacy: .public)Hz)"
-        )
-      case .failure(let error):
-        throw (error as? AIOError) ?? AIOError.engineStartFailed(error: ErrorContext(error))
-      }
+      log.info(
+        "Updated tap interval to \(configuration.tapInterval, privacy: .public) (bufferSize: \(result.tapConfiguration.bufferSize, privacy: .public) frames)"
+      )
     }
 
     @MainActor func hardStop() {
@@ -1002,9 +765,6 @@
           state.tapConverterInputFormat = nil
           state.tapConverterOutputFormat = nil
           state.tapConvertedBuffer = nil
-          state.initialInputFormat = nil
-          state.lastInputFormat = nil
-          state.isHandlingRouteChange = false
         }
         return state.recordingWriter
       }

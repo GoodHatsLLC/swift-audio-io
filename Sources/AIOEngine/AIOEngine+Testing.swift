@@ -55,21 +55,12 @@
       }
 
       @MainActor
-      public func setRouteChangeTestOverrides(
-        inputFormat: AVAudioFormat? = nil,
-        isInputAvailable: Bool? = nil,
-        reconfigureTap: (@MainActor (AVAudioFormat) throws(AIOError) -> Void)? = nil
+      func setReinstallTapOverride(
+        _ override: (
+          @MainActor (RecordingConfiguration, AVAudioFormat) throws(AIOError) -> TapInstallResult
+        )?
       ) {
-        testRouteChangeInputFormatOverride = inputFormat
-        testRouteChangeIsInputAvailableOverride = isInputAvailable
-        testRouteTapReconfigureOverride = reconfigureTap
-      }
-
-      @MainActor
-      public func clearRouteChangeTestOverrides() {
-        testRouteChangeInputFormatOverride = nil
-        testRouteChangeIsInputAvailableOverride = nil
-        testRouteTapReconfigureOverride = nil
+        testReinstallTapOverride = override
       }
 
       /// Starts a recording session without touching AVAudioSession or AVAudioEngine.
@@ -133,8 +124,6 @@
           $0.receiverTiming = receiverTiming
           $0.recordingConfiguration = configuration
           $0.installedTapBus = nil
-          $0.initialInputFormat = processingFormat
-          $0.lastInputFormat = processingFormat
         }
 
         startFileWriteLoop(flushing: audioBuffers, of: processingFormat, to: writer)
@@ -223,7 +212,7 @@
 
       /// Deterministically simulates route/input/sample-rate changes while recording.
       ///
-      /// This bypasses `AVAudioEngine` graph mutation and only exercises continuation vs stop
+      /// Bypasses `AVAudioEngine` graph mutation and only exercises the continuation vs stop
       /// decision logic, interruption callbacks, and stop cleanup.
       @MainActor
       public func simulateRouteChangeForTesting(
@@ -235,9 +224,8 @@
       ) async -> Bool {
         guard isRecording || wantsRecording else { return false }
 
-        let canContinue = canContinueRecording(
-          from: oldFormat,
-          to: newFormat,
+        let canContinue = isFormatViable(
+          newFormat,
           processingFormat: processingFormat,
           isInputAvailable: isInputAvailable
         )
@@ -253,12 +241,11 @@
             previousRoute: nil,
             session: AVAudioSession.sharedInstance()
           )
-          let interruption = RecordingInterruption.routeChangeContinuing(
-            event: event,
-            qualityChange: qualityChange
-          )
-          await onRecordingInterruption?(interruption)
-          placeState(\.lastInputFormat, newFormat)
+          await onRecordingInterruption?(
+            .routeChangeContinuing(
+              event: event,
+              qualityChange: qualityChange
+            ))
           return true
         }
 
