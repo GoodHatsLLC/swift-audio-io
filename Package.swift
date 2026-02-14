@@ -5,7 +5,7 @@ import PackageDescription
 
 let package = Package(
   name: "AIO",
-  platforms: [.iOS(.v18), .macCatalyst(.v18)],
+  platforms: [.iOS(.v26), .macCatalyst(.v26)],
   products: [
     .library(
       name: "Tools",

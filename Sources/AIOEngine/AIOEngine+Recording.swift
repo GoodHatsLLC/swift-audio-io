@@ -138,22 +138,13 @@
           )
           try? await Task.sleep(for: retryInterval)
           continue
-        } catch let error as AIOError {
+        } catch let error {
           // Non-transient error - give up immediately
           log.error(
             "Non-transient error during reconciliation: \(error, privacy: .public)"
           )
           lastError = error
           lastRecordingStartFailure = error
-          break
-        } catch {
-          // Non-transient error - give up immediately
-          let mapped = AIOError.engineStartFailed(error: ErrorContext(error))
-          log.error(
-            "Non-transient error during reconciliation: \(mapped, privacy: .public)"
-          )
-          lastError = mapped
-          lastRecordingStartFailure = mapped
           break
         }
       }
