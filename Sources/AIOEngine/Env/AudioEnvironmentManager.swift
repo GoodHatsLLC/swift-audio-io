@@ -352,10 +352,12 @@
       let inputId = env.input?.id ?? "_default"
       let rejected = Set(persistedInputPreferencesById[inputId]?.rejectedSampleRatesHz ?? [])
 
-      return commonSampleRates
+      return [
+        commonSampleRates
         .filter { !rejected.contains($0.rawValue) }
-        .appendingFrom(env.sampleRate)
-        .appendingFrom(_selectedSampleRate)
+        + [env.sampleRate]
+        + [_selectedSampleRate]
+      ].flatMap { $0 }
         .removingDuplicates()
         .sorted()
     }
@@ -1473,4 +1475,14 @@
       return 9
     }
   }
+
+extension Array where Element: Hashable {
+  func removingDuplicates() -> Self {
+    var set = Set<Element>()
+    return self.filter {
+      set.insert($0).inserted
+    }
+  }
+}
+
 #endif
