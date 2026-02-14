@@ -377,13 +377,11 @@
     @MainActor var lastRecordingStartFailure: AIOError?
 
     #if DEBUG
-      /// Test hook used by integration tests to bypass hardware input-format reads during route changes.
-      @MainActor var testRouteChangeInputFormatOverride: AVAudioFormat?
-      /// Test hook used by integration tests to control input availability during route changes.
-      @MainActor var testRouteChangeIsInputAvailableOverride: Bool?
-      /// Test hook used by integration tests to simulate tap reconfiguration outcomes during route changes.
-      @MainActor var testRouteTapReconfigureOverride:
-        (@MainActor (AVAudioFormat) throws(AIOError) -> Void)?
+      /// Test hook: when set, `reinstallTap()` calls this instead of touching AVAudioEngine.
+      @MainActor var testReinstallTapOverride:
+        (
+          @MainActor (RecordingConfiguration, AVAudioFormat) throws(AIOError) -> TapInstallResult
+        )?
     #endif
 
     @MainActor var playbackTask: Task<Void, Never>? {

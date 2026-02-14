@@ -207,9 +207,6 @@
     var tapConverterInputFormat: AVAudioFormat?
     var tapConverterOutputFormat: AVAudioFormat?
     var tapConvertedBuffer: AVAudioPCMBuffer?
-    var isHandlingRouteChange: Bool = false
-    var initialInputFormat: AVAudioFormat?
-    var lastInputFormat: AVAudioFormat?
   }
 
   struct EngineMetrics: Sendable {

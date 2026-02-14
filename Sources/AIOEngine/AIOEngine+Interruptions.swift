@@ -11,12 +11,10 @@
 
     // MARK: - Route Change & Interruption Handling
 
-    /// Handles an audio route change.
+    /// Handles an audio route change during recording by reinstalling the tap.
     ///
-    /// This method is called when the audio route changes (e.g., headphones are disconnected).
-    /// It attempts to continue recording with the new route if possible.
-    ///
-    /// - Parameter event: The route change details.
+    /// If the tap cannot be reinstalled (e.g. no input available, invalid format),
+    /// recording is stopped gracefully.
     @MainActor
     public func handleRouteChange(event: AudioRouteChangeEvent) async {
       guard isRecording else {
@@ -24,137 +22,54 @@
         return
       }
 
-      // Prevent re-entrant calls
-      let isReEntrant = state {
-        if $0.isHandlingRouteChange {
-          return true
-        } else {
-          $0.isHandlingRouteChange = true
-          return false
-        }
-      }
-      guard !isReEntrant else {
-        log.info("Already handling route change, ignoring duplicate")
-        return
-      }
-
-      defer { state[locked: \.isHandlingRouteChange] = false }
-
       log.info("Handling route change: \(String(describing: event.reason), privacy: .public)")
 
       let session = AVAudioSession.sharedInstance()
-      let newInputFormat: AVAudioFormat
-      #if DEBUG
-        if let override = testRouteChangeInputFormatOverride {
-          newInputFormat = override
-        } else {
-          newInputFormat = runOnEngineControlQueue { [engine = unsafe engine] in
-            engine.inputNode.outputFormat(forBus: 0)
-          }
-        }
-      #else
-        newInputFormat = runOnEngineControlQueue { [engine = unsafe engine] in
-          engine.inputNode.outputFormat(forBus: 0)
-        }
-      #endif
+      guard session.isInputAvailable else {
+        await handleUnrecoverableInterruption(reason: "No audio input available")
+        return
+      }
 
       guard
-        let (processingFormat, initialFormat): (AVAudioFormat, AVAudioFormat) = state({
-          if let currentConfig = $0.recordingConfiguration,
-            let processingFormat = currentConfig.processingFormat,
-            let initialFormat = $0.initialInputFormat
-          {
-            return Optional((processingFormat, initialFormat))
-          } else {
-            return Optional.none
-          }
+        let (config, processingFormat): (RecordingConfiguration, AVAudioFormat) = state({
+          guard let c = $0.recordingConfiguration, let p = c.processingFormat else { return nil }
+          return (c, p)
         })
       else {
         log.error("Missing configuration during route change")
         return
       }
 
-      let previousFormat = state.withLock { state in
-        state.lastInputFormat ?? initialFormat
+      // Snapshot format before reinstall for quality-change detection
+      let formatBefore = runOnEngineControlQueue { [engine = unsafe engine] in
+        engine.inputNode.outputFormat(forBus: 0)
       }
 
-      // Check if we can continue recording
-      let canContinue: Bool
-      #if DEBUG
-        if let isInputAvailable = testRouteChangeIsInputAvailableOverride {
-          canContinue = canContinueRecording(
-            from: previousFormat,
-            to: newInputFormat,
-            processingFormat: processingFormat,
-            isInputAvailable: isInputAvailable
-          )
-        } else {
-          canContinue = canContinueRecording(
-            from: previousFormat,
-            to: newInputFormat,
-            processingFormat: processingFormat,
-            session: session
-          )
-        }
-      #else
-        canContinue = canContinueRecording(
-          from: previousFormat,
-          to: newInputFormat,
+      do {
+        let result = try reinstallTap(
+          configuration: config,
           processingFormat: processingFormat,
-          session: session
+          stopEngine: true
         )
-      #endif
 
-      if canContinue {
-        // Attempt to continue recording with the new route
-        do {
-          // Always reinstall the tap on route changes. Hardware route swaps can disrupt
-          // capture even when the reported format appears unchanged, which leaves
-          // recording state active but no buffers flowing.
-          try reconfigureTapForRouteChange(
-            processingFormat: processingFormat
-          )
+        applyTapInstallResult(result, processingFormat: processingFormat)
 
-          // Notify about quality change if channels or sample rate differ
-          let qualityChange = createQualityChange(
-            from: previousFormat,
-            to: newInputFormat,
-            reason: describeRouteChangeReason(event.reason)
-          )
-
-          let interruption = RecordingInterruption.routeChangeContinuing(
+        let qualityChange = createQualityChange(
+          from: formatBefore,
+          to: result.tapFormat,
+          reason: describeRouteChangeReason(event.reason)
+        )
+        await onRecordingInterruption?(
+          .routeChangeContinuing(
             event: event,
             qualityChange: qualityChange
-          )
-          await onRecordingInterruption?(interruption)
-          placeState(\.lastInputFormat, newInputFormat)
+          ))
 
-          log.info("Successfully continued recording after route change")
-        } catch {
-          log.error("Failed to reconfigure tap after route change: \(error, privacy: .public)")
-          Task { @MainActor in
-            await handleUnrecoverableInterruption(reason: "Route change reconfiguration failed")
-          }
-        }
-      } else {
-        // Cannot continue - stop gracefully
-        Task { @MainActor in
-          await handleUnrecoverableInterruption(reason: "No suitable audio route available")
-        }
+        log.info("Continued recording after route change")
+      } catch {
+        log.error("Failed to reinstall tap after route change: \(error, privacy: .public)")
+        await handleUnrecoverableInterruption(reason: "Route change reconfiguration failed")
       }
-    }
-
-    @MainActor
-    func reconfigureTapForRouteChange(
-      processingFormat: AVAudioFormat
-    ) throws(AIOError) {
-      #if DEBUG
-        if let override = testRouteTapReconfigureOverride {
-          try override(processingFormat)
-          return
-        }
-      #endif
-      try reconfigureTapForNewRoute(processingFormat: processingFormat)
     }
 
     @MainActor
@@ -183,12 +98,6 @@
     }
 
     /// Handles an audio session interruption.
-    ///
-    /// This method is called when the audio session is interrupted (e.g., by a phone call).
-    ///
-    /// - Parameters:
-    ///   - type: The type of interruption.
-    ///   - options: The interruption options.
     @MainActor
     public func handleInterruption(
       type: AVAudioSession.InterruptionType, options: AVAudioSession.InterruptionOptions?
@@ -201,8 +110,6 @@
           await handleUnrecoverableInterruption(reason: "Audio session interrupted")
         }
       case .ended:
-        // For now, we don't automatically resume recording after interruptions
-        // This could be enhanced in the future based on options.contains(.shouldResume)
         log.info("Audio interruption ended")
       @unknown default:
         break
@@ -260,237 +167,35 @@
       }
     }
 
-    /// Check if recording can continue with the new audio route
-    func canContinueRecording(
-      from oldFormat: AVAudioFormat,
-      to newFormat: AVAudioFormat,
-      processingFormat: AVAudioFormat,
-      session: AVAudioSession
-    ) -> Bool {
-      canContinueRecording(
-        from: oldFormat,
-        to: newFormat,
-        processingFormat: processingFormat,
-        isInputAvailable: session.isInputAvailable
-      )
-    }
+    // MARK: - Helpers
 
-    /// Deterministic continuation predicate used by tests and route-change handling.
-    func canContinueRecording(
-      from oldFormat: AVAudioFormat,
-      to newFormat: AVAudioFormat,
+    /// Checks whether a new audio format is viable for continued recording.
+    /// Used by `simulateRouteChangeForTesting()`.
+    func isFormatViable(
+      _ format: AVAudioFormat,
       processingFormat: AVAudioFormat,
       isInputAvailable: Bool
     ) -> Bool {
-      // Check if there's any input available
-      guard isInputAvailable else {
-        log.info("No input available")
-        return false
-      }
-
-      // Check if we have at least one input channel
-      guard newFormat.channelCount > 0 else {
-        log.info("New format has no channels")
-        return false
-      }
-
-      // Check if processing format has valid channels
-      guard processingFormat.channelCount > 0 else {
-        log.info("Processing format has no channels")
-        return false
-      }
-
-      guard newFormat.sampleRate.isFinite, processingFormat.sampleRate.isFinite else {
-        log.info("Route formats have non-finite sample rates")
-        return false
-      }
-
-      guard processingFormat.sampleRate > 0 else {
-        log.info("Processing format has invalid sample rate")
-        return false
-      }
-
-      // Validate sample rates are reasonable (between 8kHz and 192kHz)
-      // AVAudioConverter can handle conversions between standard audio sample rates
-      let minSampleRate: Double = 8000.0
-      let maxSampleRate: Double = 192000.0
-      guard newFormat.sampleRate >= minSampleRate && newFormat.sampleRate <= maxSampleRate else {
-        log.info(
-          "New format sample rate out of valid range: \(newFormat.sampleRate, privacy: .public)")
-        return false
-      }
-
-      guard AVAudioConverter(from: newFormat, to: processingFormat) != nil else {
-        log.info(
-          "Cannot continue route change: converter unavailable for \(newFormat, privacy: .public) -> \(processingFormat, privacy: .public)"
-        )
-        return false
-      }
-
-      // We can continue recording with format conversion as long as:
-      // 1. Audio input is available
-      // 2. Both new and processing formats have valid channels
-      // 3. Sample rate is within reasonable bounds for AVAudioConverter
-      // 4. AVAudioConverter can be created for the format transition
-      // The processAudio method will handle format conversion via AVAudioConverter
-
-      log.info(
-        """
-        Continuing recording with format conversion:
-        - Old format: \(oldFormat.channelCount, privacy: .public) channels @ \(oldFormat.sampleRate, privacy: .public) Hz
-        - New format: \(newFormat.channelCount, privacy: .public) channels @ \(newFormat.sampleRate, privacy: .public) Hz
-        - Processing format: \(processingFormat.channelCount, privacy: .public) channels @ \(processingFormat.sampleRate, privacy: .public) Hz
-        """)
-
+      guard isInputAvailable else { return false }
+      guard format.channelCount > 0 else { return false }
+      guard format.sampleRate >= 8000, format.sampleRate <= 192_000 else { return false }
+      guard AVAudioConverter(from: format, to: processingFormat) != nil else { return false }
       return true
     }
 
-    /// Reconfigure the audio tap for a new route
-    func reconfigureTapForNewRoute(
-      processingFormat: AVAudioFormat
-    ) throws(AIOError) {
-      let installResult = runOnEngineControlQueueResult {
-        [weak self]
-        () throws
-          -> (
-            actualInputFormat: AVAudioFormat,
-            tapConfiguration: TapConfiguration,
-            initialTapArtifacts: TapConversionArtifacts
-          ) in
-        guard let self else { throw AIOError.engineError }
-
-        let previousTapBus = self.state[locked: \.installedTapBus] ?? 0
-        unsafe self.engine.inputNode.removeTap(onBus: previousTapBus)
-        unsafe self.engine.stop()
-        self.state[locked: \.installedTapBus] = nil
-
-        let currentInputFormat = unsafe self.engine.inputNode.outputFormat(forBus: 0)
-
-        // Validate and install in one critical section to avoid stale-format NSException windows.
-        guard currentInputFormat.channelCount > 0 else {
-          let session = AVAudioSession.sharedInstance()
-          let hardwareFormat = unsafe self.engine.inputNode.inputFormat(forBus: 0)
-          let recordPermission = AVAudioApplication.shared.recordPermission
-          log.warning(
-            """
-            Input node has no channels after route change; cannot reconfigure tap.
-            recordPermission: \(String(describing: recordPermission), privacy: .public)
-            isInputAvailable: \(session.isInputAvailable, privacy: .public)
-            outputFormat(forBus: 0): \(currentInputFormat, privacy: .public)
-            inputFormat(forBus: 0): \(hardwareFormat, privacy: .public)
-            """
-          )
-          throw AIOError.invalidRecordingConfiguration(
-            details: "Input node has no channels after route change (channelCount: 0)")
-        }
-
-        guard currentInputFormat.sampleRate > 0 else {
-          let session = AVAudioSession.sharedInstance()
-          let hardwareFormat = unsafe self.engine.inputNode.inputFormat(forBus: 0)
-          let recordPermission = AVAudioApplication.shared.recordPermission
-          log.warning(
-            """
-            Input node has invalid sample rate after route change; cannot reconfigure tap.
-            recordPermission: \(String(describing: recordPermission), privacy: .public)
-            isInputAvailable: \(session.isInputAvailable, privacy: .public)
-            outputFormat(forBus: 0): \(currentInputFormat, privacy: .public)
-            inputFormat(forBus: 0): \(hardwareFormat, privacy: .public)
-            """
-          )
-          throw AIOError.invalidRecordingConfiguration(
-            details: "Input node has invalid sample rate after route change (sampleRate: 0)")
-        }
-
-        guard let currentConfig = self.state[locked: \.recordingConfiguration],
-          let tapConfiguration = currentConfig.tapConfiguration(bus: 0, input: currentInputFormat)
-        else {
-          throw AIOError.invalidRecordingConfiguration(details: "Cannot create tap configuration")
-        }
-        guard tapConfiguration.bufferSize > 0 else {
-          throw AIOError.invalidRecordingConfiguration(details: "Tap bufferSize is 0")
-        }
-
-        let initialTapArtifacts = try self.makeTapConversionArtifacts(
-          inputFormat: tapConfiguration.inputAVAudioFormat,
-          processingFormat: processingFormat,
-          tapBufferSize: tapConfiguration.bufferSize
-        )
-        let postInstallFormat = try self.installTapCatchingObjCException(
-          bus: tapConfiguration.bus,
-          bufferSize: tapConfiguration.bufferSize,
-          processingFormat: processingFormat,
-          installContext: "route-change reconfiguration"
-        )
-
-        return (
-          actualInputFormat: postInstallFormat,
-          tapConfiguration: tapConfiguration,
-          initialTapArtifacts: initialTapArtifacts
-        )
-      }
-
-      let actualTapFormat: AVAudioFormat
-      let tapConfiguration: TapConfiguration
-      let initialTapArtifacts: TapConversionArtifacts
-      switch installResult {
-      case .success(let result):
-        actualTapFormat = result.actualInputFormat
-        tapConfiguration = result.tapConfiguration
-        initialTapArtifacts = result.initialTapArtifacts
-      case .failure(let error):
-        throw (error as? AIOError) ?? .engineStartFailed(error: ErrorContext(error))
-      }
-
-      let finalTapArtifacts = try makeAdjustedTapConversionArtifactsIfNeeded(
-        initialArtifacts: initialTapArtifacts,
-        actualTapFormat: actualTapFormat,
-        processingFormat: processingFormat,
-        tapBufferSize: tapConfiguration.bufferSize,
-        logContext: "route-change reconfiguration"
-      )
-
-      state {
-        $0.tapConverter = finalTapArtifacts.converter
-        $0.tapConverterInputFormat = finalTapArtifacts.inputFormat
-        $0.tapConverterOutputFormat = processingFormat
-        $0.tapConvertedBuffer = finalTapArtifacts.convertedBuffer
-        $0.installedTapBus = tapConfiguration.bus
-      }
-
-      let startResult = runOnEngineControlQueueResult {
-        [weak self] in
-        guard let self else { return }
-        try unsafe self.engine.start()
-      }
-      if case .failure(let error) = startResult {
-        throw .engineStartFailed(error: ErrorContext(error))
-      }
-
-      log.info("Reconfigured tap for new route: \(actualTapFormat, privacy: .public)")
-    }
-
-    /// Handle interruptions that cannot be recovered
     @MainActor
     func handleUnrecoverableInterruption(reason: String) async {
       guard isRecording || wantsRecording else { return }
 
       log.info("Handling unrecoverable interruption: \(reason, privacy: .public)")
-
-      // Cancel any ongoing reconciliation
       reconciliationTask = nil
 
-      // Notify before stopping
       let interruption = RecordingInterruption.stoppedByInterruption(reason: reason)
       await onRecordingInterruption?(interruption)
-
-      // Stop recording gracefully (also sets wantsRecording = false)
       await gracefulStop()
-
-      // Notify that recording failed (for crash detection/cleanup)
       onRecordingFailed?()
     }
 
-    /// Create quality change event if formats differ
     func createQualityChange(
       from oldFormat: AVAudioFormat,
       to newFormat: AVAudioFormat,
@@ -512,27 +217,17 @@
       return nil
     }
 
-    /// Convert route change reason to human-readable string
     func describeRouteChangeReason(_ reason: AVAudioSession.RouteChangeReason) -> String {
       switch reason {
-      case .oldDeviceUnavailable:
-        return "Device disconnected"
-      case .newDeviceAvailable:
-        return "New device connected"
-      case .categoryChange:
-        return "Audio category changed"
-      case .override:
-        return "Overridden"
-      case .routeConfigurationChange:
-        return "Route configuration changed"
-      case .wakeFromSleep:
-        return "Wake from sleep"
-      case .noSuitableRouteForCategory:
-        return "No suitable route"
-      case .unknown:
-        return "Unknown reason"
-      @unknown default:
-        return "Unknown reason"
+      case .oldDeviceUnavailable: "Device disconnected"
+      case .newDeviceAvailable: "New device connected"
+      case .categoryChange: "Audio category changed"
+      case .override: "Overridden"
+      case .routeConfigurationChange: "Route configuration changed"
+      case .wakeFromSleep: "Wake from sleep"
+      case .noSuitableRouteForCategory: "No suitable route"
+      case .unknown: "Unknown reason"
+      @unknown default: "Unknown reason"
       }
     }
   }

@@ -1,7 +1,7 @@
 #if !os(macOS) || targetEnvironment(macCatalyst)
   import AVFoundation
-  import ObjCExceptionCatcher
   import SystemLog
+  import Tools
   import os
   private let tapSetupLog = SystemLog.make()
 
@@ -10,6 +10,12 @@
       let converter: AVAudioConverter
       let inputFormat: AVAudioFormat
       let convertedBuffer: AVAudioPCMBuffer
+    }
+
+    struct TapInstallResult {
+      let tapFormat: AVAudioFormat
+      let artifacts: TapConversionArtifacts
+      let tapConfiguration: TapConfiguration
     }
 
     func makeTapConversionArtifacts(
@@ -40,71 +46,115 @@
       )
     }
 
-    func installTapCatchingObjCException(
-      bus: Int,
-      bufferSize: AVAudioFrameCount,
+    /// Reinstalls the audio input tap on the engine.
+    ///
+    /// This is the single method used by `warm()`, route change handling,
+    /// and tap interval updates. All engine graph mutations happen on the
+    /// engine control queue in a single dispatch.
+    @MainActor
+    func reinstallTap(
+      configuration: RecordingConfiguration,
       processingFormat: AVAudioFormat,
-      installContext: String
-    ) throws(AIOError) -> AVAudioFormat {
-      let inputFormat = unsafe engine.inputNode.outputFormat(forBus: 0)
-      guard inputFormat.channelCount > 0, inputFormat.sampleRate > 0 else {
-        throw AIOError.invalidRecordingConfiguration(
-          details:
-            "Tap format invalid before install during \(installContext) (channels: \(inputFormat.channelCount), sampleRate: \(inputFormat.sampleRate))"
-        )
-      }
+      stopEngine: Bool
+    ) throws(AIOError) -> TapInstallResult {
+      #if DEBUG
+        if let override = testReinstallTapOverride {
+          return try override(configuration, processingFormat)
+        }
+      #endif
 
-      let tapHandler = makeTapHandler(processingFormat: processingFormat)
-      var installException: NSException?
-      let tapInstalled = unsafe AIORunCatchingObjCException(
-        {
-          unsafe engine.inputNode.installTap(
-            onBus: bus,
-            bufferSize: bufferSize,
-            format: nil,
-            block: tapHandler
+      let installResult = runOnEngineControlQueueResult {
+        [weak self] () throws -> TapInstallResult in
+        guard let self else { throw AIOError.engineError }
+
+        // 1. Remove existing tap
+        let previousBus = self.state[locked: \.installedTapBus] ?? 0
+        unsafe self.engine.inputNode.removeTap(onBus: previousBus)
+        self.state[locked: \.installedTapBus] = nil
+
+        // 2. Stop engine if requested
+        if stopEngine {
+          unsafe self.engine.stop()
+        }
+
+        // 3. Prepare — updates input node for current hardware
+        unsafe self.engine.prepare()
+
+        // 4. Read format — one read, one validation
+        let inputFormat = unsafe self.engine.inputNode.outputFormat(forBus: 0)
+        guard inputFormat.channelCount > 0 else {
+          throw AIOError.audioSessionNotReady(
+            details: "Input node has no channels (channelCount: 0)")
+        }
+        guard inputFormat.sampleRate > 0 else {
+          throw AIOError.audioSessionNotReady(
+            details: "Input node has invalid sample rate (sampleRate: 0)")
+        }
+
+        // 5. Create tap configuration
+        guard let tapConfig = configuration.tapConfiguration(bus: 0, input: inputFormat) else {
+          throw AIOError.invalidRecordingConfiguration(details: "Cannot create tap configuration")
+        }
+        guard tapConfig.bufferSize > 0 else {
+          throw AIOError.invalidRecordingConfiguration(details: "Tap bufferSize is 0")
+        }
+
+        // 6. Install tap with format: nil to match the node's current format
+        let tapHandler = self.makeTapHandler(processingFormat: processingFormat)
+        unsafe self.engine.inputNode.installTap(
+          onBus: tapConfig.bus,
+          bufferSize: tapConfig.bufferSize,
+          format: nil,
+          block: tapHandler
+        )
+
+        // 7. Restart engine if we stopped it
+        if stopEngine {
+          try unsafe self.engine.start()
+        }
+
+        // 8. Prepare post-install, read actual format
+        unsafe self.engine.prepare()
+        let postInstallFormat = unsafe self.engine.inputNode.outputFormat(forBus: 0)
+        guard postInstallFormat.channelCount > 0, postInstallFormat.sampleRate > 0 else {
+          throw AIOError.invalidRecordingConfiguration(
+            details:
+              "Format invalid after tap install (channels: \(postInstallFormat.channelCount), sampleRate: \(postInstallFormat.sampleRate))"
           )
-        }, &installException)
-      guard tapInstalled else {
-        throw AIOError.invalidRecordingConfiguration(
-          details:
-            "installTap raised NSException during \(installContext): \(installException?.description ?? "unknown")"
+        }
+
+        // 8. Create conversion artifacts from the actual post-install format
+        let artifacts = try self.makeTapConversionArtifacts(
+          inputFormat: postInstallFormat,
+          processingFormat: processingFormat,
+          tapBufferSize: tapConfig.bufferSize
+        )
+
+        return TapInstallResult(
+          tapFormat: postInstallFormat,
+          artifacts: artifacts,
+          tapConfiguration: tapConfig
         )
       }
 
-      unsafe engine.prepare()
-      let postInstallFormat = unsafe engine.inputNode.outputFormat(forBus: 0)
-      guard postInstallFormat.channelCount > 0, postInstallFormat.sampleRate > 0 else {
-        throw AIOError.invalidRecordingConfiguration(
-          details:
-            "Tap format invalid after install during \(installContext) (channels: \(postInstallFormat.channelCount), sampleRate: \(postInstallFormat.sampleRate))"
-        )
+      switch installResult {
+      case .success(let result):
+        tapSetupLog.info("Tap installed: \(result.tapFormat, privacy: .public)")
+        return result
+      case .failure(let error):
+        throw (error as? AIOError) ?? .engineStartFailed(error: ErrorContext(error))
       }
-      return postInstallFormat
     }
 
-    func makeAdjustedTapConversionArtifactsIfNeeded(
-      initialArtifacts: TapConversionArtifacts,
-      actualTapFormat: AVAudioFormat,
-      processingFormat: AVAudioFormat,
-      tapBufferSize: AVAudioFrameCount,
-      logContext: String
-    ) throws(AIOError) -> TapConversionArtifacts {
-      guard
-        actualTapFormat.channelCount != initialArtifacts.inputFormat.channelCount
-          || actualTapFormat.sampleRate != initialArtifacts.inputFormat.sampleRate
-      else {
-        return initialArtifacts
+    /// Applies tap install results to engine state.
+    func applyTapInstallResult(_ result: TapInstallResult, processingFormat: AVAudioFormat) {
+      state {
+        $0.tapConverter = result.artifacts.converter
+        $0.tapConverterInputFormat = result.artifacts.inputFormat
+        $0.tapConverterOutputFormat = processingFormat
+        $0.tapConvertedBuffer = result.artifacts.convertedBuffer
+        $0.installedTapBus = result.tapConfiguration.bus
       }
-
-      tapSetupLog.warning(
-        "Tap format changed during \(logContext, privacy: .public): expected \(initialArtifacts.inputFormat, privacy: .public), got \(actualTapFormat, privacy: .public)"
-      )
-      return try makeTapConversionArtifacts(
-        inputFormat: actualTapFormat,
-        processingFormat: processingFormat,
-        tapBufferSize: tapBufferSize
-      )
     }
   }
 #endif
