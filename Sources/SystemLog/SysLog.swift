@@ -309,7 +309,9 @@ public enum SystemLog {
     private var activeWindow: SystemLog.LogWindow?
 
     var exportState: ExportState = .ready
-    nonisolated static let allowedTypes: [UTType] = [.log, .json, .plainText, .text, .commaSeparatedText]
+    nonisolated static let allowedTypes: [UTType] = [
+      .log, .json, .plainText, .text, .commaSeparatedText,
+    ]
     init() {
     }
 
