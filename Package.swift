@@ -69,15 +69,10 @@ let package = Package(
       ]
     ),
     .target(
-      name: "ObjCExceptionCatcher",
-      publicHeadersPath: "include"
-    ),
-    .target(
       name: "AIOEngine",
       dependencies: [
         "Tools",
         "SystemLog",
-        "ObjCExceptionCatcher",
         .product(name: "AsyncAlgorithms", package: "swift-async-algorithms"),
         .product(name: "Atomics", package: "swift-atomics"),
         .product(name: "DequeModule", package: "swift-collections"),
