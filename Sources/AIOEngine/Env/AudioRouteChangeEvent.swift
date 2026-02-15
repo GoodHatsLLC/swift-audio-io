@@ -131,7 +131,7 @@
       }
       parts.append("\(inputNumberOfChannels)ch@\(Int(sampleRate))Hz")
       parts.append("buffer=\(ioBufferDuration/1000.0)s")
-      return parts.joined(separator: " ")
+      return parts.joined(separator: "\n")
     }
   }
 
