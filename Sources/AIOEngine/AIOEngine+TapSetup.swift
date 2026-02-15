@@ -108,12 +108,7 @@
           block: tapHandler
         )
 
-        // 7. Restart engine if we stopped it
-        if stopEngine {
-          try unsafe self.engine.start()
-        }
-
-        // 8. Prepare post-install, read actual format
+        // 7. Prepare post-install, read actual format
         unsafe self.engine.prepare()
         let postInstallFormat = unsafe self.engine.inputNode.outputFormat(forBus: 0)
         guard postInstallFormat.channelCount > 0, postInstallFormat.sampleRate > 0 else {
@@ -130,11 +125,23 @@
           tapBufferSize: tapConfig.bufferSize
         )
 
-        return TapInstallResult(
+        let result = TapInstallResult(
           tapFormat: postInstallFormat,
           artifacts: artifacts,
           tapConfiguration: tapConfig
         )
+
+        // 9. Apply converter state before starting the engine so that
+        //    processAudio sees the correct converter from the very first
+        //    buffer delivered after start.
+        self.applyTapInstallResult(result, processingFormat: processingFormat)
+
+        // 10. Restart engine if we stopped it
+        if stopEngine {
+          try unsafe self.engine.start()
+        }
+
+        return result
       }
 
       switch installResult {
