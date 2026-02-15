@@ -273,50 +273,20 @@ public enum SystemLog {
     )
   }
   public struct Viewer: View {
-    @State private var model: LogModel = .init()
-    @State private var persistModel: Bool = false
-    @AppStorage("systemLog.persistModel") private var persistModelSetting: Bool = false
-
-    private static var sharedModel: LogModel?
+    private static let sharedModel = LogModel()
 
     public init() {}
 
     public var body: some View {
-      LogListScreen(model: currentModel, isLoading: currentModel.exportState == .processing)
-        .toolbar {
-          ToolbarItem(placement: .automatic) {
-            Toggle(isOn: $persistModel) {
-              Label("Persist", systemImage: persistModel ? "pin.fill" : "pin")
-            }
-            .toggleStyle(.button)
-            .help("Keep log data when navigating away")
-          }
-        }
-        .onChange(of: persistModel) { _, newValue in
-          persistModelSetting = newValue
-          if newValue {
-            Self.sharedModel = model
-          } else {
-            Self.sharedModel = nil
-          }
-        }
-        .onAppear {
-          persistModel = persistModelSetting
-          if persistModelSetting, let shared = Self.sharedModel {
-            model = shared
-          }
-        }
-    }
-
-    private var currentModel: LogModel {
-      if persistModel, let shared = Self.sharedModel {
-        return shared
-      }
-      return model
+      LogListScreen(
+        model: Self.sharedModel,
+        isLoading: Self.sharedModel.exportState == .processing
+      )
     }
   }
 
   @Observable
+  @MainActor
   fileprivate final class LogModel {
     var logs: [OSLogStream.LogEntry] = [] {
       didSet {
@@ -334,8 +304,12 @@ public enum SystemLog {
     var knownSubsystems: Set<String> = []
     let levels = OSLogStream.LogEntry.LogLevel.allCases
 
+    // Track active subscription parameters to avoid redundant refetches on re-navigation.
+    private var activeFilter: OSLogStream.Filter?
+    private var activeWindow: SystemLog.LogWindow?
+
     var exportState: ExportState = .ready
-    static let allowedTypes: [UTType] = [.log, .json, .plainText, .text, .commaSeparatedText]
+    nonisolated static let allowedTypes: [UTType] = [.log, .json, .plainText, .text, .commaSeparatedText]
     init() {
     }
 
@@ -1563,54 +1537,67 @@ extension SystemLog.LogModel {
 
 extension SystemLog.LogModel {
 
-  @MainActor
   fileprivate func subscribe(filter: OSLogStream.Filter, window: SystemLog.LogWindow) async {
-    logs = []
-    error = nil
-    self.exportState = .processing
-    isLoadingOlder = false
+    // If re-entering with the same parameters and we already have logs,
+    // skip the full refetch and just resume polling for new entries.
+    let canResume = activeFilter == filter && activeWindow == window && !logs.isEmpty
+    let resumeDate = loadedEndDate
+
+    if !canResume {
+      logs = []
+      error = nil
+      self.exportState = .processing
+      isLoadingOlder = false
+      activeFilter = filter
+      activeWindow = window
+    }
+
     subscriptionID = UUID()
     let token = subscriptionID
-    do {
-      let endDate = Date.now
-      let processStart = processStartDate
-      let startDate: Date =
-        if let duration = window.duration {
-          max(processStart, endDate.addingTimeInterval(-duration))
-        } else {
-          processStart
-        }
-      loadedStartDate = startDate
-      loadedEndDate = endDate
 
-      var receivedInitial = false
-      for try await batch in OSLogStream.fetchRangeBatches(
-        from: startDate,
-        to: endDate,
-        inclusiveEnd: true,
-        batchSize: 200,
-        filter: filter
-      ) {
-        try Task.checkCancellation()
-        guard subscriptionID == token else { return }
-        guard !batch.isEmpty else { continue }
-        receivedInitial = true
-        logs.append(contentsOf: batch)
-        if let last = batch.last {
-          loadedEndDate = max(loadedEndDate ?? last.date, last.date)
+    do {
+      if !canResume {
+        let endDate = Date.now
+        let processStart = processStartDate
+        let startDate: Date =
+          if let duration = window.duration {
+            max(processStart, endDate.addingTimeInterval(-duration))
+          } else {
+            processStart
+          }
+        loadedStartDate = startDate
+        loadedEndDate = endDate
+
+        var receivedInitial = false
+        for try await batch in OSLogStream.fetchRangeBatches(
+          from: startDate,
+          to: endDate,
+          inclusiveEnd: true,
+          batchSize: 200,
+          filter: filter
+        ) {
+          try Task.checkCancellation()
+          guard subscriptionID == token else { return }
+          guard !batch.isEmpty else { continue }
+          receivedInitial = true
+          logs.append(contentsOf: batch)
+          if let last = batch.last {
+            loadedEndDate = max(loadedEndDate ?? last.date, last.date)
+          }
+          if exportState == .processing {
+            exportState = .ready
+          }
         }
-        if exportState == .processing {
+
+        if !receivedInitial {
           exportState = .ready
         }
       }
 
-      if !receivedInitial {
-        exportState = .ready
-      }
-
+      let pollFrom = (canResume ? resumeDate : loadedEndDate) ?? Date.now
       try await OSLogStream.withCallback(
         batchSize: 200,
-        from: endDate,
+        from: pollFrom,
         pollInterval: .seconds(2),
         filter: filter
       ) { entries in
@@ -1630,7 +1617,6 @@ extension SystemLog.LogModel {
     }
   }
 
-  @MainActor
   fileprivate func loadOlder(filter: OSLogStream.Filter, window: SystemLog.LogWindow) async {
     guard !isLoadingOlder else { return }
     guard let duration = window.duration else { return }
@@ -1680,7 +1666,7 @@ extension SystemLog.LogModel {
     Date() - ProcessInfo.processInfo.systemUptime
   }
 
-  fileprivate static func exportLogs(
+  nonisolated fileprivate static func exportLogs(
     _ logs: [OSLogStream.LogEntry],
     as format: UTType,
     csvDelimiter: SystemLog.Delimiter = .comma
@@ -1700,7 +1686,6 @@ extension SystemLog.LogModel {
       return ""
     }
   }
-  @MainActor
   fileprivate func writeLogs(as format: UTType, to url: URL) async throws(LoggerError) {
     guard Self.allowedTypes.contains(format) else {
       logger.error("Unsupported export format: \(format, privacy: .public)")
@@ -1721,7 +1706,7 @@ extension SystemLog.LogModel {
     }
   }
 
-  private static func logEntriesToJSON(logEntries: [OSLogStream.LogEntry]) -> String {
+  nonisolated private static func logEntriesToJSON(logEntries: [OSLogStream.LogEntry]) -> String {
     let jsonEncoder = JSONEncoder()
     jsonEncoder.outputFormatting = .prettyPrinted
     if let jsonData = try? jsonEncoder.encode(logEntries),
@@ -1731,7 +1716,7 @@ extension SystemLog.LogModel {
     }
     return ""
   }
-  private static func logEntriesToCSV(
+  nonisolated private static func logEntriesToCSV(
     logEntries: [OSLogStream.LogEntry], delimiter: SystemLog.Delimiter
   ) -> String {
     let headers = ["Date", "Level", "Subsystem", "Category", "Message"]
