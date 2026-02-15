@@ -354,9 +354,9 @@
 
       return [
         commonSampleRates
-        .filter { !rejected.contains($0.rawValue) }
-        + [env.sampleRate]
-        + [_selectedSampleRate]
+          .filter { !rejected.contains($0.rawValue) }
+          + [env.sampleRate]
+          + [_selectedSampleRate]
       ].flatMap { $0 }
         .removingDuplicates()
         .sorted()
@@ -1476,13 +1476,13 @@
     }
   }
 
-extension Array where Element: Hashable {
-  func removingDuplicates() -> Self {
-    var set = Set<Element>()
-    return self.filter {
-      set.insert($0).inserted
+  extension Array where Element: Hashable {
+    func removingDuplicates() -> Self {
+      var set = Set<Element>()
+      return self.filter {
+        set.insert($0).inserted
+      }
     }
   }
-}
 
 #endif
