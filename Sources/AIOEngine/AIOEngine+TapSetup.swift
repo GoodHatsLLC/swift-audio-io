@@ -72,9 +72,15 @@
         unsafe self.engine.inputNode.removeTap(onBus: previousBus)
         self.state[locked: \.installedTapBus] = nil
 
-        // 2. Stop engine if requested
+        // 2. Stop and reset engine if requested — reset() clears cached node
+        //    formats so that prepare() queries the current hardware (critical
+        //    after a route change where the sample rate may differ).
         if stopEngine {
           unsafe self.engine.stop()
+          unsafe self.engine.reset()
+          if unsafe !self.engine.attachedNodes.contains(self.player) {
+            unsafe self.engine.attach(self.player)
+          }
         }
 
         // 3. Prepare — updates input node for current hardware
