@@ -369,12 +369,6 @@
     /// remains valid until the engine is stopped and restarted.
     let tapSnapshotLock = Mut<TapSnapshot>(.empty)
 
-    #if DEBUG
-      /// Checker that verifies `processAudio()` always runs on the same thread.
-      /// Reset when the tap is reinstalled (the new tap may use a different thread).
-      let tapThreadChecker = TapThreadChecker()
-    #endif
-
     /// A Boolean value that indicates whether the engine is currently recording.
     @MainActor public internal(set) var isRecording: Bool = false
 

@@ -107,12 +107,17 @@
         }
 
         // 6. Install tap with format: nil to match the node's current format
-        let tapHandler = self.makeTapHandler(processingFormat: processingFormat)
         unsafe self.engine.inputNode.installTap(
           onBus: tapConfig.bus,
           bufferSize: tapConfig.bufferSize,
           format: nil,
-          block: tapHandler
+          block: { @Sendable [self] buffer, time in
+            self.processAudio(
+              buffer: buffer,
+              time: time,
+              to: processingFormat
+            )
+          }
         )
 
         // 7. Prepare post-install, read actual format
@@ -183,10 +188,6 @@
           ))
       }
       tapSnapshotLock.withLock { $0 = wrapped.value }
-      #if DEBUG
-        // The new tap may run on a different internal thread after reinstallation.
-        tapThreadChecker.reset()
-      #endif
     }
   }
 #endif

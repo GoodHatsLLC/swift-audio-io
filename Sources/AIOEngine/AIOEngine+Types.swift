@@ -225,71 +225,18 @@
     let converterOutputFormat: AVAudioFormat?
     let convertedBuffer: AVAudioPCMBuffer?
 
-    static let empty = TapSnapshot(
-      audioBuffers: nil,
-      receiverBuffers: nil,
-      receiverTiming: nil,
-      converter: nil,
-      converterInputFormat: nil,
-      converterOutputFormat: nil,
-      convertedBuffer: nil
-    )
-  }
-
-  // MARK: - Tap Thread Checker (DEBUG-Only)
-
-  #if DEBUG
-    /// Detects unexpected thread migration in the tap callback.
-    ///
-    /// On the first `processAudio()` invocation, records the calling thread's ID.
-    /// Subsequent calls assert that they execute on the same thread. This catches
-    /// regressions where the tap callback migrates across threads unexpectedly.
-    ///
-    /// Thread Domain: tapCallback
-    // SAFETY: Only written once (first tap call via compare-exchange), then read-only.
-    // Single-writer (tap thread), no contention. Relaxed ordering is sufficient
-    // because correctness only requires eventual visibility on the same thread.
-    final class TapThreadChecker: @unchecked Sendable {
-      private let _threadID = ManagedAtomic<UInt64>(0)
-
-      func checkThread(file: StaticString = #file, line: UInt = #line) {
-        var tid: UInt64 = 0
-        pthread_threadid_np(nil, &tid)
-        let stored = _threadID.load(ordering: .relaxed)
-        if stored == 0 {
-          // First call — record the thread identity.
-          let (exchanged, _) = _threadID.compareExchange(
-            expected: 0,
-            desired: tid,
-            ordering: .relaxed
-          )
-          if !exchanged {
-            // Another call raced us (shouldn't happen with a single tap), re-check.
-            let actual = _threadID.load(ordering: .relaxed)
-            assert(
-              actual == tid,
-              "processAudio called on wrong thread: expected \(actual), got \(tid)",
-              file: file,
-              line: line
-            )
-          }
-        } else {
-          assert(
-            stored == tid,
-            "processAudio called on wrong thread: expected \(stored), got \(tid)",
-            file: file,
-            line: line
-          )
-        }
-      }
-
-      /// Resets the recorded thread ID. Call when reinstalling the tap, since the
-      /// new tap may run on a different internal thread.
-      func reset() {
-        _threadID.store(0, ordering: .relaxed)
-      }
+    static var empty: TapSnapshot {
+      TapSnapshot(
+        audioBuffers: nil,
+        receiverBuffers: nil,
+        receiverTiming: nil,
+        converter: nil,
+        converterInputFormat: nil,
+        converterOutputFormat: nil,
+        convertedBuffer: nil
+      )
     }
-  #endif
+  }
 
   struct EngineMetrics: Sendable {
     #if DEBUG

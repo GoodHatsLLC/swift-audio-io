@@ -260,16 +260,17 @@
       )
       writerSession = session
       let writeBufferSize = 1024
-      let preAllocatedBuffer = AVAudioPCMBuffer(
-        pcmFormat: processingFormat,
-        frameCapacity: AVAudioFrameCount(writeBufferSize)
-      )
+      let preAllocatedBuffer = Transferring(
+        AVAudioPCMBuffer(
+          pcmFormat: processingFormat,
+          frameCapacity: AVAudioFrameCount(writeBufferSize)
+        ))
       writerQueue.async { [control, localMetrics] in
         AIOEngine.writerLoopSync(
           writer: writer,
           format: processingFormat,
           audioBuffers: buffers,
-          writeBuffer: preAllocatedBuffer,
+          writeBuffer: preAllocatedBuffer.value,
           control: control,
           metrics: localMetrics,
           shouldCancel: { [control] in
@@ -614,20 +615,6 @@
       }
     }
 
-    // Keep tap callbacks nonisolated so AVFAudio can invoke them on its realtime queue.
-    // Strong-capture `self` to avoid per-buffer weak-reference overhead on the render path.
-    nonisolated func makeTapHandler(
-      processingFormat: AVAudioFormat
-    ) -> @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void {
-      { [self] buffer, time in
-        self.processAudio(
-          buffer: buffer,
-          time: time,
-          to: processingFormat
-        )
-      }
-    }
-
     @MainActor
     public func updateRecordingTapInterval(_ interval: Duration) {
       guard interval > .zero else { return }
@@ -804,7 +791,7 @@
       to processingFormat: AVAudioFormat
     ) {
       #if DEBUG
-        tapThreadChecker.checkThread()
+        //        tapThreadChecker.checkThread()
         let tapStart = DispatchTime.now().uptimeNanoseconds
       #endif
       let frameLength = buffer.frameLength
@@ -815,7 +802,7 @@
       // MainActor or engineControlQueue holds the lock during route changes
       // or recording start/stop.
       let snapshot: TapSnapshot
-      if let locked = state.withLock(ifAvailable: { state in
+      if let locked = state.withLockIfAvailable({ state in
         Transferring(
           TapSnapshot(
             audioBuffers: state.audioBuffers,

@@ -48,12 +48,6 @@
         state[locked: \.recordingURL]
       }
 
-      public nonisolated func makeTapHandlerForTesting(
-        processingFormat: AVAudioFormat
-      ) -> @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void {
-        makeTapHandler(processingFormat: processingFormat)
-      }
-
       @MainActor
       func setReinstallTapOverride(
         _ override: (
