@@ -816,15 +816,16 @@
       // or recording start/stop.
       let snapshot: TapSnapshot
       if let locked = state.withLock(ifAvailable: { state in
-        Transferring(TapSnapshot(
-          audioBuffers: state.audioBuffers,
-          receiverBuffers: state.receiverBuffers,
-          receiverTiming: state.receiverTiming,
-          converter: state.tapConverter,
-          converterInputFormat: state.tapConverterInputFormat,
-          converterOutputFormat: state.tapConverterOutputFormat,
-          convertedBuffer: state.tapConvertedBuffer
-        ))
+        Transferring(
+          TapSnapshot(
+            audioBuffers: state.audioBuffers,
+            receiverBuffers: state.receiverBuffers,
+            receiverTiming: state.receiverTiming,
+            converter: state.tapConverter,
+            converterInputFormat: state.tapConverterInputFormat,
+            converterOutputFormat: state.tapConverterOutputFormat,
+            convertedBuffer: state.tapConvertedBuffer
+          ))
       }) {
         snapshot = locked.value
         // Update the cached copy for future fallback reads.
@@ -1024,15 +1025,16 @@
       }
       let wrapped = state.withLock { state -> Transferring<TapSnapshot> in
         state.tapConvertedBuffer = buffer
-        return Transferring(TapSnapshot(
-          audioBuffers: state.audioBuffers,
-          receiverBuffers: state.receiverBuffers,
-          receiverTiming: state.receiverTiming,
-          converter: state.tapConverter,
-          converterInputFormat: state.tapConverterInputFormat,
-          converterOutputFormat: state.tapConverterOutputFormat,
-          convertedBuffer: state.tapConvertedBuffer
-        ))
+        return Transferring(
+          TapSnapshot(
+            audioBuffers: state.audioBuffers,
+            receiverBuffers: state.receiverBuffers,
+            receiverTiming: state.receiverTiming,
+            converter: state.tapConverter,
+            converterInputFormat: state.tapConverterInputFormat,
+            converterOutputFormat: state.tapConverterOutputFormat,
+            convertedBuffer: state.tapConvertedBuffer
+          ))
       }
       tapSnapshotLock.withLock { $0 = wrapped.value }
       log.warning(
@@ -1481,15 +1483,16 @@
         state.recordingWriter = newWriter
         state.recordingURL = newURL
         state.audioBuffers = newBuffers
-        return Transferring(TapSnapshot(
-          audioBuffers: state.audioBuffers,
-          receiverBuffers: state.receiverBuffers,
-          receiverTiming: state.receiverTiming,
-          converter: state.tapConverter,
-          converterInputFormat: state.tapConverterInputFormat,
-          converterOutputFormat: state.tapConverterOutputFormat,
-          convertedBuffer: state.tapConvertedBuffer
-        ))
+        return Transferring(
+          TapSnapshot(
+            audioBuffers: state.audioBuffers,
+            receiverBuffers: state.receiverBuffers,
+            receiverTiming: state.receiverTiming,
+            converter: state.tapConverter,
+            converterInputFormat: state.tapConverterInputFormat,
+            converterOutputFormat: state.tapConverterOutputFormat,
+            convertedBuffer: state.tapConvertedBuffer
+          ))
       }
       tapSnapshotLock.withLock { $0 = wrapped.value }
 

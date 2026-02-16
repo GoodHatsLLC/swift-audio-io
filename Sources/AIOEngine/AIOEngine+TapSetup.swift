@@ -171,15 +171,16 @@
         state.tapConverterOutputFormat = processingFormat
         state.tapConvertedBuffer = result.artifacts.convertedBuffer
         state.installedTapBus = result.tapConfiguration.bus
-        return Transferring(TapSnapshot(
-          audioBuffers: state.audioBuffers,
-          receiverBuffers: state.receiverBuffers,
-          receiverTiming: state.receiverTiming,
-          converter: state.tapConverter,
-          converterInputFormat: state.tapConverterInputFormat,
-          converterOutputFormat: state.tapConverterOutputFormat,
-          convertedBuffer: state.tapConvertedBuffer
-        ))
+        return Transferring(
+          TapSnapshot(
+            audioBuffers: state.audioBuffers,
+            receiverBuffers: state.receiverBuffers,
+            receiverTiming: state.receiverTiming,
+            converter: state.tapConverter,
+            converterInputFormat: state.tapConverterInputFormat,
+            converterOutputFormat: state.tapConverterOutputFormat,
+            convertedBuffer: state.tapConvertedBuffer
+          ))
       }
       tapSnapshotLock.withLock { $0 = wrapped.value }
       #if DEBUG
