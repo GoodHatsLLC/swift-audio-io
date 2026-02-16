@@ -288,6 +288,49 @@
     /// so that SwiftUI observation reliably fires for downstream views.
     @MainActor public var onPlaybackUpdated: (@Sendable @MainActor (Playback?) -> Void)?
 
+    // MARK: - Thread Domains
+    //
+    // AIOEngine uses five distinct thread domains. Each property and method
+    // belongs to exactly one domain. Cross-domain communication uses only
+    // lock-free primitives (ManagedAtomic, SPSCRingBuffer) or non-blocking
+    // snapshot reads.
+    //
+    // ┌─────────────────────────────────────────────────────────────────┐
+    // │                   MainActor (UI / State)                       │
+    // │  isRecording, playback, reconciliation, callbacks,             │
+    // │  AVAudioSession configuration, lifecycle coordination          │
+    // └──────────────────┬──────────────────────┬──────────────────────┘
+    //                    │                      │
+    //           sync dispatch              async dispatch
+    //                    │                      │
+    // ┌──────────────────▼──────────────────┐   │
+    // │     engineControlQueue (serial)     │   │
+    // │  attach, connect, start, stop,      │   │
+    // │  prepare, reset, installTap         │   │
+    // └──────────────────┬──────────────────┘   │
+    //                    │                      │
+    //             [AVAudioEngine               │
+    //              manages internally]          │
+    //                    │                      │
+    // ┌──────────────────▼──────────────────┐   │
+    // │       Tap Thread (semi-RT)          │   │
+    // │  processAudio() — convert, enqueue  │   │
+    // │  to SPSC ring buffers               │   │
+    // │  Lock-free reads via TapSnapshot    │   │
+    // └────┬──────────────────────┬─────────┘   │
+    //      │ SPSC                 │ SPSC        │
+    //      ▼                      ▼             │
+    // ┌────────────┐    ┌──────────────────┐    │
+    // │ writerQueue│    │  receiverQueue   │◄───┘
+    // │ (file I/O) │    │ (visualization)  │
+    // └────────────┘    └──────────────────┘
+    //
+    // Synchronization mechanisms:
+    // - MainActor ↔ engineControlQueue: sync/async dispatch
+    // - engineControlQueue ↔ tapThread: TapSnapshot (lock-free), ManagedAtomic
+    // - tapThread ↔ writerQueue: SPSCRingBuffer, ManagedAtomic
+    // - tapThread ↔ receiverQueue: SPSCRingBuffer, ManagedAtomic
+
     // MARK: - Stored Properties
 
     nonisolated(unsafe) let engine = AVAudioEngine()
@@ -306,6 +349,31 @@
     let metrics = EngineMetrics()
 
     let state: Synchronized<InternalState> = .init(.init())
+
+    // MARK: - Tap Snapshot Lock
+
+    /// Cached snapshot of tap-relevant state for low-contention reads in `processAudio()`.
+    ///
+    /// Thread Domain: tapCallback (read via `withLockIfAvailable`),
+    ///                MainActor + engineControl + writerQueue (write via `withLock`).
+    ///
+    /// This is a separate, lightweight lock dedicated to the tap snapshot. Unlike the
+    /// main `state` lock (which protects all of `InternalState` and can be held during
+    /// complex operations), this lock is only held for trivial struct copies —
+    /// nanosecond-scale. The tap thread uses `withLockIfAvailable` so it never blocks
+    /// if a writer happens to be updating concurrently (extremely unlikely given the
+    /// tiny hold time).
+    ///
+    /// The brief staleness window (one or two tap callbacks using the previous snapshot
+    /// if the lock is contended during a write) is safe because the old converter
+    /// remains valid until the engine is stopped and restarted.
+    let tapSnapshotLock = Mut<TapSnapshot>(.empty)
+
+    #if DEBUG
+      /// Checker that verifies `processAudio()` always runs on the same thread.
+      /// Reset when the tap is reinstalled (the new tap may use a different thread).
+      let tapThreadChecker = TapThreadChecker()
+    #endif
 
     /// A Boolean value that indicates whether the engine is currently recording.
     @MainActor public internal(set) var isRecording: Bool = false
@@ -435,6 +503,9 @@
     }
 
     // MARK: - Engine Control Queue Helpers
+    //
+    // Thread Domain: engineControl
+    // All AVAudioEngine graph mutations must go through these helpers.
 
     nonisolated func runOnEngineControlQueue<T>(_ work: () -> T) -> T {
       engineControlQueue.sync(execute: work)

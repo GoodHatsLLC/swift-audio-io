@@ -11,6 +11,17 @@ public final class Synchronized<Value>: Sendable {
     try mut.withLock(body)
   }
 
+  /// Attempts to acquire the lock without blocking. Returns `nil` if the lock
+  /// is currently held by another thread.
+  ///
+  /// This is useful on latency-sensitive threads (e.g. audio tap callbacks)
+  /// where blocking on a contended lock could cause jitter.
+  public nonisolated borrowing func withLock<Result, E>(
+    ifAvailable body: (inout Value) throws(E) -> sending Result
+  ) throws(E) -> sending Result? {
+    try mut.withLockIfAvailable(body)
+  }
+
   @discardableResult
   public nonisolated func callAsFunction<T>(_ action: (inout Value) -> sending T) -> sending T {
     withLock { state in

@@ -888,18 +888,24 @@
       /// - it should be applied at the same level of nesting as its setup
       /// - the end effect once returning should be that `run()` is ready to be called
       await withThrowingTaskGroup(of: Void.self) { group in
+        // Configure audio session category/options on MainActor, per Apple DTS
+        // recommendation that AVAudioSession configuration should occur on the
+        // main thread. The category call is fast (< 1ms) and happens during
+        // app startup; remaining setup (input request, preference restoration)
+        // runs in a child task.
         func configureAudioSession(
           env: AudioEnvironment,
           configuration: AudioSessionConfiguration
-        ) {
+        ) throws(ManagerError) {
+          // Category configuration on MainActor (we are @MainActor here).
+          try Self.configureAudioSessionCategory(
+            env.session,
+            configuration: configuration
+          )
+
+          // Remaining setup in a child task for input request + preference restoration.
           group.addTask {
             do {
-              // Configure audio session category/options early, but do NOT activate.
-              // Activation should only occur when the app expresses intent to record or play audio.
-              try Self.configureAudioSessionCategory(
-                env.session,
-                configuration: configuration
-              )
               do {
                 try env.request(
                   input: env.input
@@ -963,10 +969,8 @@
         while !isConfigured {
           configureAttempt += 1
           do {
-            let (env, configuration) = await MainActor.run {
-              (self.env, self.sessionConfiguration)
-            }
-            configureAudioSession(env: env, configuration: configuration)
+            let (env, configuration) = (self.env, self.sessionConfiguration)
+            try configureAudioSession(env: env, configuration: configuration)
             _ = try await group.next()
             isConfigured = true
           } catch {
@@ -1150,6 +1154,15 @@
       }
     }
 
+    /// Subscribes to all AVAudioSession notification streams.
+    ///
+    /// ## Threading Contract
+    ///
+    /// Each `for await` loop consumes an `AsyncStream` from
+    /// ``AudioEnvironment/Notifications``. The stream's `compactMap`/`map` closures
+    /// execute on Apple's internal "AVAudioSession Notify Thread" (parsing only,
+    /// no mutable state). The `for await` body inherits this method's `@MainActor`
+    /// isolation, so all handlers dispatch to MainActor automatically.
     private func subscribe() async {
       await withTaskGroup(of: Void.self) { group in
         let env = self.env

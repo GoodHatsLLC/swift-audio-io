@@ -252,9 +252,46 @@ The concrete `ErrorManager` (also in `Env/`) is UI-consumable and is typically i
 
 ---
 
-## 6. Recording Lifecycle (AIOEngine)
+## 6. Threading Model (AIOEngine)
 
-### 6.1 Warm → start recording
+### 6.1 Thread Domains
+
+AIOEngine uses five distinct thread domains. Each property and method belongs to exactly one domain:
+
+| Domain | Mechanism | Responsibilities |
+|---|---|---|
+| **MainActor** | Swift actor isolation | Observable state (`isRecording`, `playback`), lifecycle coordination, AVAudioSession configuration, callbacks |
+| **engineControlQueue** | Serial `DispatchQueue` (`.default` QoS) | All `AVAudioEngine` graph mutations: attach, connect, start, stop, prepare, reset, installTap |
+| **tapCallback** | AVAudioEngine internal thread | `processAudio()` — format conversion, lock-free writes to SPSC ring buffers |
+| **writerQueue** | Serial `DispatchQueue` (`.userInitiated` QoS) | File I/O: draining ring buffers into `AVAudioFile` / `ExtAudioFile` |
+| **receiverQueue** | Serial `DispatchQueue` (`.userInitiated` QoS) | Visualization: draining ring buffers and forwarding to `BufferReceiver`s |
+
+### 6.2 Cross-Domain Communication
+
+- **MainActor ↔ engineControlQueue**: Synchronous (`runOnEngineControlQueue`) and asynchronous (`withEngineControlQueue`) dispatch.
+- **engineControlQueue → tapCallback**: `TapSnapshot` (lock-free cached copy) updated atomically by the configuration thread; read without locking by the tap thread via `withLockIfAvailable` with stale-cache fallback.
+- **tapCallback → writerQueue**: `SPSCRingBuffer<Float>` (lock-free single-producer/single-consumer).
+- **tapCallback → receiverQueue**: `SPSCRingBuffer<Float>` + `SPSCRingBuffer<TimingPacket>`.
+- **Cross-domain signals**: `ManagedAtomic<Bool/Int/Int64>` for writer control flags, tap error codes, and sample time tracking.
+
+### 6.3 Tap Thread Characterization
+
+AVAudioEngine tap blocks run on an internal `RealtimeMessenger.mServiceQueue` (WWDC 2019, Session 510), **not** the hard-real-time render thread. Only `AVAudioSourceNode` and `AVAudioSinkNode` render blocks run under real-time constraints.
+
+AIO's `processAudio()` uses `withLockIfAvailable` for non-blocking state access with a cached snapshot fallback, avoiding priority inversion on the semi-RT tap thread. In DEBUG builds, a `TapThreadChecker` asserts that `processAudio()` always runs on the same thread.
+
+### 6.4 Runtime Safety Assertions
+
+In DEBUG builds, AIO includes:
+
+- **`TapThreadChecker`**: Detects unexpected thread migration in the tap callback.
+- **`dispatchPrecondition`**: Asserts correct queue identity for engine control and writer/receiver queue closures.
+
+---
+
+## 7. Recording Lifecycle (AIOEngine)
+
+### 7.1 Warm → start recording
 
 The primary recording start path is:
 
@@ -278,7 +315,7 @@ The primary recording start path is:
 - launches the detached writer task,
 - flips `isRecording = true`.
 
-### 6.2 Tap processing and buffering
+### 7.2 Tap processing and buffering
 
 The audio tap closure calls `processAudio(...)` (nonisolated):
 
@@ -287,7 +324,7 @@ The audio tap closure calls `processAudio(...)` (nonisolated):
 - enqueues per-channel float samples into ring buffers,
 - forwards frames to any attached `BufferReceiver<Float>` receivers.
 
-### 6.3 File writing (writer loop)
+### 7.3 File writing (writer loop)
 
 The writer loop:
 
@@ -297,12 +334,12 @@ The writer loop:
 
 **Contract**: file write errors are logged and surfaced; they do not necessarily crash the process.
 
-### 6.4 Stop recording
+### 7.4 Stop recording
 
 - `stopRecording()` (`@MainActor`) removes the tap, stops the engine, cancels the writer task and awaits it, closes the file, resets cached formats, and emits `onRecordingCompleted`.
 - `hardStop()` exists for failure paths and “configuration changes that require teardown”.
 
-### 6.5 Segmented recording (file rotation)
+### 7.5 Segmented recording (file rotation)
 
 `rotateRecordingFile()` (`@MainActor`) is used for “segmented recording mode”:
 
@@ -314,9 +351,9 @@ The writer loop:
 
 ---
 
-## 7. Desired-State Reconciliation
+## 8. Desired-State Reconciliation
 
-### 7.1 Motivation
+### 8.1 Motivation
 
 On iOS/macOS, “start recording now” is often not immediately satisfiable due to:
 
@@ -326,7 +363,7 @@ On iOS/macOS, “start recording now” is often not immediately satisfiable due
 - permission gating,
 - transient `AVAudioEngine` start failures.
 
-### 7.2 Mechanism
+### 8.2 Mechanism
 
 `AIOEngine` exposes:
 
@@ -347,7 +384,7 @@ On failure it resets `wantsRecording` back toward reality and triggers `onReconc
 
 ---
 
-## 8. Playback
+## 9. Playback
 
 `AIOEngine` supports:
 
@@ -363,7 +400,7 @@ On failure it resets `wantsRecording` back toward reality and triggers `onReconc
 
 ---
 
-## 9. Route Changes and Interruptions
+## 10. Route Changes and Interruptions
 
 `AIOEngine` includes explicit handling paths:
 
@@ -378,7 +415,7 @@ This is designed to reduce “silent partial recordings” and to give the app l
 
 ---
 
-## 10. Integration Expectations (Recorder‽)
+## 11. Integration Expectations (Recorder‽)
 
 Although AIO is reusable, Recorder‽ uses it with a specific layering:
 
@@ -393,9 +430,9 @@ This division:
 
 ---
 
-## 11. Tradeoffs and Footguns
+## 12. Tradeoffs and Footguns
 
-### 11.1 Audio session activation is a privacy + UX boundary
+### 12.1 Audio session activation is a privacy + UX boundary
 
 Setting category/options early improves reliability (input node is less likely to report 0 channels), but activating the session early can:
 
@@ -405,7 +442,7 @@ Setting category/options early improves reliability (input node is less likely t
 
 Thus: configure early, activate only on explicit record/play intent.
 
-### 11.2 Tap installation can crash if input format is invalid
+### 12.2 Tap installation can crash if input format is invalid
 
 AVAudioNode tap APIs may throw an Objective‑C exception (not a Swift error) if formats are invalid. `warm(configuration:)` defensively validates:
 
@@ -414,20 +451,20 @@ AVAudioNode tap APIs may throw an Objective‑C exception (not a Swift error) if
 
 and throws `audioSessionNotReady` instead of proceeding.
 
-### 11.3 Format requests are preferences, not guarantees
+### 12.3 Format requests are preferences, not guarantees
 
 - `AVAudioSession.setPreferredSampleRate` and `setPreferredInputNumberOfChannels` can be rejected or partially applied.
 - Output encoding settings can be invalid (e.g. certain AAC sample rates / extreme channel counts); `RecordingConfiguration` may produce `nil` formats and fail warming.
 
-### 11.4 Catalyst and platform differences
+### 12.4 Catalyst and platform differences
 
 Some iOS-only session options are rejected on Mac Catalyst; `AudioEnvironmentManager.configureAudioSessionCategory(_:)` uses platform-conditional options to avoid leaving the input node in an unusable state.
 
-### 11.5 Re-entrancy and lifecycle timing
+### 12.5 Re-entrancy and lifecycle timing
 
 `AudioEnvironmentManager.readySignal()` throws `.notRunning` if `run()` hasn’t yet set `isRunning`. When consumers start `run()` asynchronously (common), callers must tolerate brief “cold launch” races by retrying briefly rather than dropping a request.
 
-### 11.6 Temporary directory is intentional but requires app-layer persistence
+### 12.6 Temporary directory is intentional but requires app-layer persistence
 
 `AIOEngine` records into `FileManager.default.temporaryDirectory`. The app layer is responsible for:
 
@@ -437,7 +474,7 @@ Some iOS-only session options are rejected on Mac Catalyst; `AudioEnvironmentMan
 
 ---
 
-## 12. Privacy and Policy Alignment
+## 13. Privacy and Policy Alignment
 
 AIO is designed to support Apple’s privacy expectations around recording:
 
