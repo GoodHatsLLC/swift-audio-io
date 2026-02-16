@@ -503,10 +503,10 @@
     }
 
     // MARK: - Engine Control Queue Helpers
-    //
+
     // Thread Domain: engineControl
     // All AVAudioEngine graph mutations must go through these helpers.
-
+    //
     nonisolated func runOnEngineControlQueue<T>(_ work: () -> T) -> T {
       engineControlQueue.sync(execute: work)
     }
