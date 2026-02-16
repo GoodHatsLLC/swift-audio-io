@@ -1,7 +1,7 @@
 # AIO Package - Audio I/O Engine
 
 **Location**: `Packages/AIO/`
-**Last Updated**: 2026-01-11
+**Last Updated**: 2026-02-16
 
 This file consolidates the previous `CLAUDE.md` content for this directory. `CLAUDE.md` remains as a symlink for backwards compatibility.
 
@@ -62,9 +62,10 @@ Contains:
 
 ## Products
 
-The package exposes two library products:
+The package exposes three library products:
 - **Tools**: Core utilities library (for standalone use)
 - **AIOEngine**: Full audio engine library (includes Tools)
+- **SystemLog**: Structured logging for the audio engine
 
 ## Testing
 
