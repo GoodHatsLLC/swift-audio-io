@@ -5,20 +5,14 @@ public final class Synchronized<Value>: Sendable {
 
   private let mut: Mut<Value>
 
-  public borrowing func withLock<Result>(
-    _ body: (inout Value) -> Result
-  ) -> Result {
-    mut.withLock(body)
-  }
-
-  public borrowing func withLock<Result, E>(
+  public nonisolated borrowing func withLock<Result, E>(
     _ body: (inout Value) throws(E) -> sending Result
-  ) throws(E) -> sending Result where E: AudioError {
+  ) throws(E) -> sending Result {
     try mut.withLock(body)
   }
 
   @discardableResult
-  public nonisolated func callAsFunction<T>(_ action: (inout Value) -> T) -> T {
+  public nonisolated func callAsFunction<T>(_ action: (inout Value) -> sending T) -> sending T {
     withLock { state in
       var s = state
       let it = action(&s)

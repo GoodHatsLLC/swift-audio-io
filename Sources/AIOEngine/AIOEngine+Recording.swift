@@ -796,7 +796,7 @@
         converter,
         converterInputFormat,
         converterOutputFormat,
-        convertedBuffer
+        convertedBufferT
       ) = state.withLock { state in
         (
           state.audioBuffers,
@@ -805,9 +805,10 @@
           state.tapConverter,
           state.tapConverterInputFormat,
           state.tapConverterOutputFormat,
-          state.tapConvertedBuffer
+          Transferring(state.tapConvertedBuffer)
         )
       }
+      let convertedBuffer = convertedBufferT.value
       guard let converter,
         let converterInputFormat,
         let converterOutputFormat,
