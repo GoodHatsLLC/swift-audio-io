@@ -41,9 +41,11 @@
       }
 
       // Snapshot format before reinstall for quality-change detection
-      let formatBefore = runOnEngineControlQueue { [engine = unsafe engine] in
-        engine.inputNode.outputFormat(forBus: 0)
-      }
+      let formatBefore =
+        state.withLock({ $0.tapConverterInputFormat })
+        ?? runOnEngineControlQueue { [engine = unsafe engine] in
+          engine.inputNode.inputFormat(forBus: 0)
+        }
 
       do {
         let result = try reinstallTap(
