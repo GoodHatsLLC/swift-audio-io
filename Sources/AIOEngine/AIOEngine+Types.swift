@@ -3,7 +3,7 @@
   import Atomics
   import Tools
 
-  struct EmptyAudioFileError: LocalizedError, Sendable {
+  struct EmptyAudioFileError: LocalizedError, Equatable, Sendable {
     let url: URL
 
     var errorDescription: String? {
@@ -11,7 +11,7 @@
     }
   }
 
-  struct MissingAudioFileError: LocalizedError, Sendable {
+  struct MissingAudioFileError: LocalizedError, Equatable, Sendable {
     let url: URL
 
     var errorDescription: String? {
@@ -19,7 +19,7 @@
     }
   }
 
-  enum WriterBackend: Sendable {
+  enum WriterBackend: Equatable, Sendable {
     case avAudioFile
     case extAudioFile
   }
@@ -105,7 +105,7 @@
     }
   }
 
-  struct WriterDrainTimeoutError: LocalizedError, Sendable {
+  struct WriterDrainTimeoutError: LocalizedError, Equatable, Sendable {
     let url: URL?
     let timeout: Duration
 
@@ -186,7 +186,7 @@
     let processingFormat: AVAudioFormat
   }
 
-  struct TimingPacket: Sendable {
+  struct TimingPacket: Equatable, Sendable {
     let startSampleTime: Int64
     let frameCount: Int
     let hostTime: UInt64?
@@ -250,13 +250,13 @@
     #endif
   }
 
-  enum WriterDrainOutcome: Sendable {
+  enum WriterDrainOutcome: Equatable, Sendable {
     case signaled
     case targetSatisfied
     case timedOut
   }
 
-  enum TapErrorCode: Int, Sendable {
+  enum TapErrorCode: Int, Equatable, Sendable {
     case converterMissing = 1
     case bufferTooSmall = 2
     case conversionFailed = 3
@@ -269,7 +269,7 @@
     let pollingInterval: Duration
   }
 
-  struct PlaybackResume: Sendable {
+  struct PlaybackResume: Equatable, Sendable {
     let fileURL: URL
     let time: TimeInterval
     let duration: TimeInterval
@@ -277,12 +277,12 @@
     let pollingInterval: Duration
   }
 
-  struct WriteFailure: Sendable {
+  struct WriteFailure: Equatable, Sendable {
     let url: URL?
     let error: ErrorContext
   }
 
-  struct WriteResult: Sendable {
+  struct WriteResult: Equatable, Sendable {
     let framesRead: Int
     let writeDuration: Duration?
   }

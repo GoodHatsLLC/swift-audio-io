@@ -705,19 +705,19 @@
     /// Thread Domain: MainActor (entry point), engineControl (graph mutations).
     @MainActor
     func gracefulStop() async {
+      log.info("gracefulStop requested")
       let tapBus = state.consume(\.installedTapBus)
       let busesToRemove = Array(Set([tapBus, 0].compactMap { $0 }))
-      log.info("🛑 gracefulStop starting (tapBus=\(String(describing: tapBus), privacy: .public))")
+      log.info("gracefulStop starting (tapBus=\(String(describing: tapBus), privacy: .public))")
       engineControlQueue.async { [weak self] in
         guard let self else { return }
         dispatchPrecondition(condition: .onQueue(self.engineControlQueue))
-        log.info("🛑 gracefulStop engine stop enqueued")
         for bus in busesToRemove {
           unsafe self.engine.inputNode.removeTap(onBus: bus)
         }
         unsafe self.engine.stop()
       }
-      log.info("🛑 gracefulStop draining writer sessions")
+      log.info("gracefulStop draining writer sessions")
       let drainCompleted = await withTaskGroup(of: Bool.self) { group in
         group.addTask { [self] in
           await self.stopAndDrainAllWriterSessions(notifyOnFailure: false)
@@ -734,16 +734,15 @@
       if !drainCompleted {
         let url = state[locked: \.recordingURL]
         let error = WriterDrainTimeoutError(url: url, timeout: stopDrainTimeout)
-        log.error("⏱️ stopAndDrainAllWriterSessions timed out: \(error, privacy: .public)")
+        log.error("stopAndDrainAllWriterSessions timed out: \(error, privacy: .public)")
         cancelAllWriterSessions()
         recordWriteFailure(ErrorContext(error), url: url)
       }
-      log.info("🛑 gracefulStop cleanup starting")
       cleanUp()
       isRecording = false
       wantsRecording = false
       reconciliationTask = nil
-      log.info("🛑 gracefulStop completed")
+      log.info("gracefulStop completed")
       deactivateAudioSessionIfNeeded(reason: "recording stopped")
     }
 
@@ -1363,10 +1362,7 @@
       guard let url = state[locked: \.recordingURL], isRecording else {
         throw AIOError.notRecording
       }
-      log.info("🛑 stopRecording requested for \(url.lastPathComponent, privacy: .public)")
       await gracefulStop()
-      log.info(
-        "🛑 stopRecording finished gracefulStop for \(url.lastPathComponent, privacy: .public)")
       let fileExists = FileManager.default.fileExists(atPath: url.path)
       let fileSize = fileSizeValue(for: url)
       let failure = consumeWriteFailure()
