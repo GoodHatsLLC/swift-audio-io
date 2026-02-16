@@ -130,7 +130,7 @@
         parts.append("inputUnavailable")
       }
       parts.append("\(inputNumberOfChannels)ch@\(Int(sampleRate))Hz")
-      parts.append("buffer=\(ioBufferDuration/1000.0)s")
+      parts.append("buffer=\(ioBufferDuration)s")
       return parts.joined(separator: "\n")
     }
   }

@@ -88,7 +88,7 @@
         unsafe self.engine.prepare()
 
         // 4. Read format — one read, one validation
-        let inputFormat = unsafe self.engine.inputNode.outputFormat(forBus: 0)
+        let inputFormat = unsafe self.engine.inputNode.inputFormat(forBus: 0)
         guard inputFormat.channelCount > 0 else {
           throw AIOError.audioSessionNotReady(
             details: "Input node has no channels (channelCount: 0)")
@@ -110,7 +110,7 @@
         unsafe self.engine.inputNode.installTap(
           onBus: tapConfig.bus,
           bufferSize: tapConfig.bufferSize,
-          format: nil,
+          format: inputFormat,
           block: { @Sendable [self] buffer, time in
             self.processAudio(
               buffer: buffer,
@@ -122,11 +122,17 @@
 
         // 7. Prepare post-install, read actual format
         unsafe self.engine.prepare()
-        let postInstallFormat = unsafe self.engine.inputNode.outputFormat(forBus: 0)
+        let postInstallFormat = unsafe self.engine.inputNode.inputFormat(forBus: 0)
         guard postInstallFormat.channelCount > 0, postInstallFormat.sampleRate > 0 else {
           throw AIOError.invalidRecordingConfiguration(
             details:
               "Format invalid after tap install (channels: \(postInstallFormat.channelCount), sampleRate: \(postInstallFormat.sampleRate))"
+          )
+        }
+        guard postInstallFormat.isEqual(inputFormat) else {
+          throw AIOError.invalidRecordingConfiguration(
+            details:
+              "Format changed after tap install (channels: \(inputFormat.channelCount), sampleRate: \(inputFormat.sampleRate)) -> (channels: \(postInstallFormat.channelCount), sampleRate: \(postInstallFormat.sampleRate))"
           )
         }
 
