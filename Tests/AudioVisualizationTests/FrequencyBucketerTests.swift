@@ -203,7 +203,8 @@
 
       // Peak hold should equal magnitude (no prior peak to decay from)
       for bucket in buckets {
-        #expect(bucket.peakHold <= bucket.magnitude + 0.001)  // Small tolerance for float comparison
+        // Small tolerance for float comparison
+        #expect(bucket.peakHold <= bucket.magnitude + 0.001)
       }
     }
 

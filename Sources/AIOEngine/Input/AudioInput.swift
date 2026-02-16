@@ -176,12 +176,14 @@
       /// Input that does not correspond to real audio hardware
       case virtual
       /// Input connected via the PCI (Peripheral Component Interconnect) bus
+      // swift-format-ignore: AlwaysUseLowerCamelCase
       case PCI
       /// Input connected via FireWire
       case fireWire
       /// Input connected via DisplayPort
       case displayPort
       /// Input connected via AVB (Audio Video Bridging)
+      // swift-format-ignore: AlwaysUseLowerCamelCase
       case AVB
       /// Input connected via Thunderbolt
       case thunderbolt

@@ -108,11 +108,11 @@
                 let startIndex = Int(Float(i) * stride)
                 let endIndex = Int(Float(i + 1) * stride)
                 let effectiveEndIndex = min(endIndex, inputSize)
-                let N = vDSP_Length(effectiveEndIndex - startIndex)
+                let count = vDSP_Length(effectiveEndIndex - startIndex)
 
-                if N > 0 {
+                if count > 0 {
                   unsafe vDSP_meamgv(
-                    source.advanced(by: startIndex), 1, destination.advanced(by: i), N)
+                    source.advanced(by: startIndex), 1, destination.advanced(by: i), count)
                 } else {
                   unsafe destination[i] = 0.0
                 }

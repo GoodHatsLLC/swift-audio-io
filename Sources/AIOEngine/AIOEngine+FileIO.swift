@@ -25,11 +25,11 @@
 
     /// Detaches all buffer receivers from the engine.
     public nonisolated func detachBufferReceivers() async {
-      self.bufferReceivers({ b in
+      for receiver in self.bufferReceivers({ b in
         defer { b = [] }
         return b
-      }).forEach {
-        $0.endBufferTask()
+      }) {
+        receiver.endBufferTask()
       }
     }
 
