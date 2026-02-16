@@ -259,11 +259,17 @@
         fileURL: writer.fileURL
       )
       writerSession = session
+      let writeBufferSize = 1024
+      let preAllocatedBuffer = AVAudioPCMBuffer(
+        pcmFormat: processingFormat,
+        frameCapacity: AVAudioFrameCount(writeBufferSize)
+      )
       writerQueue.async { [control, localMetrics] in
         AIOEngine.writerLoopSync(
           writer: writer,
           format: processingFormat,
           audioBuffers: buffers,
+          writeBuffer: preAllocatedBuffer,
           control: control,
           metrics: localMetrics,
           shouldCancel: { [control] in
@@ -681,11 +687,13 @@
       )
     }
 
+    /// Thread Domain: MainActor (entry point), engineControl (graph mutations).
     @MainActor func hardStop() {
       let tapBus = state.consume(\.installedTapBus)
       let busesToRemove = Array(Set([tapBus, 0].compactMap { $0 }))
       runOnEngineControlQueue { [weak self] in
         guard let self else { return }
+        dispatchPrecondition(condition: .onQueue(self.engineControlQueue))
         for bus in busesToRemove {
           unsafe self.engine.inputNode.removeTap(onBus: bus)
         }
@@ -707,6 +715,7 @@
       cleanUp(closeFile: !hasActiveWriter)
     }
 
+    /// Thread Domain: MainActor (entry point), engineControl (graph mutations).
     @MainActor
     func gracefulStop() async {
       let tapBus = state.consume(\.installedTapBus)
@@ -714,6 +723,7 @@
       log.info("🛑 gracefulStop starting (tapBus=\(String(describing: tapBus), privacy: .public))")
       engineControlQueue.async { [weak self] in
         guard let self else { return }
+        dispatchPrecondition(condition: .onQueue(self.engineControlQueue))
         log.info("🛑 gracefulStop engine stop enqueued")
         for bus in busesToRemove {
           unsafe self.engine.inputNode.removeTap(onBus: bus)
@@ -768,47 +778,79 @@
         }
         return state.recordingWriter
       }
+      // Reset the cached tap snapshot so stale references are released.
+      tapSnapshotLock.withLock { $0 = .empty }
       if closeFile {
         writer?.close()
       }
       playbackTask = nil
     }
 
+    // MARK: - Thread Domain: tapCallback
+    //
     // Threading model for the audio pipeline:
-    // - Tap callback (processAudio): RT thread, must not block, allocate, or log.
-    // - Writer loop: writerQueue, file I/O only.
-    // - Engine control: engineControlQueue for graph mutations.
+    // - Tap callback (processAudio): semi-RT thread managed by AVAudioEngine's
+    //   internal RealtimeMessenger.mServiceQueue. Must avoid blocking locks,
+    //   heap allocations, and ObjC messaging where possible. Uses
+    //   withLockIfAvailable for non-blocking state access with a cached
+    //   snapshot fallback.
+    // - Writer loop: writerQueue (serial, .userInitiated), file I/O only.
+    // - Engine control: engineControlQueue (serial, .default) for all
+    //   AVAudioEngine graph mutations.
+    // - Receiver loop: receiverQueue (serial, .userInitiated), visualization.
     nonisolated func processAudio(
       buffer: AVAudioPCMBuffer,
       time: AVAudioTime?,
       to processingFormat: AVAudioFormat
     ) {
       #if DEBUG
+        tapThreadChecker.checkThread()
         let tapStart = DispatchTime.now().uptimeNanoseconds
       #endif
       let frameLength = buffer.frameLength
       guard frameLength > 0 else { return }
 
-      let (
-        audioBuffers,
-        receiverBuffers,
-        timingBuffer,
-        converter,
-        converterInputFormat,
-        converterOutputFormat,
-        convertedBufferT
-      ) = state.withLock { state in
-        (
-          state.audioBuffers,
-          state.receiverBuffers,
-          state.receiverTiming,
-          state.tapConverter,
-          state.tapConverterInputFormat,
-          state.tapConverterOutputFormat,
-          Transferring(state.tapConvertedBuffer)
-        )
+      // Try non-blocking lock on the main state first to get a fresh snapshot.
+      // This eliminates priority inversion risk on the tap thread when the
+      // MainActor or engineControlQueue holds the lock during route changes
+      // or recording start/stop.
+      let snapshot: TapSnapshot
+      if let locked = state.withLock(ifAvailable: { state in
+        Transferring(TapSnapshot(
+          audioBuffers: state.audioBuffers,
+          receiverBuffers: state.receiverBuffers,
+          receiverTiming: state.receiverTiming,
+          converter: state.tapConverter,
+          converterInputFormat: state.tapConverterInputFormat,
+          converterOutputFormat: state.tapConverterOutputFormat,
+          convertedBuffer: state.tapConvertedBuffer
+        ))
+      }) {
+        snapshot = locked.value
+        // Update the cached copy for future fallback reads.
+        // Uses withLockIfAvailable — if the snapshot lock is contended
+        // (a writer is updating), skip the cache update. The write path
+        // will set the authoritative value anyway.
+        tapSnapshotLock.withLockIfAvailable { $0 = locked.value }
+      } else {
+        // Main state lock contended — read the last-known-good snapshot
+        // from the dedicated snapshot lock (nanosecond hold time).
+        if let cached = tapSnapshotLock.withLockIfAvailable({ Transferring($0) }) {
+          snapshot = cached.value
+        } else {
+          // Both locks contended simultaneously (vanishingly rare).
+          // Skip this tap callback entirely rather than risk blocking.
+          return
+        }
       }
-      let convertedBuffer = convertedBufferT.value
+
+      let audioBuffers = snapshot.audioBuffers
+      let receiverBuffers = snapshot.receiverBuffers
+      let timingBuffer = snapshot.receiverTiming
+      let converter = snapshot.converter
+      let converterInputFormat = snapshot.converterInputFormat
+      let converterOutputFormat = snapshot.converterOutputFormat
+      let convertedBuffer = snapshot.convertedBuffer
       guard let converter,
         let converterInputFormat,
         let converterOutputFormat,
@@ -980,18 +1022,30 @@
         )
         return
       }
-      state.withLock { state in
+      let wrapped = state.withLock { state -> Transferring<TapSnapshot> in
         state.tapConvertedBuffer = buffer
+        return Transferring(TapSnapshot(
+          audioBuffers: state.audioBuffers,
+          receiverBuffers: state.receiverBuffers,
+          receiverTiming: state.receiverTiming,
+          converter: state.tapConverter,
+          converterInputFormat: state.tapConverterInputFormat,
+          converterOutputFormat: state.tapConverterOutputFormat,
+          convertedBuffer: state.tapConvertedBuffer
+        ))
       }
+      tapSnapshotLock.withLock { $0 = wrapped.value }
       log.warning(
         "Resized tap buffer to \(requested, privacy: .public) frames"
       )
     }
 
+    /// Thread Domain: writerQueue
     static func writerLoopSync(
       writer: any RecordingFileWriter,
       format: AVAudioFormat,
       audioBuffers: [SPSCRingBuffer<Float>],
+      writeBuffer: AVAudioPCMBuffer?,
       control: WriterControl,
       metrics: EngineMetrics,
       shouldCancel: @escaping @Sendable () -> Bool,
@@ -1018,7 +1072,8 @@
           size: bufferSize,
           from: audioBuffers,
           in: format,
-          to: writer
+          to: writer,
+          using: writeBuffer
         )
         switch result {
         case .success(let writeResult):
@@ -1097,6 +1152,7 @@
       log.info("🧹 writerLoop exiting for \(writer.fileURL.lastPathComponent, privacy: .public)")
       Task { await control.drainSignal.signal() }
     }
+    /// Thread Domain: receiverQueue
     // swift-format-ignore
     static func receiverLoopSync(
       buffers: [SPSCRingBuffer<Float>],
@@ -1206,11 +1262,17 @@
       }
     }
 
+    /// Thread Domain: writerQueue
+    ///
+    /// - Parameter reusableBuffer: A pre-allocated buffer to reuse across calls,
+    ///   eliminating per-chunk `AVAudioPCMBuffer` heap allocations. If `nil`,
+    ///   a new buffer is allocated (fallback for edge cases).
     static func flushChunk(
       size bufferSize: Int,
       from audioBuffers: [SPSCRingBuffer<Float>],
       in audioFormat: AVAudioFormat,
-      to writer: any RecordingFileWriter
+      to writer: any RecordingFileWriter,
+      using reusableBuffer: AVAudioPCMBuffer? = nil
     ) -> Result<WriteResult, any Error> {
       let channelCount = Int(audioFormat.channelCount)
       let framesToRead = minimumAvailableFrames(
@@ -1223,13 +1285,20 @@
         return .success(.init(framesRead: 0, writeDuration: nil))
       }
 
-      guard
-        let pcmBuffer = AVAudioPCMBuffer(
-          pcmFormat: audioFormat,
-          frameCapacity: AVAudioFrameCount(bufferSize)
-        )
-      else {
-        return .success(.init(framesRead: 0, writeDuration: nil))
+      // Prefer the pre-allocated buffer; fall back to a fresh allocation.
+      let pcmBuffer: AVAudioPCMBuffer
+      if let reusableBuffer, reusableBuffer.frameCapacity >= AVAudioFrameCount(bufferSize) {
+        pcmBuffer = reusableBuffer
+      } else {
+        guard
+          let freshBuffer = AVAudioPCMBuffer(
+            pcmFormat: audioFormat,
+            frameCapacity: AVAudioFrameCount(bufferSize)
+          )
+        else {
+          return .success(.init(framesRead: 0, writeDuration: nil))
+        }
+        pcmBuffer = freshBuffer
       }
 
       var actualFrames = framesToRead
@@ -1406,12 +1475,23 @@
         state[locked: \.recordingWriter]?.close()
       }
 
-      // Update state with new file
-      state {
-        $0.recordingWriter = newWriter
-        $0.recordingURL = newURL
-        $0.audioBuffers = newBuffers
+      // Update state with new file and refresh the cached tap snapshot so the
+      // tap thread sees the new ring buffers on its next fallback read.
+      let wrapped = state { state -> Transferring<TapSnapshot> in
+        state.recordingWriter = newWriter
+        state.recordingURL = newURL
+        state.audioBuffers = newBuffers
+        return Transferring(TapSnapshot(
+          audioBuffers: state.audioBuffers,
+          receiverBuffers: state.receiverBuffers,
+          receiverTiming: state.receiverTiming,
+          converter: state.tapConverter,
+          converterInputFormat: state.tapConverterInputFormat,
+          converterOutputFormat: state.tapConverterOutputFormat,
+          convertedBuffer: state.tapConvertedBuffer
+        ))
       }
+      tapSnapshotLock.withLock { $0 = wrapped.value }
 
       // Start new writer loop for the new file
       startFileWriteLoop(flushing: newBuffers, of: format, to: newWriter)

@@ -126,7 +126,19 @@ public struct AudioEnvironment: Sendable {
 }
 
 extension AudioEnvironment {
-  /// A struct that provides asynchronous streams for audio environment notifications.
+  /// Asynchronous streams for AVAudioSession system notifications.
+  ///
+  /// ## Threading Contract
+  ///
+  /// AVAudioSession notifications arrive on Apple's internal "AVAudioSession Notify
+  /// Thread", **not** the main thread. The `compactMap`/`map` closures in each stream
+  /// property execute on that originating thread — they only parse `userInfo`
+  /// dictionaries and perform no mutable state access, so this is safe.
+  ///
+  /// The actual event handlers run on `@MainActor` because
+  /// `AudioEnvironmentManager.subscribe()` consumes these streams via `for await` inside
+  /// tasks that inherit MainActor isolation. Handlers passed to `AIOEngine`
+  /// (`handleRouteChange`, `handleInterruption`, etc.) are also `@MainActor`.
   public struct Notifications: Sendable {
     /// Creates a new `Notifications` instance.
     ///

@@ -66,6 +66,7 @@
       let installResult = runOnEngineControlQueueResult {
         [weak self] () throws -> TapInstallResult in
         guard let self else { throw AIOError.engineError }
+        dispatchPrecondition(condition: .onQueue(self.engineControlQueue))
 
         // 1. Remove existing tap
         let previousBus = self.state[locked: \.installedTapBus] ?? 0
@@ -160,14 +161,31 @@
     }
 
     /// Applies tap install results to engine state.
+    ///
+    /// Thread Domain: engineControl (called from `reinstallTap` on the engine
+    /// control queue, or from `warm()` on MainActor after the queue dispatch).
     func applyTapInstallResult(_ result: TapInstallResult, processingFormat: AVAudioFormat) {
-      state {
-        $0.tapConverter = result.artifacts.converter
-        $0.tapConverterInputFormat = result.artifacts.inputFormat
-        $0.tapConverterOutputFormat = processingFormat
-        $0.tapConvertedBuffer = result.artifacts.convertedBuffer
-        $0.installedTapBus = result.tapConfiguration.bus
+      let wrapped = state { state -> Transferring<TapSnapshot> in
+        state.tapConverter = result.artifacts.converter
+        state.tapConverterInputFormat = result.artifacts.inputFormat
+        state.tapConverterOutputFormat = processingFormat
+        state.tapConvertedBuffer = result.artifacts.convertedBuffer
+        state.installedTapBus = result.tapConfiguration.bus
+        return Transferring(TapSnapshot(
+          audioBuffers: state.audioBuffers,
+          receiverBuffers: state.receiverBuffers,
+          receiverTiming: state.receiverTiming,
+          converter: state.tapConverter,
+          converterInputFormat: state.tapConverterInputFormat,
+          converterOutputFormat: state.tapConverterOutputFormat,
+          convertedBuffer: state.tapConvertedBuffer
+        ))
       }
+      tapSnapshotLock.withLock { $0 = wrapped.value }
+      #if DEBUG
+        // The new tap may run on a different internal thread after reinstallation.
+        tapThreadChecker.reset()
+      #endif
     }
   }
 #endif
