@@ -1,15 +1,15 @@
 extension Optional {
-  public func orElse(_ transform: @autoclosure () -> Wrapped) -> Wrapped {
+  package func orElse(_ transform: @autoclosure () -> Wrapped) -> Wrapped {
     self ?? transform()
   }
-  public struct MissingWrappedValue<T>: AudioError {
-    public init() {}
+  package struct MissingWrappedValue<T>: AudioError {
+    package init() {}
 
-    public var description: String {
+    package var description: String {
       "Missing wrapped value for Optional<\(T.self)>"
     }
   }
-  public func orThrow() throws(MissingWrappedValue<Wrapped>) -> Wrapped {
+  package func orThrow() throws(MissingWrappedValue<Wrapped>) -> Wrapped {
     if let value = self {
       return value
     } else {

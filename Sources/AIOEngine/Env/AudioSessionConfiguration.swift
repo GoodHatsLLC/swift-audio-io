@@ -24,7 +24,7 @@ public struct AudioSessionConfiguration: Sendable, Hashable {
     self.prefersInterruptionOnRouteDisconnect = prefersInterruptionOnRouteDisconnect
   }
 
-  public static var recorderDefault: AudioSessionConfiguration {
+  public static func recorderDefault(measurement: Bool) -> AudioSessionConfiguration {
     #if os(iOS)
       #if targetEnvironment(macCatalyst)
         let options: AVAudioSession.CategoryOptions = []
@@ -47,7 +47,7 @@ public struct AudioSessionConfiguration: Sendable, Hashable {
 
     return AudioSessionConfiguration(
       category: .playAndRecord,
-      mode: .default,
+      mode: measurement ? .measurement : .default,
       options: options,
       allowsHapticsAndSystemSoundsDuringRecording: true,
       prefersNoInterruptionsFromSystemAlerts: true,

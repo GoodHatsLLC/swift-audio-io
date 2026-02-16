@@ -18,7 +18,7 @@
   /// - Allowing the user to select the preferred input, source, and sample rate.
   @MainActor
   @Observable
-  public class AudioEnvironmentManager {
+  public class AudioEnvironmentManager: AudioSessionDelegate {
     public enum ManagerError: AudioError {
       public enum AudioSessionOperation: String, Sendable, Equatable, CustomStringConvertible {
         case setCategory
@@ -65,11 +65,11 @@
     /// This intentionally does **not** activate the audio session; activation should only occur when
     /// the app has expressed an intent to capture or play audio.
     @MainActor
-    public static func prepareAudioSessionCategoryForAppLaunch() {
+    public static func prepareAudioSessionCategoryForAppLaunch(measurement: Bool) {
       do {
         try configureAudioSessionCategory(
           AVAudioSession.sharedInstance(),
-          configuration: .recorderDefault
+          configuration: .recorderDefault(measurement: measurement)
         )
       } catch {
         log.error(
@@ -156,7 +156,7 @@
     /// The underlying `AVAudioSession`.
     public var session: AVAudioSession { env.session }
     /// The preferred category/mode/options for this environment.
-    public var sessionConfiguration: AudioSessionConfiguration = .recorderDefault
+    public var sessionConfiguration: AudioSessionConfiguration = .recorderDefault(measurement: true)
     private let errorManager: any ErrorManaging
     private let defaults: UserDefaults
 
