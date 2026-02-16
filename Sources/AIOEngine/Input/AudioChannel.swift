@@ -3,6 +3,7 @@
 
   #if os(macOS)
     public typealias PlatformChannel = AudioChannelDescription
+    // swift-format-ignore: AvoidRetroactiveConformances
     extension PlatformChannel: @retroactive Hashable {
       public static func == (lhs: PlatformChannel, rhs: PlatformChannel) -> Bool {
         lhs.mChannelLabel == rhs.mChannelLabel

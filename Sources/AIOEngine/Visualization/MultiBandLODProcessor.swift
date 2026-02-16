@@ -402,8 +402,8 @@
         let w0 = 2.0 * Float.pi * freq / Float(configuration.sampleRate)
         let cosW = cos(w0)
         let sinW = sin(w0)
-        let Q: Float = 0.5
-        let alpha = sinW / (2.0 * Q)
+        let q: Float = 0.5
+        let alpha = sinW / (2.0 * q)
 
         let a0 = 1.0 + alpha
         let b0 = (1.0 - cosW) / 2.0

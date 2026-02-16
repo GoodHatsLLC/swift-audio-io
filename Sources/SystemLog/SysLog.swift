@@ -1394,6 +1394,7 @@ public enum SystemLog {
   }
 }
 
+// swift-format-ignore: AvoidRetroactiveConformances
 extension OSLogEntryLog: @retroactive Identifiable {}
 
 extension OSLogEntryLog.Level {
