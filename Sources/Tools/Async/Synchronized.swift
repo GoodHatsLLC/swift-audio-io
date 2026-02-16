@@ -16,8 +16,8 @@ public final class Synchronized<Value>: Sendable {
   ///
   /// This is useful on latency-sensitive threads (e.g. audio tap callbacks)
   /// where blocking on a contended lock could cause jitter.
-  public nonisolated borrowing func withLock<Result, E>(
-    ifAvailable body: (inout Value) throws(E) -> sending Result
+  public nonisolated borrowing func withLockIfAvailable<Result, E>(
+    _ body: (inout Value) throws(E) -> sending Result
   ) throws(E) -> sending Result? {
     try mut.withLockIfAvailable(body)
   }
