@@ -65,11 +65,11 @@
     /// This intentionally does **not** activate the audio session; activation should only occur when
     /// the app has expressed an intent to capture or play audio.
     @MainActor
-    public static func prepareAudioSessionCategoryForAppLaunch(measurement: Bool) {
+    public static func prepareAudioSessionCategoryForAppLaunch() {
       do {
         try configureAudioSessionCategory(
           AVAudioSession.sharedInstance(),
-          configuration: .recorderDefault(measurement: measurement)
+          configuration: .recordingConfiguration
         )
       } catch {
         log.error(
@@ -150,13 +150,14 @@
       _availableSources = env.input?.availableSources ?? []
       _orientation = .none
       _selectedNumberOfChannels = (env.input?.channelCount) ?? .mono
+      _useMeasurement = defaults.bool(forKey: StorageKey.useMeasurement)
       self.persistedInputPreferencesById = Self.loadInputPreferences(from: defaults)
     }
     private let env: AudioEnvironment
     /// The underlying `AVAudioSession`.
     public var session: AVAudioSession { env.session }
     /// The preferred category/mode/options for this environment.
-    public var sessionConfiguration: AudioSessionConfiguration = .recorderDefault(measurement: true)
+    public var sessionConfiguration: AudioSessionConfiguration = .recordingConfiguration
     private let errorManager: any ErrorManaging
     private let defaults: UserDefaults
 
@@ -170,6 +171,7 @@
     private enum StorageKey {
       static let preferredInputId = "aio.audio_env.preferred_input_id.v1"
       static let inputPrefsById = "aio.audio_env.input_prefs_by_id.v1"
+      static let useMeasurement = "aio.audio_env.use_measurement"
     }
 
     private var persistedInputPreferencesById: [String: PersistedInputPreferences] = [:]
@@ -178,6 +180,14 @@
     public var shouldAutoSelectStereoWhenAvailable: Bool {
       let inputId = env.input?.id ?? "_default"
       return persistedInputPreferencesById[inputId] == nil
+    }
+
+    public var useMeasurement: Bool = AudioSessionConfiguration.useMeasurement {
+      willSet {
+        if AudioSessionConfiguration.useMeasurement != newValue {
+          AudioSessionConfiguration.useMeasurement = newValue
+        }
+      }
     }
 
     /// A Boolean value that indicates whether this `AudioEnvironmentManager` is fully primed and subscribed.
@@ -349,12 +359,8 @@
     /// This list starts from common rates and removes rates previously rejected by
     /// the active route. The currently active sample rate is always included.
     public var likelySupportedSampleRates: [SampleRate] {
-      let inputId = env.input?.id ?? "_default"
-      let rejected = Set(persistedInputPreferencesById[inputId]?.rejectedSampleRatesHz ?? [])
-
       return [
         commonSampleRates
-          .filter { !rejected.contains($0.rawValue) }
           + [env.sampleRate]
           + [_selectedSampleRate]
       ].flatMap { $0 }
@@ -380,12 +386,7 @@
           let actual = env.sampleRate
           if actual == newValue {
             log.info("􁐚 Sample rate set to requested value: \(newValue, privacy: .public)")
-            if persistPreference {
-              persistInputPreferencesIfNeeded { prefs in
-                prefs.rejectedSampleRatesHz = (prefs.rejectedSampleRatesHz ?? [])
-                  .filter { $0 != newValue.rawValue }
-              }
-            }
+
           } else {
             log
               .info(

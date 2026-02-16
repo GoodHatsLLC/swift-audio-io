@@ -385,7 +385,7 @@
 
     /// Preferred audio session category/mode/options for this engine.
     @MainActor public var recordingSessionConfiguration: AudioSessionConfiguration =
-      .recorderDefault(measurement: true)
+      .recordingConfiguration
     /// Policy controlling whether the engine mutates `AVAudioSession` directly
     /// or delegates activation to a higher-level session authority.
     @MainActor public var audioSessionDelegate: (any AudioSessionDelegate)?

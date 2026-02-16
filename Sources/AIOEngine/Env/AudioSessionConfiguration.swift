@@ -22,9 +22,27 @@ public struct AudioSessionConfiguration: Sendable, Hashable {
     self.allowsHapticsAndSystemSoundsDuringRecording = allowsHapticsAndSystemSoundsDuringRecording
     self.prefersNoInterruptionsFromSystemAlerts = prefersNoInterruptionsFromSystemAlerts
     self.prefersInterruptionOnRouteDisconnect = prefersInterruptionOnRouteDisconnect
+    // FIXME: this is a hack - it indicates all modes should be settable.
+    if mode != .measurement {
+      UserDefaults.standard.setValue(false, forKey: StorageKey.useMeasurement)
+    }
+  }
+  private enum StorageKey {
+    static let useMeasurement = "aio.audio_session_conf.use_measurement"
+  }
+  public static var useMeasurement: Bool {
+    get {
+      UserDefaults.standard.bool(forKey: StorageKey.useMeasurement)
+    }
+    set {
+      let current = useMeasurement
+      if newValue != current {
+        UserDefaults.standard.setValue(newValue, forKey: StorageKey.useMeasurement)
+      }
+    }
   }
 
-  public static func recorderDefault(measurement: Bool) -> AudioSessionConfiguration {
+  public static var recordingConfiguration: AudioSessionConfiguration {
     #if os(iOS)
       #if targetEnvironment(macCatalyst)
         let options: AVAudioSession.CategoryOptions = []
@@ -47,7 +65,7 @@ public struct AudioSessionConfiguration: Sendable, Hashable {
 
     return AudioSessionConfiguration(
       category: .playAndRecord,
-      mode: measurement ? .measurement : .default,
+      mode: useMeasurement ? .measurement : .default,
       options: options,
       allowsHapticsAndSystemSoundsDuringRecording: true,
       prefersNoInterruptionsFromSystemAlerts: true,
@@ -55,7 +73,7 @@ public struct AudioSessionConfiguration: Sendable, Hashable {
     )
   }
 
-  public static var playbackDefault: AudioSessionConfiguration {
+  public static var playbackConfiguration: AudioSessionConfiguration {
     #if os(iOS)
       #if targetEnvironment(macCatalyst)
         let options: AVAudioSession.CategoryOptions = []
