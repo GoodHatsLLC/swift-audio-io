@@ -21,27 +21,9 @@ extension Mut {
     #endif
   }
 
-  public borrowing func withLock<Result>(
-    _ body: (inout Value) -> Result
-  ) -> Result {
-    #if canImport(Synchronization)
-      return lock.withLock { (v) -> Transferring<Result> in
-        nonisolated(unsafe) var copy = v
-        defer { v = unsafe copy }
-        return unsafe Transferring(body(&copy))
-      }.value
-    #else
-      return lock.withLockUnchecked { (v) -> Transferring<Result> in
-        nonisolated(unsafe) var copy = v
-        defer { v = copy }
-        return Transferring(body(&copy))
-      }.value
-    #endif
-  }
-
   public borrowing func withLock<Result, E>(
     _ body: (inout sending Value) throws(E) -> sending Result
-  ) throws(E) -> sending Result where E: AudioError {
+  ) throws(E) -> sending Result {
     do {
       #if canImport(Synchronization)
         return try lock.withLock { (v) -> Transferring<Result> in
@@ -63,27 +45,9 @@ extension Mut {
     }
   }
 
-  public borrowing func withLockIfAvailable<Result>(
-    _ body: (inout sending Value) -> sending Result
-  ) -> sending Result? {
-    #if canImport(Synchronization)
-      return lock.withLockIfAvailable { (v) -> Transferring<Result> in
-        nonisolated(unsafe) var copy = v
-        defer { v = unsafe copy }
-        return unsafe Transferring(body(&copy))
-      }?.value
-    #else
-      return lock.withLockIfAvailableUnchecked { (v) -> Transferring<Result> in
-        nonisolated(unsafe) var copy = v
-        defer { v = copy }
-        return Transferring(body(&copy))
-      }?.value
-    #endif
-  }
-
   public borrowing func withLockIfAvailable<Result, E>(
     _ body: (inout sending Value) throws(E) -> sending Result
-  ) throws(E) -> sending Result? where E: AudioError {
+  ) throws(E) -> sending Result? {
     do {
       #if canImport(Synchronization)
         return try lock.withLockIfAvailable { (v) -> Transferring<Result> in
