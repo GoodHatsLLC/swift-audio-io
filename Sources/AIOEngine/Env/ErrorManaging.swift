@@ -1,4 +1,4 @@
-public import Observation
+internal import Observation
 public import SystemLog
 
 /// A narrow, injectable interface for error reporting.
