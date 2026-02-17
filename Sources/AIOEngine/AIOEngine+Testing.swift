@@ -204,6 +204,16 @@
         )
       }
 
+      /// Returns a closure that wraps ``processAudio(buffer:time:to:)`` for the given format.
+      /// Useful for verifying the tap handler can run off the main queue.
+      public nonisolated func makeTapHandlerForTesting(
+        processingFormat: AVAudioFormat
+      ) -> @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void {
+        { [self] buffer, time in
+          self.processAudio(buffer: buffer, time: time, to: processingFormat)
+        }
+      }
+
       /// Deterministically simulates route/input/sample-rate changes while recording.
       ///
       /// Bypasses `AVAudioEngine` graph mutation and only exercises the continuation vs stop
