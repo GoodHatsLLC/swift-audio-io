@@ -269,7 +269,6 @@
     @MainActor
     public func scrub(
       to time: TimeInterval,
-      play: Bool,
       updatePlaybackTimer: Bool = true
     ) throws(AIOError) -> Playback? {
       if let initialInstance = state[locked: \.playbackInstance] {
@@ -292,14 +291,14 @@
             framePosition: framePosition,
             file: file,
             newInstance: newInstance,
-            play: play
+            play: playback.isPlaying
           )
         }
 
         let newPlayback = Playback(
           id: newInstance.id,
           file: file.url,
-          isPlaying: play,
+          isPlaying: playback.isPlaying,
           time: time,
           duration: playback.duration
         )
@@ -313,11 +312,6 @@
       } else {
         return nil
       }
-    }
-
-    @MainActor
-    public func scrubPlay(to time: TimeInterval) throws(AIOError) -> Playback? {
-      try scrub(to: time, play: true)
     }
 
     /// Stops the current playback.
