@@ -85,12 +85,12 @@ The package has comprehensive test coverage:
 
 ## Building & Testing
 
-Preferred: use XcodeBuildMCP for builds/tests (workspace + simulator aware). Use raw `xcodebuild` only as a backup when MCP isn’t available.
+Preferred: use XcodeBuildMCP (MCP server or `xcodebuildmcp` CLI) for builds/tests (workspace + simulator aware). Use raw `xcodebuild` only as a backup when neither is available.
 
-If you’re iterating on parts of the package that can run directly on the host (no iOS-only APIs), prefer SwiftPM via `xcrun` for fast feedback.
+If you're iterating on parts of the package that can run directly on the host (no iOS-only APIs), prefer SwiftPM via `xcrun` for fast feedback.
 
-### Preferred (XcodeBuildMCP)
-See `DETAILS_BUILD_MCP.md`. Use scheme `AIOTests` (or `ToolsTests`, `AudioVisualizationTests`) and run `mcp__XcodeBuildMCP__test_sim`.
+### Preferred (XcodeBuildMCP MCP server or CLI)
+See `DETAILS_BUILD_MCP.md`. Use scheme `AIOTests` (or `ToolsTests`, `AudioVisualizationTests`) and run `mcp__XcodeBuildMCP__test_sim` or `xcodebuildmcp test-sim --workspace Recorder.xcworkspace --scheme AIOTests --simulator-name "iPhone 17 Pro"`.
 
 ### Host SwiftPM (When Compatible)
 ```bash
@@ -103,7 +103,7 @@ xcodebuild test -workspace Recorder.xcworkspace -scheme AIOTests -destination 'p
 ```
 
 ### Claude Code Slash Commands (Optional)
-If you’re using Claude Code in this repo, see `.claude/AGENTS.md` for the full slash-command list (including `/test-aio`).
+If you're using Claude Code in this repo, see `.claude/AGENTS.md` for the full slash-command list (including `/test-aio`).
 
 ### Test Framework
 Tests use **Swift Testing** framework (`@Test` macros, `@Suite`), not XCTest.
@@ -111,7 +111,7 @@ Tests use **Swift Testing** framework (`@Test` macros, `@Suite`), not XCTest.
 ## Key Features
 
 - **Swift 6 Concurrency**: Full strict concurrency checking
-- **Platform Support**: iOS 18+, macOS 15+
+- **Platform Support**: iOS 26+, macCatalyst 26+
 - **Real-time Audio**: Low-latency audio processing
 - **Type Safety**: Strong typing with Swift 6
 - **Modular**: Clear separation between Tools and Engine
@@ -166,13 +166,13 @@ See `Sources/AIO.docc/MultiBandVisualization.md` for complete API documentation.
 
 Technical specs and design documents for the audio engine:
 
-- `SPEC_AIO.md` — AIO engine spec (architecture, recording pipeline, error handling)
-- `AUDIO_ENGINES.md` — Audio engine design comparison and rationale
-- `SPEC_AUDIO_VIZ.md` — Audio visualization pipeline spec
-- `waveform-and-segment-editing-infrastructure.md` — Waveform rendering and segment editing infrastructure
-- `waveform-memory-optimization-followups.md` — Memory optimization follow-ups for waveform data
-- `MultiBandVisualization.md` — Multi-band LOD API documentation
-- `MultiBandLODContract.md` — Multi-band LOD data contract
+- `SPEC_AIO.md` - AIO engine spec (architecture, recording pipeline, error handling)
+- `AUDIO_ENGINES.md` - Audio engine design comparison and rationale
+- `SPEC_AUDIO_VIZ.md` - Audio visualization pipeline spec
+- `waveform-and-segment-editing-infrastructure.md` - Waveform rendering and segment editing infrastructure
+- `waveform-memory-optimization-followups.md` - Memory optimization follow-ups for waveform data
+- `MultiBandVisualization.md` - Multi-band LOD API documentation
+- `MultiBandLODContract.md` - Multi-band LOD data contract
 
 ## Development Guidelines
 
@@ -217,7 +217,7 @@ Changes to AIO require rebuilding AppLibrary.
 
 The package uses conditional compilation:
 ```swift
-platforms: Platforms.apple  // iOS 18+, macOS 15+
+platforms: Platforms.apple  // iOS 26+, macCatalyst 26+
 ```
 
 Can be disabled with `NO_PLATFORMS` environment variable for testing.
