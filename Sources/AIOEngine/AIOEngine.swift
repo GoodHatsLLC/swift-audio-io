@@ -373,11 +373,6 @@
     @MainActor public internal(set) var isRecording: Bool = false
 
     /// The user's desired recording state.
-    ///
-    /// When set via ``setDesiredRecordingState(_:configuration:)``, the engine will
-    /// attempt to reconcile this with the actual ``isRecording`` state for the
-    /// configured timeout period. If reconciliation fails, this property is
-    /// automatically set back to match ``isRecording``.
     @MainActor public internal(set) var wantsRecording: Bool = false
 
     /// Configuration for state reconciliation attempts.
