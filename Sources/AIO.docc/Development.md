@@ -29,10 +29,10 @@ Preferred: use XcodeBuildMCP (from repo root):
 /test-aio
 ```
 
-Backup: run the full workspace test suite with the repo script (requires a booted iOS simulator):
+Backup: run the iOS Simulator test suite with the repo script:
 
 ```bash
-./bin/test.sh
+./bin/test-ios.sh
 ```
 
 To run a specific test suite, you can use the `--filter` option:
@@ -111,7 +111,7 @@ Example: `feat: add 96kHz sample rate support`
 #### Pull Requests
 
 *   State the problem and solution clearly.
-*   List verification steps (e.g., `./bin/test.sh`).
+*   List verification steps (e.g., `./bin/test-ios.sh`).
 *   Attach audio clips or screenshots for signal or UI changes.
 *   Link related issues in the footer (`Fixes #123`).
 *   Note any configuration or migration impacts.
