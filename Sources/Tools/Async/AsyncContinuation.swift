@@ -7,10 +7,25 @@ import Synchronization
 /// yield rather than crashing.
 ///
 /// - Tip: When possible, use `withCheckedContinuation` instead.
-public struct AsyncContinuation<Value: Sendable>: Sendable, ~Copyable {
+public final class AsyncContinuation<Value: Sendable>: Sendable {
   // MARK: Lifecycle
 
   public init() {}
+
+  //  deinit {
+  //    let pendingWaiterCount = continuations.withLock { state in
+  //      switch state {
+  //      case .yielded:
+  //        0
+  //      case .awaiting(let waiters):
+  //        waiters.count
+  //      }
+  //    }
+  //    precondition(
+  //      pendingWaiterCount == 0,
+  //      "AsyncContinuation<\(Value.self)> deinitialized with \(pendingWaiterCount) pending waiter(s)."
+  //    )
+  //  }
 
   // MARK: Public
 
@@ -26,7 +41,8 @@ public struct AsyncContinuation<Value: Sendable>: Sendable, ~Copyable {
 
   public let id: UUID = .init()
 
-  public static func == (lhs: borrowing Self, rhs: borrowing Self) -> Bool {
+  public static func == (lhs: borrowing AsyncContinuation, rhs: borrowing AsyncContinuation) -> Bool
+  {
     lhs.id == rhs.id
   }
 
@@ -36,14 +52,19 @@ public struct AsyncContinuation<Value: Sendable>: Sendable, ~Copyable {
 
   @discardableResult
   public func callAsFunction() async -> Value {
-    await withCheckedContinuation { c in
-      continuations.withLock { state in
+    await withCheckedContinuation { continuation in
+      let immediateValue = continuations.withLock { state -> Value? in
         switch state {
-        case .yielded(let t):
-          c.resume(returning: t)
-        case .awaiting(let others):
-          state = .awaiting(others + [c])
+        case .yielded(let yielded):
+          return yielded
+        case .awaiting(var waiters):
+          waiters.append(continuation)
+          state = .awaiting(waiters)
+          return nil
         }
+      }
+      if let immediateValue {
+        continuation.resume(returning: immediateValue)
       }
     }
   }
