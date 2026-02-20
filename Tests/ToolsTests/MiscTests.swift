@@ -3,7 +3,7 @@ import Testing
 @testable import Tools
 
 @Suite
-struct ToolsTests {
+struct MiscTests {
   @Test
   func durationSecondsConverts() {
     let duration = Duration.seconds(3)
