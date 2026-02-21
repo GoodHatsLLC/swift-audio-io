@@ -4,7 +4,7 @@ public import Foundation
 /// Type erasure of async sequences with a failure type.
 ///
 /// - Note: Relies fully on the upstream sequence for buffer control.
-extension AsyncThrowingStream where Failure == any Error {
+extension AsyncThrowingStream where Failure == any Error, Element: Sendable {
 
   /// Type erasure of a failable async sequence. (iOS 17 compatible)
   ///
@@ -16,9 +16,8 @@ extension AsyncThrowingStream where Failure == any Error {
     self = stream
     let it = Task {
       _ = isolation
-      var iter = source.makeAsyncIterator()
       do {
-        while let element = try await iter.next() {
+        for try await element in source {
           cont.yield(element)
         }
       } catch {
@@ -35,18 +34,15 @@ extension AsyncStream {
   /// Type erasure of non-failing async sequence.
   @available(iOS 18, *)
   public init<S: AsyncSequence>(isolation: isolated (any Actor)? = #isolation, _ source: S)
-  where S.Element == Element, S.Failure == Never {
+  where S.Element == Element, S.Failure == Never, Element: Sendable {
     let (stream, cont) = AsyncStream.makeStream()
 
     self = stream
     let it = Task {
       _ = isolation
-      var iter = source.makeAsyncIterator()
-      do {
-        while let element = try await iter.next() {
-          cont.yield(element)
-        }
-      } catch is Never {}
+      for await element in source {
+        cont.yield(element)
+      }
     }
     cont.onTermination = { _ in
       it.cancel()
@@ -60,16 +56,14 @@ extension AsyncStream {
     isolation: isolated (any Actor)? = #isolation,
     source: S,
     map transform: @escaping (S.Element) -> Element
-  ) where S.AsyncIterator == AsyncStream<S.Element>.AsyncIterator {
+  ) where S.AsyncIterator == AsyncStream<S.Element>.AsyncIterator, Element: Sendable {
     let (stream, cont) = AsyncStream.makeStream()
 
     self = stream
     let it = Task {
       _ = isolation
-      var iter = source.makeAsyncIterator()
-      while let element = await iter.next() {
-        let mappedElement = transform(element)
-        cont.yield(mappedElement)
+      for await element in source {
+        cont.yield(transform(element))
       }
     }
     cont.onTermination = { _ in
@@ -84,16 +78,15 @@ extension AsyncStream {
     isolation: isolated (any Actor)? = #isolation,
     source: S,
     compactMap transform: @escaping (S.Element) -> Element?
-  ) where S.AsyncIterator == AsyncStream<S.Element>.AsyncIterator {
+  ) where S.AsyncIterator == AsyncStream<S.Element>.AsyncIterator, Element: Sendable {
     let (stream, cont) = AsyncStream.makeStream()
 
     self = stream
     let it = Task {
       _ = isolation
-      var iter = source.makeAsyncIterator()
-      while let element = await iter.next() {
-        if let mappedElement = transform(element) {
-          cont.yield(mappedElement)
+      for await element in source {
+        if let element = transform(element) {
+          cont.yield(element)
         }
       }
     }
@@ -112,15 +105,14 @@ extension AsyncStream {
     isolation: isolated (any Actor)? = #isolation,
     source: S,
     map transform: @escaping (S.Element) -> Element
-  ) where S.AsyncIterator == NotificationCenter.Notifications.AsyncIterator {
+  ) where S.AsyncIterator == NotificationCenter.Notifications.AsyncIterator, Element: Sendable {
 
     let (stream, cont) = AsyncStream.makeStream()
 
     self = stream
     let it = Task {
       _ = isolation
-      let iter = source.makeAsyncIterator()
-      while let element = await iter.next() {
+      for await element in source {
         let mappedElement = transform(element)
         cont.yield(mappedElement)
       }
@@ -138,14 +130,13 @@ extension AsyncStream {
     isolation: isolated (any Actor)? = #isolation,
     source: S,
     compactMap transform: @escaping (S.Element) -> Element?
-  ) where S.AsyncIterator == NotificationCenter.Notifications.AsyncIterator {
+  ) where S.AsyncIterator == NotificationCenter.Notifications.AsyncIterator, Element: Sendable {
     let (stream, cont) = AsyncStream.makeStream()
 
     self = stream
     let it = Task {
       _ = isolation
-      let iter = source.makeAsyncIterator()
-      while let element = await iter.next() {
+      for await element in source {
         if let mappedElement = transform(element) {
           cont.yield(mappedElement)
         }
