@@ -1,4 +1,4 @@
-#if !os(macOS) || targetEnvironment(macCatalyst)
+#if os(iOS)
   import AVFoundation
   import AsyncAlgorithms
   import Atomics
@@ -721,6 +721,446 @@
         self.errorSubject.send(error)
       }
       return (poll, handler)
+    }
+  }
+#else
+  import AsyncAlgorithms
+  public import Foundation
+  public import Observation
+  import SystemLog
+  public import Tools
+
+  @Observable
+  public final class AIOEngine: Sendable {
+    public enum AudioSessionPolicy: Sendable {
+      case engineManaged
+      case delegated(setActive: @MainActor @Sendable (Bool) throws -> Void)
+    }
+
+    public enum AIOError: AudioError, LocalizedError {
+      public enum AudioSessionOperation: String, Sendable, Equatable, CustomStringConvertible {
+        case setCategory
+        case setPreferredSampleRate
+        case setPreferredIOBufferDuration
+        case setPreferredInputNumberOfChannels
+        case setAllowHapticsAndSystemSoundsDuringRecording
+        case setPrefersNoInterruptionsFromSystemAlerts
+        case setPrefersInterruptionOnRouteDisconnect
+        case setActive
+        case setPreferredInput
+        case overrideOutputAudioPort
+
+        public var description: String { rawValue }
+      }
+
+      public enum AudioFileOperation: String, Sendable, Equatable, CustomStringConvertible {
+        case openForReading
+        case openForWriting
+        case write
+
+        public var description: String { rawValue }
+      }
+
+      case notRecording
+      case notPlaying
+      case alreadyRecording
+      case cannotPlayWhileRecording
+      case engineError
+      case formatConversionFailed
+      case hardwareNotSupported
+      case audioSessionNotReady(details: String)
+      case invalidRecordingConfiguration(details: String)
+      case unsupportedEncodedSampleRate(
+        fileFormat: FileFormat,
+        sampleRate: Double,
+        supportedSampleRates: [Double]
+      )
+      case invalidScrubTime(details: Double)
+      case invalidScrubTrack
+      case invalidTimeRange
+      case engineStartFailed(error: ErrorContext)
+      case audioSessionFailed(operation: AudioSessionOperation, error: ErrorContext)
+      case audioFileFailed(operation: AudioFileOperation, url: URL?, error: ErrorContext)
+
+      public var errorDescription: String? {
+        switch self {
+        case .notRecording:
+          return "Not currently recording"
+        case .notPlaying:
+          return "Not currently playing"
+        case .alreadyRecording:
+          return "Already recording"
+        case .cannotPlayWhileRecording:
+          return "Cannot play audio while recording"
+        case .engineError:
+          return "Audio engine error"
+        case .formatConversionFailed:
+          return "Failed to convert audio format"
+        case .hardwareNotSupported:
+          return "Hardware configuration not supported"
+        case .audioSessionNotReady(let details):
+          return "Audio session not ready: \(details)"
+        case .invalidRecordingConfiguration(let details):
+          return "The recording configuration was not valid. \(details)"
+        case .unsupportedEncodedSampleRate(let fileFormat, let sampleRate, let supportedRates):
+          let requested = Int((sampleRate / 1000).rounded())
+          let supportedDescription =
+            supportedRates
+            .map { Int(($0 / 1000).rounded()) }
+            .map { "\($0)kHz" }
+            .joined(separator: ", ")
+          return
+            "The selected \(fileFormat.description) format does not support \(requested)kHz. Supported rates: \(supportedDescription)"
+        case .invalidScrubTime(let details):
+          return "Progress can only be scrubbed between 0..<1. (value: \(details))"
+        case .invalidScrubTrack:
+          return "A track must be playing to be scrubbed to a time"
+        case .invalidTimeRange:
+          return "The specified time range is invalid"
+        case .engineStartFailed(let error):
+          return "Audio engine failed to start: \(error)"
+        case .audioSessionFailed(let operation, let error):
+          return "Audio session operation '\(operation)' failed: \(error)"
+        case .audioFileFailed(let operation, let url, let error):
+          return
+            "Audio file operation '\(operation)' failed for \(url?.lastPathComponent ?? "missing URL"): \(error)"
+        }
+      }
+
+      public var description: String {
+        errorDescription ?? String(describing: self)
+      }
+
+      public var isTransient: Bool {
+        switch self {
+        case .audioSessionNotReady:
+          return true
+        default:
+          return false
+        }
+      }
+    }
+
+    public struct AudioQualityChange: Sendable {
+      public let reason: String
+      public let previousChannels: UInt32
+      public let currentChannels: UInt32
+      public let previousSampleRate: Double
+      public let currentSampleRate: Double
+
+      public var description: String {
+        "Format changed: \(previousChannels)ch@\(Int(previousSampleRate))Hz → \(currentChannels)ch@\(Int(currentSampleRate))Hz"
+      }
+    }
+
+    public enum RecordingInterruption: Sendable {
+      case routeChangeContinuing(event: AudioRouteChangeEvent, qualityChange: AudioQualityChange?)
+      case stoppedGracefully(reason: String)
+      case stoppedByInterruption(reason: String)
+
+      public var description: String {
+        switch self {
+        case .routeChangeContinuing(let event, let qualityChange):
+          if let change = qualityChange {
+            return "\(event.userMessage), continuing with: \(change.description)"
+          }
+          return "\(event.userMessage), continuing with same quality"
+        case .stoppedGracefully(let reason):
+          return "Recording stopped gracefully: \(reason)"
+        case .stoppedByInterruption(let reason):
+          return "Recording interrupted: \(reason)"
+        }
+      }
+    }
+
+    public struct Playback: Sendable, Hashable, Identifiable, Codable {
+      public init(
+        id: UUID,
+        file: URL,
+        isPlaying: Bool,
+        time: TimeInterval? = nil,
+        duration: TimeInterval
+      ) {
+        self.id = id
+        self.file = file
+        self.isPlaying = isPlaying
+        self.time = time
+        self.duration = duration
+      }
+
+      public let id: UUID
+      public let file: URL
+      public let isPlaying: Bool
+      public let time: TimeInterval?
+      public let duration: TimeInterval
+    }
+
+    @MainActor public var onRecordingInterruption:
+      (@Sendable @MainActor (RecordingInterruption) async -> Void)?
+    @MainActor public var onRecordingStarted: (@Sendable @MainActor (URL, String) -> Void)?
+    @MainActor public var onRecordingCompleted: (@Sendable @MainActor () -> Void)?
+    @MainActor public var onRecordingFailed: (@Sendable @MainActor () -> Void)?
+    @MainActor public var onSegmentCompleted: (@Sendable @MainActor (URL, String) -> Void)?
+    @MainActor public var onReconciliationFailed: (@Sendable @MainActor (Bool) -> Void)?
+    @MainActor public var onPlaybackStateChanged: (@Sendable @MainActor (Playback?) -> Void)?
+    @MainActor public var onPlaybackUpdated: (@Sendable @MainActor (Playback?) -> Void)?
+
+    @MainActor public var reconciliationConfiguration: ReconciliationConfiguration = .default
+    @MainActor public var recordingSessionConfiguration: AudioSessionConfiguration =
+      .recordingConfiguration
+    @MainActor public var sessionConfiguration: AudioSessionConfiguration {
+      get { recordingSessionConfiguration }
+      set { recordingSessionConfiguration = newValue }
+    }
+    @MainActor public var audioSessionPolicy: AudioSessionPolicy = .engineManaged
+    @MainActor public var deactivateAudioSessionOnStop: Bool = false
+    @MainActor public internal(set) var wantsRecording: Bool = false
+    @MainActor public private(set) var isRecording: Bool = false
+    @MainActor public private(set) var playback: Playback?
+    @MainActor public var defaultPlaybackPollingInterval: Duration = .seconds(0.5)
+    @MainActor public var isPlayback: Bool { playback != nil }
+    @MainActor public var isPlaying: Bool { playback?.isPlaying == true }
+
+    public let bufferReceivers: Synchronized<[any BufferReceiver<Float>]> = .init([])
+
+    let errorSubject: Subject<any Error> = .init()
+    @MainActor private var lastRecordingStartFailure: AIOError?
+    @MainActor private var currentRecordingURL: URL?
+
+    public var errors: AsyncBroadcaster<any Error> {
+      errorSubject.broadcaster
+    }
+
+    public init() {}
+
+    @MainActor public init(reconciliationConfiguration: ReconciliationConfiguration) {
+      self.reconciliationConfiguration = reconciliationConfiguration
+    }
+
+    @MainActor
+    public func consumeLastRecordingStartFailure() -> AIOError? {
+      defer { lastRecordingStartFailure = nil }
+      return lastRecordingStartFailure
+    }
+
+    @MainActor
+    public func setDesiredRecordingState(
+      _ desiredState: Bool,
+      configuration: RecordingConfiguration
+    ) async {
+      wantsRecording = desiredState
+      if desiredState {
+        await startRecordingWithReconciliation(configuration: configuration)
+      } else {
+        _ = await stopRecordingWithReconciliation()
+      }
+    }
+
+    @MainActor
+    public func startRecordingWithReconciliation(
+      configuration: RecordingConfiguration
+    ) async {
+      wantsRecording = true
+      do {
+        try await startRecording(configuration: configuration)
+      } catch {
+        lastRecordingStartFailure = error
+        wantsRecording = false
+        onRecordingFailed?()
+        onReconciliationFailed?(true)
+      }
+    }
+
+    @MainActor
+    public func stopRecordingWithReconciliation() async -> URL? {
+      wantsRecording = false
+      return try? await stopRecording()
+    }
+
+    @MainActor
+    public func warm(configuration: RecordingConfiguration) throws(AIOError) {
+      _ = configuration
+    }
+
+    @MainActor
+    public func updateRecordingTapInterval(_ interval: Duration) {
+      _ = interval
+    }
+
+    @MainActor
+    public func startRecording(configuration: RecordingConfiguration) async throws(AIOError) {
+      guard !isRecording else {
+        throw .alreadyRecording
+      }
+      let destination = try makeOutputURL(for: configuration)
+      currentRecordingURL = destination
+      isRecording = true
+      wantsRecording = true
+      onRecordingStarted?(destination, configuration.outputConfiguration.fileFormat.description)
+    }
+
+    @MainActor
+    public func stopRecording() async throws(AIOError) -> URL {
+      guard isRecording else {
+        throw .notRecording
+      }
+      isRecording = false
+      wantsRecording = false
+      let url = currentRecordingURL ?? makeTemporaryRecordingURL(fileFormat: .caf)
+      currentRecordingURL = nil
+      onRecordingCompleted?()
+      return url
+    }
+
+    @MainActor
+    public func rotateRecordingFile() async throws(AIOError) -> URL {
+      guard isRecording else {
+        throw .notRecording
+      }
+      let previousURL = currentRecordingURL ?? makeTemporaryRecordingURL(fileFormat: .caf)
+      let ext = previousURL.pathExtension.isEmpty ? "caf" : previousURL.pathExtension
+      let next = FileManager.default.temporaryDirectory
+        .appendingPathComponent("aio-macos-segment-\(UUID().uuidString)")
+        .appendingPathExtension(ext)
+      currentRecordingURL = next
+      onSegmentCompleted?(previousURL, ext.uppercased())
+      return previousURL
+    }
+
+    @MainActor
+    public func play(url: URL) async throws(AIOError) -> Playback {
+      try await play(url: url, playbackPollingInterval: nil)
+    }
+
+    @MainActor
+    public func play(url: URL, playbackPollingInterval: Duration?) async throws(AIOError)
+      -> Playback
+    {
+      _ = playbackPollingInterval
+      guard !isRecording else {
+        throw .cannotPlayWhileRecording
+      }
+      let next = Playback(id: UUID(), file: url, isPlaying: true, time: 0, duration: 0)
+      playback = next
+      onPlaybackStateChanged?(next)
+      onPlaybackUpdated?(next)
+      return next
+    }
+
+    @MainActor
+    public func playSegment(
+      url: URL,
+      startTime: TimeInterval,
+      endTime: TimeInterval,
+      onComplete: (@MainActor @Sendable () -> Void)? = nil,
+      playbackPollingInterval: Duration? = nil
+    ) async throws(AIOError) -> Playback {
+      guard endTime > startTime else {
+        throw .invalidTimeRange
+      }
+      _ = playbackPollingInterval
+      let next = Playback(
+        id: UUID(),
+        file: url,
+        isPlaying: true,
+        time: startTime,
+        duration: max(endTime - startTime, 0)
+      )
+      playback = next
+      onPlaybackStateChanged?(next)
+      onPlaybackUpdated?(next)
+      onComplete?()
+      return next
+    }
+
+    @MainActor
+    public func scrub(
+      to progress: Double
+    ) async throws(AIOError) {
+      guard var current = playback else {
+        throw .invalidScrubTrack
+      }
+      let normalized = max(progress, 0)
+      current = Playback(
+        id: current.id,
+        file: current.file,
+        isPlaying: current.isPlaying,
+        time: normalized,
+        duration: current.duration
+      )
+      playback = current
+      onPlaybackUpdated?(current)
+    }
+
+    @MainActor
+    public func stopPlayback() async {
+      playback = nil
+      onPlaybackStateChanged?(nil)
+      onPlaybackUpdated?(nil)
+    }
+
+    @MainActor
+    public func pausePlayback() {
+      guard let current = playback else { return }
+      let paused = Playback(
+        id: current.id,
+        file: current.file,
+        isPlaying: false,
+        time: current.time,
+        duration: current.duration
+      )
+      playback = paused
+      onPlaybackUpdated?(paused)
+    }
+
+    @MainActor
+    public func resumePlayback() {
+      guard let current = playback else { return }
+      let resumed = Playback(
+        id: current.id,
+        file: current.file,
+        isPlaying: true,
+        time: current.time,
+        duration: current.duration
+      )
+      playback = resumed
+      onPlaybackUpdated?(resumed)
+    }
+
+    public func attachBufferReceiver(_ receiver: some BufferReceiver<Float>) async {
+      bufferReceivers[locked: \.self].append(receiver)
+    }
+
+    public func detachBufferReceivers() async {
+      let receivers = bufferReceivers[locked: \.self]
+      for receiver in receivers {
+        receiver.endBufferTask()
+      }
+      bufferReceivers[locked: \.self] = []
+    }
+
+    @MainActor
+    private func makeOutputURL(
+      for configuration: RecordingConfiguration
+    ) throws(AIOError) -> URL {
+      switch configuration.outputDestination {
+      case .temporary:
+        return makeTemporaryRecordingURL(fileFormat: configuration.outputConfiguration.fileFormat)
+      case .directory(let directory):
+        return
+          directory
+          .appendingPathComponent("recording-\(UUID().uuidString)")
+          .appendingPathExtension(configuration.outputConfiguration.fileFormat.fileExtension)
+      case .fileURL(let url):
+        return url
+      }
+    }
+
+    @MainActor
+    private func makeTemporaryRecordingURL(fileFormat: FileFormat) -> URL {
+      FileManager.default.temporaryDirectory
+        .appendingPathComponent("aio-macos-\(UUID().uuidString)")
+        .appendingPathExtension(fileFormat.fileExtension)
     }
   }
 #endif

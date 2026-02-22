@@ -1,15 +1,10 @@
-#if !os(macOS) || targetEnvironment(macCatalyst)
+#if os(iOS)
   import AVFoundation
   import os
   import SystemLog
   import Tools
 
   private let log = SystemLog.make()
-
-  @MainActor
-  public protocol AudioSessionDelegate {
-    func setAudioSessionActive(_: Bool) throws
-  }
 
   extension AIOEngine {
 

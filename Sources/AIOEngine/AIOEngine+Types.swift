@@ -1,4 +1,4 @@
-#if !os(macOS) || targetEnvironment(macCatalyst)
+#if os(iOS)
   import AVFoundation
   import Atomics
   import Tools

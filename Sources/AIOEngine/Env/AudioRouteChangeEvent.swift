@@ -1,4 +1,4 @@
-#if canImport(AVFoundation) && (!os(macOS) || targetEnvironment(macCatalyst))
+#if os(iOS)
   public import AVFoundation
   import Foundation
 
@@ -179,7 +179,7 @@
           labels.append("overrideMutedMicrophoneInterruption")
         }
 
-        #if !targetEnvironment(macCatalyst)
+        #if os(iOS)
           if #available(iOS 26.0, *),
             options.contains(.bluetoothHighQualityRecording)
           {
