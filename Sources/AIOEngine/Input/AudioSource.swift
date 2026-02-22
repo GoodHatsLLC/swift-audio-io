@@ -2,7 +2,7 @@
   public import AVFAudio
   public import Tools
 
-  #if !os(macOS) || targetEnvironment(macCatalyst)
+  #if os(iOS)
     public struct AudioSource: Hashable, Sendable, Identifiable, CustomStringConvertible, Comparable
     {
       public enum PreferenceError: AudioError {

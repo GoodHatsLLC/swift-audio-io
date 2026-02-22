@@ -1,4 +1,4 @@
-#if !os(macOS) || targetEnvironment(macCatalyst)
+#if os(iOS)
   #if DEBUG
     public import AVFoundation
     import Atomics

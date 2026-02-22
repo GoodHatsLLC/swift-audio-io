@@ -1,4 +1,4 @@
-#if canImport(AVFoundation) && (!os(macOS) || targetEnvironment(macCatalyst))
+#if os(iOS)
   import AVFAudio
   public import Foundation
   public import Observation

@@ -1,4 +1,4 @@
-#if !os(macOS) || targetEnvironment(macCatalyst)
+#if os(iOS)
   public import AVFoundation
   import Foundation
   import os

@@ -1,4 +1,4 @@
-#if canImport(AVFoundation) && (!os(macOS) || targetEnvironment(macCatalyst))
+#if os(iOS)
   public import Tools
   public import AVFAudio
   import Combine
