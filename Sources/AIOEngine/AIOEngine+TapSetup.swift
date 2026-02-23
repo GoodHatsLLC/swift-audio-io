@@ -1,4 +1,4 @@
-#if os(iOS)
+#if canImport(AVFoundation)
   import AVFoundation
   import SystemLog
   import Tools
