@@ -726,6 +726,7 @@
 #else
   import AudioToolbox
   import AVFoundation
+  import Atomics
   import AsyncAlgorithms
   public import Foundation
   public import Observation
@@ -934,6 +935,11 @@
     @MainActor private let recorderDelegateProxy = RecorderDelegateProxy()
     @MainActor private var recorder: AVAudioRecorder?
     @MainActor private var recordingConfiguration: RecordingConfiguration?
+    @MainActor private var preferredTapInterval: Duration = .seconds(0.1)
+    @MainActor private var installedTapBus: AVAudioNodeBus?
+
+    @MainActor private let tapEngine = AVAudioEngine()
+    private let tapFallbackSampleTime = ManagedAtomic<Int64>(0)
 
     public var errors: AsyncBroadcaster<any Error> {
       errorSubject.broadcaster
@@ -992,7 +998,24 @@
 
     @MainActor
     public func updateRecordingTapInterval(_ interval: Duration) {
-      _ = interval
+      guard interval > .zero else { return }
+      preferredTapInterval = interval
+      guard let current = recordingConfiguration else { return }
+      let updated = RecordingConfiguration(
+        inputConfiguration: current.inputConfiguration,
+        outputConfiguration: current.outputConfiguration,
+        tapInterval: interval,
+        outputDestination: current.outputDestination
+      )
+      recordingConfiguration = updated
+      guard isRecording else { return }
+      do {
+        try startInputTapFeed(configuration: updated)
+      } catch {
+        log.warning(
+          "Failed to update macOS tap interval to \(interval, privacy: .public): \(error.localizedDescription, privacy: .public)"
+        )
+      }
     }
 
     @MainActor
@@ -1000,6 +1023,7 @@
       guard !isRecording else {
         throw .alreadyRecording
       }
+      stopInputTapFeed()
       let candidates = recordingStartCandidates(for: configuration)
       let removeFailedExplicitOutput = shouldRemoveExplicitOutputOnFailedStart(
         for: configuration.outputDestination
@@ -1058,6 +1082,22 @@
             )
             continue
           }
+
+          do {
+            try startInputTapFeed(configuration: candidate)
+          } catch {
+            recorder.stop()
+            attemptedIssues.append(
+              "tap setup failed for \(candidate.summary): \(error.localizedDescription)"
+            )
+            cleanupFailedRecordingStartOutput(
+              at: destination,
+              destination: candidate.outputDestination,
+              removeExplicitOutput: removeFailedExplicitOutput
+            )
+            continue
+          }
+
           activeRecorder = recorder
           activeConfiguration = candidate
           activeDestination = destination
@@ -1127,6 +1167,7 @@
       guard isRecording, let recorder, let url = currentRecordingURL else {
         throw .notRecording
       }
+      stopInputTapFeed()
       recorder.stop()
       self.recorder = nil
       isRecording = false
@@ -1184,6 +1225,113 @@
       onSegmentCompleted?(currentURL, ext.uppercased())
       onRecordingStarted?(nextURL, configuration.outputConfiguration.fileFormat.description)
       return currentURL
+    }
+
+    @MainActor
+    private func startInputTapFeed(
+      configuration: RecordingConfiguration
+    ) throws(AIOError) {
+      stopInputTapFeed()
+
+      let inputNode = tapEngine.inputNode
+      let tapBus: AVAudioNodeBus = 0
+      guard Int(tapBus) < inputNode.numberOfOutputs else {
+        throw .audioSessionNotReady(details: "Input node has no output bus 0")
+      }
+
+      let inputFormat = inputNode.outputFormat(forBus: tapBus)
+      guard inputFormat.channelCount > 0, inputFormat.sampleRate > 0 else {
+        throw .audioSessionNotReady(
+          details:
+            "Input format invalid for tap install (channels: \(inputFormat.channelCount), sampleRate: \(inputFormat.sampleRate))"
+        )
+      }
+
+      let tapConfigConfiguration: RecordingConfiguration
+      if configuration.tapInterval == preferredTapInterval {
+        tapConfigConfiguration = configuration
+      } else {
+        tapConfigConfiguration = RecordingConfiguration(
+          inputConfiguration: configuration.inputConfiguration,
+          outputConfiguration: configuration.outputConfiguration,
+          tapInterval: preferredTapInterval,
+          outputDestination: configuration.outputDestination
+        )
+      }
+
+      guard
+        let tapConfiguration = tapConfigConfiguration.tapConfiguration(
+          bus: Int(tapBus),
+          input: inputFormat
+        )
+      else {
+        throw .invalidRecordingConfiguration(details: "Cannot create tap configuration")
+      }
+
+      guard tapConfiguration.bufferSize > 0 else {
+        throw .invalidRecordingConfiguration(details: "Tap bufferSize is 0")
+      }
+
+      inputNode.installTap(
+        onBus: tapBus,
+        bufferSize: tapConfiguration.bufferSize,
+        format: inputFormat
+      ) { [weak self] buffer, time in
+        self?.processTapBuffer(buffer, time: time)
+      }
+
+      tapEngine.prepare()
+      do {
+        try tapEngine.start()
+      } catch {
+        inputNode.removeTap(onBus: tapBus)
+        throw .engineStartFailed(error: ErrorContext(error))
+      }
+
+      installedTapBus = tapBus
+      tapFallbackSampleTime.store(0, ordering: .relaxed)
+      log.info(
+        "Installed macOS input tap (bufferSize: \(tapConfiguration.bufferSize, privacy: .public), sampleRate: \(inputFormat.sampleRate, privacy: .public), channels: \(inputFormat.channelCount, privacy: .public))"
+      )
+    }
+
+    @MainActor
+    private func stopInputTapFeed() {
+      if let installedTapBus {
+        tapEngine.inputNode.removeTap(onBus: installedTapBus)
+        self.installedTapBus = nil
+      }
+      if tapEngine.isRunning {
+        tapEngine.stop()
+      }
+      tapEngine.reset()
+      tapFallbackSampleTime.store(0, ordering: .relaxed)
+    }
+
+    nonisolated private func processTapBuffer(_ buffer: AVAudioPCMBuffer, time: AVAudioTime) {
+      let frameCount = Int(buffer.frameLength)
+      guard frameCount > 0 else { return }
+      guard let floatChannelData = unsafe buffer.floatChannelData else { return }
+
+      let sampleRate = time.sampleRate > 0 ? time.sampleRate : buffer.format.sampleRate
+      let startSampleTime: Int64
+      if time.isSampleTimeValid {
+        startSampleTime = time.sampleTime
+        tapFallbackSampleTime.store(
+          startSampleTime + Int64(frameCount),
+          ordering: .relaxed
+        )
+      } else {
+        startSampleTime = tapFallbackSampleTime.load(ordering: .relaxed)
+        tapFallbackSampleTime.wrappingIncrement(by: Int64(frameCount), ordering: .relaxed)
+      }
+
+      let timing = BufferTiming(sampleTime: startSampleTime, sampleRate: sampleRate)
+      let samples = unsafe UnsafeBufferPointer(start: floatChannelData[0], count: frameCount)
+      let receivers = bufferReceivers[locked: \.self]
+      for receiver in receivers {
+        unsafe receiver.processBuffer(samples, timing: timing)
+      }
     }
 
     @MainActor
