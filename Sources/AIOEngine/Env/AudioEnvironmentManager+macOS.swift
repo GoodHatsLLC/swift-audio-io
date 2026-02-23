@@ -272,6 +272,14 @@
       }
       isRunning = true
       isReady = true
+
+      // Keep parity with iOS semantics: `run()` represents a long-lived manager loop
+      // and only returns after cancellation.
+      await withCancellationOperation {
+        isAudioSessionActive = false
+        isReady = false
+        isRunning = false
+      }
     }
   }
 #endif
