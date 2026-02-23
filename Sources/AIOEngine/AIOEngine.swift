@@ -1018,10 +1018,9 @@
         throw .notRecording
       }
       recorder.stop()
-      recorder = nil
+      self.recorder = nil
       isRecording = false
       wantsRecording = false
-      let url = currentRecordingURL ?? makeTemporaryRecordingURL(fileFormat: .caf)
       recordingConfiguration = nil
       currentRecordingURL = nil
 
@@ -1297,39 +1296,6 @@
         .appendingPathExtension(fileFormat.fileExtension)
     }
 
-    @MainActor
-    private func makeRecorder(
-      configuration: RecordingConfiguration,
-      outputURL: URL
-    ) throws(AIOError) -> AVAudioRecorder {
-      guard let settings = configuration.fileSettings else {
-        throw .invalidRecordingConfiguration(details: "(file format settings)")
-      }
-
-      if FileManager.default.fileExists(atPath: outputURL.path) {
-        do {
-          try FileManager.default.removeItem(at: outputURL)
-        } catch {
-          throw .audioFileFailed(
-            operation: .openForWriting,
-            url: outputURL,
-            error: ErrorContext(error)
-          )
-        }
-      }
-
-      do {
-        let recorder = try AVAudioRecorder(url: outputURL, settings: settings)
-        recorder.prepareToRecord()
-        return recorder
-      } catch {
-        throw .audioFileFailed(
-          operation: .openForWriting,
-          url: outputURL,
-          error: ErrorContext(error)
-        )
-      }
-    }
   }
 
   private struct RecorderStartError: LocalizedError {
