@@ -215,14 +215,14 @@
           if let source = plan.polarPatternSource, let pattern = plan.polarPattern {
             do {
               try source.set(preferredPolarPattern: pattern)
-            } catch {
+            } catch let error as AudioSource.PreferenceError {
               throw _InputConfigError.polarPattern(error)
             }
           }
           if let input = plan.preferredInput, let source = plan.preferredSource {
             do {
               try input.set(preferredSource: source)
-            } catch {
+            } catch let error as AudioInput.PreferenceError {
               throw _InputConfigError.preferredSource(error)
             }
           }
