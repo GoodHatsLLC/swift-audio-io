@@ -181,16 +181,6 @@
       var inputOrientation: AVAudioSession.StereoOrientation?
     }
 
-    /// Error wrapper that preserves the origin of failures inside
-    /// ``executeInputConfiguration(_:session:)`` so they can be mapped back
-    /// to the correct ``ManagerError`` case.
-    private enum _InputConfigError: Error, Sendable {
-      case channelCount(ErrorContext)
-      case polarPattern(AudioSource.PreferenceError)
-      case preferredSource(AudioInput.PreferenceError)
-      case inputOrientation(ErrorContext)
-    }
-
     /// Executes XPC-blocking AVAudioSession preference calls off the main actor.
     ///
     /// These calls (`setPreferredPolarPattern`, `setPreferredDataSource`, etc.) make
@@ -202,52 +192,21 @@
     nonisolated private static func executeInputConfiguration(
       _ plan: InputConfigurationPlan,
       session: AVAudioSession
-    ) async throws(ManagerError) {
-      do {
-        try await Task.detached {
-          if let count = plan.channelCount {
-            do {
-              try session.setPreferredInputNumberOfChannels(count)
-            } catch {
-              throw _InputConfigError.channelCount(ErrorContext(error))
-            }
-          }
-          if let source = plan.polarPatternSource, let pattern = plan.polarPattern {
-            do {
-              try source.set(preferredPolarPattern: pattern)
-            } catch let error as AudioSource.PreferenceError {
-              throw _InputConfigError.polarPattern(error)
-            }
-          }
-          if let input = plan.preferredInput, let source = plan.preferredSource {
-            do {
-              try input.set(preferredSource: source)
-            } catch let error as AudioInput.PreferenceError {
-              throw _InputConfigError.preferredSource(error)
-            }
-          }
-          if let orientation = plan.inputOrientation {
-            do {
-              try session.setPreferredInputOrientation(orientation)
-            } catch {
-              throw _InputConfigError.inputOrientation(ErrorContext(error))
-            }
-          }
-        }.value
-      } catch let error as _InputConfigError {
-        switch error {
-        case .channelCount(let ctx):
-          throw .audioSessionFailed(operation: .setPreferredInputNumberOfChannels, error: ctx)
-        case .polarPattern(let err):
-          throw .audioSource(err)
-        case .preferredSource(let err):
-          throw .audioInput(err)
-        case .inputOrientation(let ctx):
-          throw .audioSessionFailed(operation: .setPreferredInputOrientation, error: ctx)
+    ) async {
+      await Task.detached {
+        if let count = plan.channelCount {
+          session.setPreferredInputNumberOfChannels(count)
         }
-      } catch {
-        throw .unexpected(ErrorContext(error))
-      }
+        if let source = plan.polarPatternSource, let pattern = plan.polarPattern {
+          source.set(preferredPolarPattern: pattern)
+        }
+        if let input = plan.preferredInput, let source = plan.preferredSource {
+          input.set(preferredSource: source)
+        }
+        if let orientation = plan.inputOrientation {
+          session.setPreferredInputOrientation(orientation)
+        }
+      }.value
     }
 
     private enum StorageKey {
@@ -729,7 +688,7 @@
       }
 
       // Execute XPC-blocking calls off MainActor to avoid run-loop hangs.
-      try await Self.executeInputConfiguration(plan, session: session)
+      await Self.executeInputConfiguration(plan, session: session)
 
       // Refresh cached mirrors
       _input = env.input
