@@ -728,8 +728,11 @@
   import AsyncAlgorithms
   public import Foundation
   public import Observation
+  import os
   import SystemLog
   public import Tools
+
+  private let log = SystemLog.make()
 
   @Observable
   public final class AIOEngine: Sendable {
@@ -995,21 +998,99 @@
       guard !isRecording else {
         throw .alreadyRecording
       }
-      let destination = try makeOutputURL(for: configuration, allowExplicitFile: true)
-      let recorder = try makeRecorder(configuration: configuration, outputURL: destination)
-      guard recorder.record() else {
+      let candidates = recordingStartCandidates(for: configuration)
+      let removeFailedExplicitOutput = shouldRemoveExplicitOutputOnFailedStart(
+        for: configuration.outputDestination
+      )
+
+      var activeRecorder: AVAudioRecorder?
+      var activeConfiguration: RecordingConfiguration?
+      var activeDestination: URL?
+      var attemptedIssues: [String] = []
+      var lastAttemptedURL: URL?
+
+      for candidate in candidates {
+        let destination: URL
+        do {
+          destination = try makeOutputURL(for: candidate, allowExplicitFile: true)
+          lastAttemptedURL = destination
+        } catch {
+          attemptedIssues.append(
+            "output URL failed for \(candidate.summary): \(error.localizedDescription)"
+          )
+          continue
+        }
+
+        do {
+          let recorder = try makeRecorder(configuration: candidate, outputURL: destination)
+          guard recorder.record() else {
+            attemptedIssues.append("record() returned false for \(candidate.summary)")
+            cleanupFailedRecordingStartOutput(
+              at: destination,
+              destination: candidate.outputDestination,
+              removeExplicitOutput: removeFailedExplicitOutput
+            )
+            continue
+          }
+          activeRecorder = recorder
+          activeConfiguration = candidate
+          activeDestination = destination
+          break
+        } catch {
+          attemptedIssues.append("\(candidate.summary): \(error.localizedDescription)")
+          cleanupFailedRecordingStartOutput(
+            at: destination,
+            destination: candidate.outputDestination,
+            removeExplicitOutput: removeFailedExplicitOutput
+          )
+        }
+      }
+
+      guard let recorder = activeRecorder,
+        let activeConfiguration,
+        let destination = activeDestination
+      else {
+        let details = attemptedIssues.isEmpty ? nil : attemptedIssues.joined(separator: " | ")
         throw .audioFileFailed(
           operation: .write,
-          url: destination,
-          error: ErrorContext(RecorderStartError(url: destination))
+          url: lastAttemptedURL,
+          error: ErrorContext(
+            RecorderStartError(url: lastAttemptedURL, details: details)
+          )
         )
       }
+
       self.recorder = recorder
-      self.recordingConfiguration = configuration
+      self.recordingConfiguration = activeConfiguration
       currentRecordingURL = destination
       isRecording = true
       wantsRecording = true
-      onRecordingStarted?(destination, configuration.outputConfiguration.fileFormat.description)
+
+      if activeConfiguration.outputConfiguration.fileFormat
+        != configuration.outputConfiguration.fileFormat
+      {
+        let attemptSummary: String = {
+          guard !attemptedIssues.isEmpty else { return "none" }
+          let previewCount = 5
+          let preview = attemptedIssues.prefix(previewCount).joined(separator: " || ")
+          if attemptedIssues.count > previewCount {
+            return preview + " || +\(attemptedIssues.count - previewCount) more"
+          }
+          return preview
+        }()
+
+        log.error(
+          "FORCED_RECORDING_FORMAT_FALLBACK macOS requested=\(configuration.summary, privacy: .public) selected=\(activeConfiguration.summary, privacy: .public) output=\(destination.lastPathComponent, privacy: .public) failedAttempts=\(attemptSummary, privacy: .public)"
+        )
+        log.warning(
+          "RECORDING_STARTED_WITH_FALLBACK_FORMAT selected=\(activeConfiguration.outputConfiguration.fileFormat.description, privacy: .public) requested=\(configuration.outputConfiguration.fileFormat.description, privacy: .public)"
+        )
+      }
+
+      onRecordingStarted?(
+        destination,
+        activeConfiguration.outputConfiguration.fileFormat.description
+      )
     }
 
     @MainActor
@@ -1060,7 +1141,7 @@
         throw .audioFileFailed(
           operation: .write,
           url: nextURL,
-          error: ErrorContext(RecorderStartError(url: nextURL))
+          error: ErrorContext(RecorderStartError(url: nextURL, details: nil))
         )
       }
 
@@ -1296,13 +1377,134 @@
         .appendingPathExtension(fileFormat.fileExtension)
     }
 
+    @MainActor
+    private func cleanupFailedRecordingStartOutput(
+      at url: URL,
+      destination: RecordingConfiguration.OutputDestination,
+      removeExplicitOutput: Bool
+    ) {
+      switch destination {
+      case .temporary, .directory:
+        try? FileManager.default.removeItem(at: url)
+      case .fileURL:
+        guard removeExplicitOutput else { return }
+        try? FileManager.default.removeItem(at: url)
+      }
+    }
+
+    @MainActor
+    private func shouldRemoveExplicitOutputOnFailedStart(
+      for destination: RecordingConfiguration.OutputDestination
+    ) -> Bool {
+      guard case .fileURL(let url) = destination else { return false }
+      return !FileManager.default.fileExists(atPath: url.path)
+    }
+
+    @MainActor
+    private func recordingStartCandidates(for configuration: RecordingConfiguration)
+      -> [RecordingConfiguration]
+    {
+      var candidates: [RecordingConfiguration] = []
+      var sampleRates: [SampleRate] = []
+      var channels: [ChannelCount] = []
+
+      func appendSampleRate(_ sampleRate: SampleRate) {
+        guard !sampleRates.contains(sampleRate) else { return }
+        sampleRates.append(sampleRate)
+      }
+
+      func appendChannel(_ channel: ChannelCount) {
+        guard !channels.contains(channel) else { return }
+        channels.append(channel)
+      }
+
+      appendSampleRate(configuration.inputConfiguration.sampleRate)
+      appendSampleRate(.common(.sr44100))
+      appendSampleRate(.common(.sr48000))
+
+      appendChannel(configuration.inputConfiguration.channels)
+      appendChannel(.mono)
+
+      var outputCandidates: [OutputConfiguration] = [configuration.outputConfiguration]
+      let canFallbackFormat: Bool = {
+        switch configuration.outputDestination {
+        case .temporary, .directory:
+          return true
+        case .fileURL:
+          return false
+        }
+      }()
+
+      func appendOutputCandidate(
+        fileFormat: FileFormat, bitDepth: BitDepth, quality: EncodingQuality
+      ) {
+        let candidate = OutputConfiguration(
+          fileFormat: fileFormat,
+          bitDepth: bitDepth,
+          quality: quality
+        )
+        if !outputCandidates.contains(candidate) {
+          outputCandidates.append(candidate)
+        }
+      }
+
+      if canFallbackFormat {
+        switch configuration.outputConfiguration.fileFormat {
+        case .aac:
+          appendOutputCandidate(
+            fileFormat: .adts,
+            bitDepth: .pcmInt16,
+            quality: configuration.outputConfiguration.quality
+          )
+        case .adts:
+          appendOutputCandidate(
+            fileFormat: .aac,
+            bitDepth: .pcmInt16,
+            quality: configuration.outputConfiguration.quality
+          )
+        case .caf, .wav, .aiff, .flac:
+          break
+        }
+        appendOutputCandidate(fileFormat: .caf, bitDepth: .pcmInt16, quality: .maximum)
+        appendOutputCandidate(fileFormat: .wav, bitDepth: .pcmInt16, quality: .maximum)
+      }
+
+      for output in outputCandidates {
+        for channel in channels {
+          for sampleRate in sampleRates {
+            guard output.fileFormat.supports(sampleRate: sampleRate) else {
+              continue
+            }
+
+            let candidate = RecordingConfiguration(
+              inputConfiguration: InputConfiguration(sampleRate: sampleRate, channels: channel),
+              outputConfiguration: output,
+              tapInterval: configuration.tapInterval,
+              outputDestination: configuration.outputDestination
+            )
+
+            if !candidates.contains(candidate) {
+              candidates.append(candidate)
+            }
+          }
+        }
+      }
+
+      return candidates
+    }
+
   }
 
   private struct RecorderStartError: LocalizedError {
-    let url: URL
+    let url: URL?
+    let details: String?
 
     var errorDescription: String? {
-      "Failed to start recorder for \(url.lastPathComponent)"
+      let name = url?.lastPathComponent ?? "unknown destination"
+      if let details, !details.isEmpty {
+        return "Failed to start recorder for \(name) (\(details))"
+      }
+      return "Failed to start recorder for \(name)"
     }
   }
 
