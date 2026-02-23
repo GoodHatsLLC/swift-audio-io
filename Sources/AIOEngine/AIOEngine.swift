@@ -1035,10 +1035,21 @@
 
         do {
           let recorder = try makeRecorder(configuration: candidate, outputURL: destination)
+          let didPrepare = recorder.prepareToRecord()
+          let preflightSummary = recorderPreflightSummary(
+            recorder: recorder, didPrepare: didPrepare)
+          let requestedSettingsSummary = String(describing: candidate.fileSettings ?? [:])
+
+          if shouldLogAACPreflight(for: candidate.outputConfiguration.fileFormat) {
+            log.warning(
+              "AAC_RECORDER_PREFLIGHT candidate=\(candidate.summary, privacy: .public) output=\(destination.lastPathComponent, privacy: .public) didPrepare=\(didPrepare, privacy: .public) recorderFormat=\(preflightSummary, privacy: .public) requestedSettings=\(requestedSettingsSummary, privacy: .public)"
+            )
+          }
+
           guard recorder.record() else {
             let inventory = encoderInventory(for: candidate.outputConfiguration.fileFormat)
             attemptedIssues.append(
-              "record() returned false for \(candidate.summary) [encoders: \(inventory)]"
+              "record() returned false for \(candidate.summary) [prepare: \(didPrepare)] [format: \(preflightSummary)] [settings: \(requestedSettingsSummary)] [encoders: \(inventory)]"
             )
             cleanupFailedRecordingStartOutput(
               at: destination,
@@ -1353,7 +1364,6 @@
       do {
         let recorder = try AVAudioRecorder(url: outputURL, settings: settings)
         recorder.delegate = recorderDelegateProxy
-        recorder.prepareToRecord()
         return recorder
       } catch {
         throw .audioFileFailed(
@@ -1420,6 +1430,24 @@
     }
 
     @MainActor
+    private func shouldLogAACPreflight(for fileFormat: FileFormat) -> Bool {
+      switch fileFormat {
+      case .aac, .adts:
+        return true
+      case .caf, .wav, .aiff, .flac:
+        return false
+      }
+    }
+
+    @MainActor
+    private func recorderPreflightSummary(recorder: AVAudioRecorder, didPrepare: Bool) -> String {
+      let format = recorder.format
+      let settingsSummary = String(describing: format.settings)
+      return
+        "prepared=\(didPrepare) sampleRate=\(format.sampleRate) channels=\(format.channelCount) interleaved=\(format.isInterleaved) settings=\(settingsSummary)"
+    }
+
+    @MainActor
     private func runtimeEncoderInventory(for fileFormat: FileFormat) -> String {
       let formatID = encoderQueryFormatID(for: fileFormat)
       var specifier = formatID
@@ -1441,43 +1469,52 @@
         return "invalid descriptor size for AudioClassDescription"
       }
 
-      let count = Int(propertySize) / descriptorSize
-      guard count > 0 else {
-        return "0 encoder classes for formatID=\(fourCC(formatID))"
-      }
+      let classSummary: String = {
+        let count = Int(propertySize) / descriptorSize
+        guard count > 0 else {
+          return "0 encoder class(es) for formatID=\(fourCC(formatID))"
+        }
 
-      var descriptions = Array(
-        repeating: AudioClassDescription(
-          mType: 0,
-          mSubType: 0,
-          mManufacturer: 0
-        ),
-        count: count
-      )
-      var mutableSize = propertySize
-      let status = unsafe AudioFormatGetProperty(
-        kAudioFormatProperty_Encoders,
-        specifierSize,
-        &specifier,
-        &mutableSize,
-        &descriptions
-      )
-      guard status == noErr else {
-        return "AudioFormatGetProperty failed: \(osStatusSummary(status))"
-      }
+        var descriptions = Array(
+          repeating: AudioClassDescription(
+            mType: 0,
+            mSubType: 0,
+            mManufacturer: 0
+          ),
+          count: count
+        )
+        var mutableSize = propertySize
+        let status = unsafe AudioFormatGetProperty(
+          kAudioFormatProperty_Encoders,
+          specifierSize,
+          &specifier,
+          &mutableSize,
+          &descriptions
+        )
+        guard status == noErr else {
+          return
+            "encoder class query failed for formatID=\(fourCC(formatID)): \(osStatusSummary(status))"
+        }
 
-      if mutableSize == 0 {
-        return "0 encoder classes returned for formatID=\(fourCC(formatID))"
-      }
+        if mutableSize == 0 {
+          return "0 encoder class(es) returned for formatID=\(fourCC(formatID))"
+        }
 
-      let validCount = min(Int(mutableSize) / descriptorSize, descriptions.count)
-      let summaries = descriptions.prefix(validCount).map { encoderDescription in
-        "type=\(fourCC(encoderDescription.mType))/subtype=\(fourCC(encoderDescription.mSubType))/manufacturer=\(fourCC(encoderDescription.mManufacturer))"
-      }.joined(separator: ", ")
+        let validCount = min(Int(mutableSize) / descriptorSize, descriptions.count)
+        let summaries = descriptions.prefix(validCount).map { encoderDescription in
+          "type=\(fourCC(encoderDescription.mType))/subtype=\(fourCC(encoderDescription.mSubType))/manufacturer=\(fourCC(encoderDescription.mManufacturer))"
+        }.joined(separator: ", ")
 
+        return
+          "\(validCount) encoder class(es) for formatID=\(fourCC(formatID))"
+          + (summaries.isEmpty ? "" : " [\(summaries)]")
+      }()
+
+      let sampleRates = availableEncodeSampleRatesSummary(for: formatID)
+      let channels = availableEncodeChannelsSummary(for: formatID)
+      let bitRates = availableEncodeBitRatesSummary(for: formatID)
       return
-        "\(validCount) encoder class(es) for formatID=\(fourCC(formatID))"
-        + (summaries.isEmpty ? "" : " [\(summaries)]")
+        "\(classSummary) sampleRates=\(sampleRates) channels=\(channels) bitRates=\(bitRates)"
     }
 
     @MainActor
@@ -1496,6 +1533,163 @@
     private func osStatusSummary(_ status: OSStatus) -> String {
       let error = NSError(domain: NSOSStatusErrorDomain, code: Int(status))
       return "\(status) (\(VerboseError(error: error).description))"
+    }
+
+    @MainActor
+    private func availableEncodeSampleRatesSummary(for formatID: AudioFormatID) -> String {
+      let result = audioValueRanges(
+        propertyID: kAudioFormatProperty_AvailableEncodeSampleRates,
+        formatID: formatID
+      )
+      if let message = result.errorMessage {
+        return message
+      }
+      return formatValueRanges(result.ranges) { value in
+        "\(Int(value.rounded()))"
+      }
+    }
+
+    @MainActor
+    private func availableEncodeBitRatesSummary(for formatID: AudioFormatID) -> String {
+      let result = audioValueRanges(
+        propertyID: kAudioFormatProperty_AvailableEncodeBitRates,
+        formatID: formatID
+      )
+      if let message = result.errorMessage {
+        return message
+      }
+      return formatValueRanges(result.ranges) { value in
+        "\(Int((value / 1_000).rounded()))k"
+      }
+    }
+
+    @MainActor
+    private func availableEncodeChannelsSummary(for formatID: AudioFormatID) -> String {
+      var asbd = AudioStreamBasicDescription()
+      asbd.mFormatID = formatID
+
+      var propertySize: UInt32 = 0
+      let specifierSize = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
+      let infoStatus = unsafe AudioFormatGetPropertyInfo(
+        kAudioFormatProperty_AvailableEncodeNumberChannels,
+        specifierSize,
+        &asbd,
+        &propertySize
+      )
+      guard infoStatus == noErr else {
+        return "query-failed(\(osStatusSummary(infoStatus)))"
+      }
+
+      if propertySize == 0 {
+        return "none"
+      }
+
+      let valueSize = MemoryLayout<UInt32>.size
+      guard valueSize > 0 else {
+        return "invalid-value-size"
+      }
+
+      let count = Int(propertySize) / valueSize
+      guard count > 0 else {
+        return "none"
+      }
+
+      var channels = Array(repeating: UInt32(0), count: count)
+      var mutableSize = propertySize
+      let status = unsafe AudioFormatGetProperty(
+        kAudioFormatProperty_AvailableEncodeNumberChannels,
+        specifierSize,
+        &asbd,
+        &mutableSize,
+        &channels
+      )
+      guard status == noErr else {
+        return "query-failed(\(osStatusSummary(status)))"
+      }
+
+      let validCount = min(Int(mutableSize) / valueSize, channels.count)
+      let unique = Array(Set(channels.prefix(validCount))).sorted()
+      if unique.contains(UInt32.max) {
+        return "any"
+      }
+      if unique.isEmpty {
+        return "none"
+      }
+      return unique.map(String.init).joined(separator: ",")
+    }
+
+    @MainActor
+    private func audioValueRanges(
+      propertyID: AudioFormatPropertyID,
+      formatID: AudioFormatID
+    ) -> (ranges: [AudioValueRange], errorMessage: String?) {
+      var specifier = formatID
+      let specifierSize = UInt32(MemoryLayout<AudioFormatID>.size)
+      var propertySize: UInt32 = 0
+
+      let infoStatus = unsafe AudioFormatGetPropertyInfo(
+        propertyID,
+        specifierSize,
+        &specifier,
+        &propertySize
+      )
+      guard infoStatus == noErr else {
+        return ([], "query-failed(\(osStatusSummary(infoStatus)))")
+      }
+
+      if propertySize == 0 {
+        return ([], nil)
+      }
+
+      let valueSize = MemoryLayout<AudioValueRange>.size
+      guard valueSize > 0 else {
+        return ([], "invalid-value-size")
+      }
+
+      let count = Int(propertySize) / valueSize
+      guard count > 0 else {
+        return ([], nil)
+      }
+
+      var ranges = Array(repeating: AudioValueRange(), count: count)
+      var mutableSize = propertySize
+      let status = unsafe AudioFormatGetProperty(
+        propertyID,
+        specifierSize,
+        &specifier,
+        &mutableSize,
+        &ranges
+      )
+      guard status == noErr else {
+        return ([], "query-failed(\(osStatusSummary(status)))")
+      }
+
+      let validCount = min(Int(mutableSize) / valueSize, ranges.count)
+      return (Array(ranges.prefix(validCount)), nil)
+    }
+
+    @MainActor
+    private func formatValueRanges(
+      _ ranges: [AudioValueRange],
+      formatValue: (Double) -> String
+    ) -> String {
+      if ranges.isEmpty { return "none" }
+
+      let formatted = ranges.map { range -> String in
+        let minimum = range.mMinimum
+        let maximum = range.mMaximum
+        if abs(maximum - minimum) < 0.5 {
+          return formatValue(minimum)
+        }
+        return "\(formatValue(minimum))-\(formatValue(maximum))"
+      }
+
+      let limit = 12
+      let preview = formatted.prefix(limit).joined(separator: ",")
+      if formatted.count > limit {
+        return preview + ",+\(formatted.count - limit)"
+      }
+      return preview
     }
 
     @MainActor

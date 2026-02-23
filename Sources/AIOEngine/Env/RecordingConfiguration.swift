@@ -152,11 +152,12 @@
           log.error("invalid sample rate: \(sampleRate, privacy: .public)")
           return nil
         }
+        let qualityRawValue = Int(outputConfiguration.quality.platform.rawValue)
         let settings: [String: Any] = [
           AVFormatIDKey: kAudioFormatMPEG4AAC,
           AVSampleRateKey: sampleRate,
           AVNumberOfChannelsKey: inputConfiguration.channels.platform,
-          AVEncoderAudioQualityKey: outputConfiguration.quality.platform,
+          AVEncoderAudioQualityKey: qualityRawValue,
         ]
         guard AVAudioFormat(settings: settings) != nil else { return nil }
         return settings
@@ -215,11 +216,12 @@
           log.error("invalid sample rate: \(sampleRate, privacy: .public)")
           return nil
         }
+        let qualityRawValue = Int(outputConfiguration.quality.platform.rawValue)
         let settings: [String: Any] = [
           AVFormatIDKey: kAudioFormatMPEG4AAC,
           AVSampleRateKey: sampleRate,
           AVNumberOfChannelsKey: inputConfiguration.channels.platform,
-          AVEncoderAudioQualityKey: outputConfiguration.quality.platform,
+          AVEncoderAudioQualityKey: qualityRawValue,
         ]
 
         // Validate AAC format settings before creating
