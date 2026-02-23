@@ -724,6 +724,7 @@
     }
   }
 #else
+  import AVFoundation
   import AsyncAlgorithms
   public import Foundation
   public import Observation
@@ -926,6 +927,8 @@
     let errorSubject: Subject<any Error> = .init()
     @MainActor private var lastRecordingStartFailure: AIOError?
     @MainActor private var currentRecordingURL: URL?
+    @MainActor private var recorder: AVAudioRecorder?
+    @MainActor private var recordingConfiguration: RecordingConfiguration?
 
     public var errors: AsyncBroadcaster<any Error> {
       errorSubject.broadcaster
@@ -992,7 +995,17 @@
       guard !isRecording else {
         throw .alreadyRecording
       }
-      let destination = try makeOutputURL(for: configuration)
+      let destination = try makeOutputURL(for: configuration, allowExplicitFile: true)
+      let recorder = try makeRecorder(configuration: configuration, outputURL: destination)
+      guard recorder.record() else {
+        throw .audioFileFailed(
+          operation: .write,
+          url: destination,
+          error: ErrorContext(RecorderStartError(url: destination))
+        )
+      }
+      self.recorder = recorder
+      self.recordingConfiguration = configuration
       currentRecordingURL = destination
       isRecording = true
       wantsRecording = true
@@ -1001,30 +1014,66 @@
 
     @MainActor
     public func stopRecording() async throws(AIOError) -> URL {
-      guard isRecording else {
+      guard isRecording, let recorder, let url = currentRecordingURL else {
         throw .notRecording
       }
+      recorder.stop()
+      self.recorder = nil
+      recordingConfiguration = nil
       isRecording = false
       wantsRecording = false
-      let url = currentRecordingURL ?? makeTemporaryRecordingURL(fileFormat: .caf)
       currentRecordingURL = nil
+
+      guard FileManager.default.fileExists(atPath: url.path) else {
+        throw .audioFileFailed(
+          operation: .write,
+          url: url,
+          error: ErrorContext(MissingAudioFileError(url: url))
+        )
+      }
+      if let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize, size == 0 {
+        throw .audioFileFailed(
+          operation: .write,
+          url: url,
+          error: ErrorContext(EmptyAudioFileError(url: url))
+        )
+      }
+
       onRecordingCompleted?()
       return url
     }
 
     @MainActor
     public func rotateRecordingFile() async throws(AIOError) -> URL {
-      guard isRecording else {
+      guard isRecording,
+        let currentURL = currentRecordingURL,
+        let recorder,
+        let configuration = recordingConfiguration
+      else {
         throw .notRecording
       }
-      let previousURL = currentRecordingURL ?? makeTemporaryRecordingURL(fileFormat: .caf)
-      let ext = previousURL.pathExtension.isEmpty ? "caf" : previousURL.pathExtension
-      let next = FileManager.default.temporaryDirectory
-        .appendingPathComponent("aio-macos-segment-\(UUID().uuidString)")
-        .appendingPathExtension(ext)
-      currentRecordingURL = next
-      onSegmentCompleted?(previousURL, ext.uppercased())
-      return previousURL
+      recorder.stop()
+
+      let nextURL = try makeOutputURL(for: configuration, allowExplicitFile: false)
+      let nextRecorder = try makeRecorder(configuration: configuration, outputURL: nextURL)
+      guard nextRecorder.record() else {
+        throw .audioFileFailed(
+          operation: .write,
+          url: nextURL,
+          error: ErrorContext(RecorderStartError(url: nextURL))
+        )
+      }
+
+      self.recorder = nextRecorder
+      currentRecordingURL = nextURL
+
+      let ext =
+        currentURL.pathExtension.isEmpty
+        ? configuration.outputConfiguration.fileFormat.fileExtension
+        : currentURL.pathExtension
+      onSegmentCompleted?(currentURL, ext.uppercased())
+      onRecordingStarted?(nextURL, configuration.outputConfiguration.fileFormat.description)
+      return currentURL
     }
 
     @MainActor
@@ -1146,17 +1195,42 @@
 
     @MainActor
     private func makeOutputURL(
-      for configuration: RecordingConfiguration
+      for configuration: RecordingConfiguration,
+      allowExplicitFile: Bool
     ) throws(AIOError) -> URL {
       switch configuration.outputDestination {
       case .temporary:
         return makeTemporaryRecordingURL(fileFormat: configuration.outputConfiguration.fileFormat)
       case .directory(let directory):
+        do {
+          try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        } catch {
+          throw .audioFileFailed(
+            operation: .openForWriting,
+            url: directory,
+            error: ErrorContext(error)
+          )
+        }
         return
           directory
           .appendingPathComponent("recording-\(UUID().uuidString)")
           .appendingPathExtension(configuration.outputConfiguration.fileFormat.fileExtension)
       case .fileURL(let url):
+        guard allowExplicitFile else {
+          throw .invalidRecordingConfiguration(
+            details: "Output destination does not support rotation"
+          )
+        }
+        let parent = url.deletingLastPathComponent()
+        do {
+          try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
+        } catch {
+          throw .audioFileFailed(
+            operation: .openForWriting,
+            url: parent,
+            error: ErrorContext(error)
+          )
+        }
         return url
       }
     }
@@ -1166,6 +1240,64 @@
       FileManager.default.temporaryDirectory
         .appendingPathComponent("aio-macos-\(UUID().uuidString)")
         .appendingPathExtension(fileFormat.fileExtension)
+    }
+
+    @MainActor
+    private func makeRecorder(
+      configuration: RecordingConfiguration,
+      outputURL: URL
+    ) throws(AIOError) -> AVAudioRecorder {
+      guard let settings = configuration.fileSettings else {
+        throw .invalidRecordingConfiguration(details: "(file format settings)")
+      }
+
+      if FileManager.default.fileExists(atPath: outputURL.path) {
+        do {
+          try FileManager.default.removeItem(at: outputURL)
+        } catch {
+          throw .audioFileFailed(
+            operation: .openForWriting,
+            url: outputURL,
+            error: ErrorContext(error)
+          )
+        }
+      }
+
+      do {
+        let recorder = try AVAudioRecorder(url: outputURL, settings: settings)
+        recorder.prepareToRecord()
+        return recorder
+      } catch {
+        throw .audioFileFailed(
+          operation: .openForWriting,
+          url: outputURL,
+          error: ErrorContext(error)
+        )
+      }
+    }
+  }
+
+  private struct RecorderStartError: LocalizedError {
+    let url: URL
+
+    var errorDescription: String? {
+      "Failed to start recorder for \(url.lastPathComponent)"
+    }
+  }
+
+  private struct MissingAudioFileError: LocalizedError {
+    let url: URL
+
+    var errorDescription: String? {
+      "Recording file missing: \(url.lastPathComponent)"
+    }
+  }
+
+  private struct EmptyAudioFileError: LocalizedError {
+    let url: URL
+
+    var errorDescription: String? {
+      "Recording file empty: \(url.lastPathComponent)"
     }
   }
 #endif
