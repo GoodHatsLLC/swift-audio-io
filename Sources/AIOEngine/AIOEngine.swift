@@ -724,6 +724,7 @@
     }
   }
 #else
+  import AudioToolbox
   import AVFoundation
   import AsyncAlgorithms
   public import Foundation
@@ -930,6 +931,7 @@
     let errorSubject: Subject<any Error> = .init()
     @MainActor private var lastRecordingStartFailure: AIOError?
     @MainActor private var currentRecordingURL: URL?
+    @MainActor private let recorderDelegateProxy = RecorderDelegateProxy()
     @MainActor private var recorder: AVAudioRecorder?
     @MainActor private var recordingConfiguration: RecordingConfiguration?
 
@@ -1008,6 +1010,16 @@
       var activeDestination: URL?
       var attemptedIssues: [String] = []
       var lastAttemptedURL: URL?
+      var encoderInventoryByFormat: [FileFormat: String] = [:]
+
+      func encoderInventory(for fileFormat: FileFormat) -> String {
+        if let cached = encoderInventoryByFormat[fileFormat] {
+          return cached
+        }
+        let queried = runtimeEncoderInventory(for: fileFormat)
+        encoderInventoryByFormat[fileFormat] = queried
+        return queried
+      }
 
       for candidate in candidates {
         let destination: URL
@@ -1024,7 +1036,10 @@
         do {
           let recorder = try makeRecorder(configuration: candidate, outputURL: destination)
           guard recorder.record() else {
-            attemptedIssues.append("record() returned false for \(candidate.summary)")
+            let inventory = encoderInventory(for: candidate.outputConfiguration.fileFormat)
+            attemptedIssues.append(
+              "record() returned false for \(candidate.summary) [encoders: \(inventory)]"
+            )
             cleanupFailedRecordingStartOutput(
               at: destination,
               destination: candidate.outputDestination,
@@ -1069,6 +1084,9 @@
       if activeConfiguration.outputConfiguration.fileFormat
         != configuration.outputConfiguration.fileFormat
       {
+        let requestedEncoders = encoderInventory(for: configuration.outputConfiguration.fileFormat)
+        let selectedEncoders = encoderInventory(
+          for: activeConfiguration.outputConfiguration.fileFormat)
         let attemptSummary: String = {
           guard !attemptedIssues.isEmpty else { return "none" }
           let previewCount = 5
@@ -1080,7 +1098,7 @@
         }()
 
         log.error(
-          "FORCED_RECORDING_FORMAT_FALLBACK macOS requested=\(configuration.summary, privacy: .public) selected=\(activeConfiguration.summary, privacy: .public) output=\(destination.lastPathComponent, privacy: .public) failedAttempts=\(attemptSummary, privacy: .public)"
+          "FORCED_RECORDING_FORMAT_FALLBACK macOS requested=\(configuration.summary, privacy: .public) selected=\(activeConfiguration.summary, privacy: .public) output=\(destination.lastPathComponent, privacy: .public) requestedEncoders=\(requestedEncoders, privacy: .public) selectedEncoders=\(selectedEncoders, privacy: .public) failedAttempts=\(attemptSummary, privacy: .public)"
         )
         log.warning(
           "RECORDING_STARTED_WITH_FALLBACK_FORMAT selected=\(activeConfiguration.outputConfiguration.fileFormat.description, privacy: .public) requested=\(configuration.outputConfiguration.fileFormat.description, privacy: .public)"
@@ -1334,6 +1352,7 @@
       }
       do {
         let recorder = try AVAudioRecorder(url: outputURL, settings: settings)
+        recorder.delegate = recorderDelegateProxy
         recorder.prepareToRecord()
         return recorder
       } catch {
@@ -1398,6 +1417,106 @@
     ) -> Bool {
       guard case .fileURL(let url) = destination else { return false }
       return !FileManager.default.fileExists(atPath: url.path)
+    }
+
+    @MainActor
+    private func runtimeEncoderInventory(for fileFormat: FileFormat) -> String {
+      let formatID = encoderQueryFormatID(for: fileFormat)
+      var specifier = formatID
+      var propertySize: UInt32 = 0
+      let specifierSize = UInt32(MemoryLayout<AudioFormatID>.size)
+
+      let infoStatus = unsafe AudioFormatGetPropertyInfo(
+        kAudioFormatProperty_Encoders,
+        specifierSize,
+        &specifier,
+        &propertySize
+      )
+      guard infoStatus == noErr else {
+        return "AudioFormatGetPropertyInfo failed: \(osStatusSummary(infoStatus))"
+      }
+
+      let descriptorSize = MemoryLayout<AudioClassDescription>.size
+      guard descriptorSize > 0 else {
+        return "invalid descriptor size for AudioClassDescription"
+      }
+
+      let count = Int(propertySize) / descriptorSize
+      guard count > 0 else {
+        return "0 encoder classes for formatID=\(fourCC(formatID))"
+      }
+
+      var descriptions = Array(
+        repeating: AudioClassDescription(
+          mType: 0,
+          mSubType: 0,
+          mManufacturer: 0
+        ),
+        count: count
+      )
+      var mutableSize = propertySize
+      let status = unsafe AudioFormatGetProperty(
+        kAudioFormatProperty_Encoders,
+        specifierSize,
+        &specifier,
+        &mutableSize,
+        &descriptions
+      )
+      guard status == noErr else {
+        return "AudioFormatGetProperty failed: \(osStatusSummary(status))"
+      }
+
+      if mutableSize == 0 {
+        return "0 encoder classes returned for formatID=\(fourCC(formatID))"
+      }
+
+      let validCount = min(Int(mutableSize) / descriptorSize, descriptions.count)
+      let summaries = descriptions.prefix(validCount).map { encoderDescription in
+        "type=\(fourCC(encoderDescription.mType))/subtype=\(fourCC(encoderDescription.mSubType))/manufacturer=\(fourCC(encoderDescription.mManufacturer))"
+      }.joined(separator: ", ")
+
+      return
+        "\(validCount) encoder class(es) for formatID=\(fourCC(formatID))"
+        + (summaries.isEmpty ? "" : " [\(summaries)]")
+    }
+
+    @MainActor
+    private func encoderQueryFormatID(for fileFormat: FileFormat) -> AudioFormatID {
+      switch fileFormat {
+      case .aac, .adts:
+        return kAudioFormatMPEG4AAC
+      case .flac:
+        return kAudioFormatFLAC
+      case .caf, .wav, .aiff:
+        return kAudioFormatLinearPCM
+      }
+    }
+
+    @MainActor
+    private func osStatusSummary(_ status: OSStatus) -> String {
+      let error = NSError(domain: NSOSStatusErrorDomain, code: Int(status))
+      return "\(status) (\(VerboseError(error: error).description))"
+    }
+
+    @MainActor
+    private func fourCC(_ code: UInt32) -> String {
+      let scalars = [
+        UnicodeScalar((code >> 24) & 0xFF),
+        UnicodeScalar((code >> 16) & 0xFF),
+        UnicodeScalar((code >> 8) & 0xFF),
+        UnicodeScalar(code & 0xFF),
+      ]
+
+      let chars = scalars.map { scalar -> Character in
+        guard let scalar else { return "." }
+        let value = scalar.value
+        if (32...126).contains(value) {
+          return Character(scalar)
+        }
+        return "."
+      }
+
+      return String(chars)
     }
 
     @MainActor
@@ -1493,6 +1612,31 @@
       return candidates
     }
 
+  }
+
+  private final class RecorderDelegateProxy: NSObject, AVAudioRecorderDelegate {
+    func audioRecorderDidFinishRecording(_ recorder: AVAudioRecorder, successfully flag: Bool) {
+      guard !flag else { return }
+      log.warning(
+        "AVAUDIORECORDER_FINISHED_UNSUCCESSFULLY file=\(recorder.url.lastPathComponent, privacy: .public)"
+      )
+    }
+
+    func audioRecorderEncodeErrorDidOccur(_ recorder: AVAudioRecorder, error: (any Error)?) {
+      let renderedError: String
+      if let error {
+        let nsError = error as NSError
+        let verbose = VerboseError(error: nsError).description
+        renderedError =
+          "domain=\(nsError.domain) code=\(nsError.code) description=\(nsError.localizedDescription) verbose=\(verbose)"
+      } else {
+        renderedError = "missing error object"
+      }
+
+      log.error(
+        "AVAUDIORECORDER_ENCODE_ERROR file=\(recorder.url.lastPathComponent, privacy: .public) \(renderedError, privacy: .public)"
+      )
+    }
   }
 
   private struct RecorderStartError: LocalizedError {
