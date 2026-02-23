@@ -35,17 +35,19 @@
       self.errorManager = errorManager
       self.defaults = defaults
       self._useMeasurement = defaults.bool(forKey: StorageKey.useMeasurement)
+      let initialChannels: ChannelCount = .mono
+      let initialSampleRate: SampleRate = .common(.sr48000)
 
       let defaultSource = AudioSource(
         id: "default-source",
         name: "Default Source",
-        supportedPolarPatterns: [.omnidirectional, .stereo]
+        supportedPolarPatterns: [.omnidirectional]
       )
       let defaultInput = AudioInput(
         id: "default-input",
         name: "Default Input",
         type: .builtInMic,
-        channelCount: .stereo,
+        channelCount: initialChannels,
         availableSources: [defaultSource]
       )
 
@@ -53,8 +55,8 @@
       _selectedInput = defaultInput
       _availableSources = defaultInput.availableSources
       _selectedSource = defaultInput.selectedSource
-      _sampleRate = .common(.sr48000)
-      _channels = defaultInput.channelCount
+      _sampleRate = initialSampleRate
+      _channels = initialChannels
     }
 
     private let env: AudioEnvironment
