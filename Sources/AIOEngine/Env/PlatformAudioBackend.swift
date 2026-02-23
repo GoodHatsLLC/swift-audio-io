@@ -1,4 +1,4 @@
-public import Foundation
+internal import Foundation
 
 /// Internal platform audio backend contract used to decouple call sites from platform-only APIs.
 protocol PlatformAudioBackend: Sendable {

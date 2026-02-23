@@ -41,7 +41,7 @@
 
     public func set(preferredSource source: AudioSource?) throws(PreferenceError) {
       do {
-        try port.setPreferredDataSource(preferredSource?.avAudio)
+        try port.setPreferredDataSource(source?.avAudio)
       } catch {
         throw .setPreferredSourceFailed(inputID: port.uid, error: ErrorContext(error))
       }
