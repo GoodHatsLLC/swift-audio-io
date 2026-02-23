@@ -175,25 +175,25 @@
       _channels == .stereo
     }
 
-    public func applyMono() throws(ManagerError) {
+    public func applyMono() async throws(ManagerError) {
       _channels = .mono
     }
 
-    public func applyMono(persistPreference: Bool) throws(ManagerError) {
+    public func applyMono(persistPreference: Bool) async throws(ManagerError) {
       _ = persistPreference
-      try applyMono()
+      try await applyMono()
     }
 
-    public func applyStereo() throws(ManagerError) {
+    public func applyStereo() async throws(ManagerError) {
       guard inputHasStereoSource else {
         throw .unsupportedOperation
       }
       _channels = .stereo
     }
 
-    public func applyStereo(persistPreference: Bool) throws(ManagerError) {
+    public func applyStereo(persistPreference: Bool) async throws(ManagerError) {
       _ = persistPreference
-      try applyStereo()
+      try await applyStereo()
     }
 
     private var routeChangeSubscribers:
