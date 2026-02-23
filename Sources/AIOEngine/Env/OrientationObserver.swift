@@ -1,20 +1,10 @@
-//
-//  OrientationObserver.swift
-//  AIO
-//
-//  Created by adamz on 2025-08-03.
-//
-
-public import AVFAudio
-import Combine
-public import Observation
-import Tools
-
-#if canImport(SwiftUI)
-  import SwiftUI
-#endif
-
 #if canImport(UIKit) && !os(macOS)
+
+  public import AVFAudio
+  import Combine
+  public import Observation
+  import Tools
+  import SwiftUI
   public import UIKit
 
   @MainActor
