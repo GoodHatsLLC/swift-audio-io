@@ -8,6 +8,45 @@
   struct RecordingConfigurationPCMSettingsTests {
 
     @Test
+    func aacSettingsUseIntegerEncoderQualityValue() throws {
+      for fileFormat in [FileFormat.adts, .aac] {
+        let configuration = makeConfiguration(fileFormat: fileFormat)
+        let settings = try #require(configuration.fileSettings)
+        let qualityValue = try #require(settings[AVEncoderAudioQualityKey])
+
+        #expect(
+          qualityValue is Int,
+          "Expected Int for \(AVEncoderAudioQualityKey), got \(String(describing: type(of: qualityValue))) for \(fileFormat.description)"
+        )
+        #expect(
+          (qualityValue as? Int) == Int(configuration.outputConfiguration.quality.platform.rawValue)
+        )
+      }
+    }
+
+    @Test
+    @MainActor
+    func aacRecorderPreflightProducesUsableFormat() throws {
+      for fileFormat in [FileFormat.adts, .aac] {
+        let configuration = makeConfiguration(fileFormat: fileFormat)
+        let (recorder, outputURL) = try makeRecorder(configuration: configuration)
+        defer { try? FileManager.default.removeItem(at: outputURL) }
+
+        let didPrepare = recorder.prepareToRecord()
+
+        #expect(didPrepare, "prepareToRecord() failed for \(fileFormat.description)")
+        #expect(
+          recorder.format.sampleRate == configuration.inputConfiguration.sampleRate.rawValue,
+          "Unexpected sample rate for \(fileFormat.description): \(recorder.format.sampleRate)"
+        )
+        #expect(
+          recorder.format.channelCount == configuration.inputConfiguration.channels.platform,
+          "Unexpected channel count for \(fileFormat.description): \(recorder.format.channelCount)"
+        )
+      }
+    }
+
+    @Test
     func wavInt24UsesPacked24BitPCM() throws {
       let configuration = RecordingConfiguration(
         inputConfiguration: .init(
@@ -91,6 +130,33 @@
       try #require(settings[AVLinearPCMIsFloatKey] as? Bool == false)
       try #require(settings[AVLinearPCMIsBigEndianKey] as? Bool == true)
       try #require(settings[AVLinearPCMIsNonInterleaved] as? Bool == false)
+    }
+
+    private func makeConfiguration(fileFormat: FileFormat) -> RecordingConfiguration {
+      RecordingConfiguration(
+        inputConfiguration: .init(
+          sampleRate: .common(.sr48000),
+          channels: .mono
+        ),
+        outputConfiguration: .init(
+          fileFormat: fileFormat,
+          bitDepth: .pcmInt16,
+          quality: .maximum
+        )
+      )
+    }
+
+    @MainActor
+    private func makeRecorder(
+      configuration: RecordingConfiguration
+    ) throws -> (recorder: AVAudioRecorder, outputURL: URL) {
+      let settings = try #require(configuration.fileSettings)
+      let outputURL = FileManager.default.temporaryDirectory
+        .appendingPathComponent("RecordingConfigurationPCMSettingsTests-\(UUID().uuidString)")
+        .appendingPathExtension(configuration.fileExtension)
+
+      let recorder = try AVAudioRecorder(url: outputURL, settings: settings)
+      return (recorder, outputURL)
     }
   }
 #endif
