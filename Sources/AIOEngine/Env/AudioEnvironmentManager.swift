@@ -168,6 +168,88 @@
       var rejectedSampleRatesHz: [Double]?
     }
 
+    /// Describes audio input configuration operations that require synchronous XPC
+    /// round-trips to `mediaserverd`. Computed on MainActor (where cached state is
+    /// readable) then executed off MainActor via ``executeInputConfiguration(_:session:)``
+    /// to avoid run-loop hangs.
+    private struct InputConfigurationPlan: Sendable {
+      var channelCount: Int?
+      var polarPatternSource: AudioSource?
+      var polarPattern: PolarPattern?
+      var preferredInput: AudioInput?
+      var preferredSource: AudioSource?
+      var inputOrientation: AVAudioSession.StereoOrientation?
+    }
+
+    /// Error wrapper that preserves the origin of failures inside
+    /// ``executeInputConfiguration(_:session:)`` so they can be mapped back
+    /// to the correct ``ManagerError`` case.
+    private enum _InputConfigError: Error, Sendable {
+      case channelCount(ErrorContext)
+      case polarPattern(AudioSource.PreferenceError)
+      case preferredSource(AudioInput.PreferenceError)
+      case inputOrientation(ErrorContext)
+    }
+
+    /// Executes XPC-blocking AVAudioSession preference calls off the main actor.
+    ///
+    /// These calls (`setPreferredPolarPattern`, `setPreferredDataSource`, etc.) make
+    /// synchronous XPC round-trips to `mediaserverd` that can each block for 100–500 ms.
+    /// Running them off the main actor prevents UIKit run-loop hangs.
+    ///
+    /// - Note: `setCategory` and `setActive` intentionally remain on MainActor per Apple
+    ///   DTS guidance. Only input-preference calls are moved here.
+    nonisolated private static func executeInputConfiguration(
+      _ plan: InputConfigurationPlan,
+      session: AVAudioSession
+    ) async throws(ManagerError) {
+      do {
+        try await Task.detached {
+          if let count = plan.channelCount {
+            do {
+              try session.setPreferredInputNumberOfChannels(count)
+            } catch {
+              throw _InputConfigError.channelCount(ErrorContext(error))
+            }
+          }
+          if let source = plan.polarPatternSource, let pattern = plan.polarPattern {
+            do {
+              try source.set(preferredPolarPattern: pattern)
+            } catch {
+              throw _InputConfigError.polarPattern(error)
+            }
+          }
+          if let input = plan.preferredInput, let source = plan.preferredSource {
+            do {
+              try input.set(preferredSource: source)
+            } catch {
+              throw _InputConfigError.preferredSource(error)
+            }
+          }
+          if let orientation = plan.inputOrientation {
+            do {
+              try session.setPreferredInputOrientation(orientation)
+            } catch {
+              throw _InputConfigError.inputOrientation(ErrorContext(error))
+            }
+          }
+        }.value
+      } catch let error as _InputConfigError {
+        switch error {
+        case .channelCount(let ctx):
+          throw .audioSessionFailed(operation: .setPreferredInputNumberOfChannels, error: ctx)
+        case .polarPattern(let err):
+          throw .audioSource(err)
+        case .preferredSource(let err):
+          throw .audioInput(err)
+        case .inputOrientation(let ctx):
+          throw .audioSessionFailed(operation: .setPreferredInputOrientation, error: ctx)
+        }
+      } catch {
+        throw .unexpected(ErrorContext(error))
+      }
+    }
+
     private enum StorageKey {
       static let preferredInputId = "aio.audio_env.preferred_input_id.v1"
       static let inputPrefsById = "aio.audio_env.input_prefs_by_id.v1"
@@ -592,31 +674,25 @@
     /// This method forces the audio session to use a single input channel and attempts to select a non-stereo polar pattern if available.
     ///
     /// - Throws: An error if the audio session cannot be configured for mono.
-    public func applyMono() throws(ManagerError) {
-      try applyMono(persistPreference: true)
+    public func applyMono() async throws(ManagerError) {
+      try await applyMono(persistPreference: true)
     }
 
-    public func applyMono(persistPreference: Bool) throws(ManagerError) {
-      try applyMonoInternal(persistPreference: persistPreference)
+    public func applyMono(persistPreference: Bool) async throws(ManagerError) {
+      try await applyMonoInternal(persistPreference: persistPreference)
     }
 
-    private func applyMonoInternal(persistPreference: Bool) throws(ManagerError) {
+    private func applyMonoInternal(persistPreference: Bool) async throws(ManagerError) {
       if persistPreference {
         persistInputPreferencesIfNeeded { prefs in
           prefs.channelCount = ChannelCount.mono.count
         }
       }
-      // Force mono input at the session level and clear orientation
-      do {
-        try session.setPreferredInputNumberOfChannels(1)
-      } catch {
-        throw .audioSessionFailed(
-          operation: .setPreferredInputNumberOfChannels,
-          error: ErrorContext(error)
-        )
-      }
 
-      // Prefer to keep the current input, but switch to a non-stereo polar pattern/source
+      // Build an execution plan on MainActor, then run XPC calls off MainActor.
+      var plan = InputConfigurationPlan()
+      plan.channelCount = 1
+
       if let input = env.input {
         let allSources: [AudioSource] = input.availableSources
         let current = env.source
@@ -626,50 +702,18 @@
         if let current,
           let pattern = current.supportedPolarPatterns.first(where: { $0 != .stereo })
         {
-          if let error: AudioSource.PreferenceError = {
-            do {
-              try current.set(preferredPolarPattern: pattern)
-              return nil
-            } catch let error as AudioSource.PreferenceError {
-              return error
-            } catch {
-              preconditionFailure("Unexpected error type: \(error)")
-            }
-          }() {
-            throw .audioSource(error)
-          }
-
-          if let error: AudioInput.PreferenceError = {
-            do {
-              try input.set(preferredSource: current)
-              return nil
-            } catch let error as AudioInput.PreferenceError {
-              return error
-            } catch {
-              preconditionFailure("Unexpected error type: \(error)")
-            }
-          }() {
-            throw .audioInput(error)
-          }
+          plan.polarPatternSource = current
+          plan.polarPattern = pattern
+          plan.preferredInput = input
+          plan.preferredSource = current
           didApply = true
         }
         // 2) If that fails, select a source that doesn't support stereo at all
         if !didApply,
-          let monoCapable = allSources.first(where: { !$0.supportedPolarPatterns.contains(.stereo) }
-          )
+          let monoCapable = allSources.first(where: { !$0.supportedPolarPatterns.contains(.stereo) })
         {
-          if let error: AudioInput.PreferenceError = {
-            do {
-              try input.set(preferredSource: monoCapable)
-              return nil
-            } catch let error as AudioInput.PreferenceError {
-              return error
-            } catch {
-              preconditionFailure("Unexpected error type: \(error)")
-            }
-          }() {
-            throw .audioInput(error)
-          }
+          plan.preferredInput = input
+          plan.preferredSource = monoCapable
           didApply = true
         }
         // 3) As a last resort, pick the first source and force a non-stereo pattern if available
@@ -677,33 +721,15 @@
           let fallback = allSources.first,
           let pattern = fallback.supportedPolarPatterns.first(where: { $0 != .stereo })
         {
-          if let error: AudioSource.PreferenceError = {
-            do {
-              try fallback.set(preferredPolarPattern: pattern)
-              return nil
-            } catch let error as AudioSource.PreferenceError {
-              return error
-            } catch {
-              preconditionFailure("Unexpected error type: \(error)")
-            }
-          }() {
-            throw .audioSource(error)
-          }
-
-          if let error: AudioInput.PreferenceError = {
-            do {
-              try input.set(preferredSource: fallback)
-              return nil
-            } catch let error as AudioInput.PreferenceError {
-              return error
-            } catch {
-              preconditionFailure("Unexpected error type: \(error)")
-            }
-          }() {
-            throw .audioInput(error)
-          }
+          plan.polarPatternSource = fallback
+          plan.polarPattern = pattern
+          plan.preferredInput = input
+          plan.preferredSource = fallback
         }
       }
+
+      // Execute XPC-blocking calls off MainActor to avoid run-loop hangs.
+      try await Self.executeInputConfiguration(plan, session: session)
 
       // Refresh cached mirrors
       _input = env.input
@@ -723,15 +749,15 @@
     /// This method attempts to select a stereo-capable audio source and polar pattern. If it fails, it falls back to a mono configuration.
     ///
     /// - Throws: An error if the audio session cannot be configured for stereo.
-    public func applyStereo() throws(ManagerError) {
-      try applyStereo(persistPreference: true)
+    public func applyStereo() async throws(ManagerError) {
+      try await applyStereo(persistPreference: true)
     }
 
-    public func applyStereo(persistPreference: Bool) throws(ManagerError) {
-      try applyStereoInternal(persistPreference: persistPreference)
+    public func applyStereo(persistPreference: Bool) async throws(ManagerError) {
+      try await applyStereoInternal(persistPreference: persistPreference)
     }
 
-    private func applyStereoInternal(persistPreference: Bool) throws(ManagerError) {
+    private func applyStereoInternal(persistPreference: Bool) async throws(ManagerError) {
       if persistPreference {
         persistInputPreferencesIfNeeded { prefs in
           prefs.channelCount = ChannelCount.stereo.count
@@ -747,59 +773,29 @@
           }
 
           let candidates = preferredStereoCandidates(from: stereoCapableSources)
-          var lastError: (any Error)?
+          let session = self.session
+          let currentOrientation = orientation
 
-          for stereoSource in candidates {
-            do {
-              if let error: AudioSource.PreferenceError = {
-                do {
-                  try stereoSource.set(preferredPolarPattern: .stereo)
-                  return nil
-                } catch let error as AudioSource.PreferenceError {
-                  return error
-                } catch {
-                  preconditionFailure("Unexpected error type: \(error)")
-                }
-              }() {
-                throw ManagerError.audioSource(error)
-              }
-
-              if let error: AudioInput.PreferenceError = {
-                do {
-                  try input.set(preferredSource: stereoSource)
-                  return nil
-                } catch let error as AudioInput.PreferenceError {
-                  return error
-                } catch {
-                  preconditionFailure("Unexpected error type: \(error)")
-                }
-              }() {
-                throw ManagerError.audioInput(error)
-              }
-
-              let currentOrientation = orientation
-              if currentOrientation != .none {
-                do {
+          // Run XPC-blocking calls off MainActor.
+          // The loop tries each stereo-capable source until one succeeds.
+          try await Task.detached {
+            var lastError: (any Error)?
+            for stereoSource in candidates {
+              do {
+                try stereoSource.set(preferredPolarPattern: .stereo)
+                try input.set(preferredSource: stereoSource)
+                if currentOrientation != .none {
                   try session.setPreferredInputOrientation(currentOrientation)
-                } catch {
-                  throw ManagerError.audioSessionFailed(
-                    operation: .setPreferredInputOrientation,
-                    error: ErrorContext(error)
-                  )
                 }
+                lastError = nil
+                break
+              } catch {
+                lastError = error
+                continue
               }
-
-              lastError = nil
-              break
-            } catch {
-              lastError = error
-              continue
             }
-          }
-
-          if let lastError {
-            throw lastError
-          }
+            if let lastError { throw lastError }
+          }.value
         }
 
         // Refresh cached mirrors to match applyMono()
@@ -813,12 +809,18 @@
             prefs.sourceId = env.source?.id
           }
         }
+      } catch let error as AudioSource.PreferenceError {
+        try await applyMonoInternal(persistPreference: false)
+        throw .audioSource(error)
+      } catch let error as AudioInput.PreferenceError {
+        try await applyMonoInternal(persistPreference: false)
+        throw .audioInput(error)
       } catch let error as ManagerError {
-        try applyMonoInternal(persistPreference: false)
+        try await applyMonoInternal(persistPreference: false)
         throw error
       } catch {
         let mapped = ManagerError.unexpected(ErrorContext(error))
-        try applyMonoInternal(persistPreference: false)
+        try await applyMonoInternal(persistPreference: false)
         throw mapped
       }
     }
@@ -844,9 +846,15 @@
       log.info(
         "🔊 Audio session manually set to \(active ? "active" : "inactive", privacy: .public)")
       if active {
-        restorePreferredInputAndConfigurationIfPossible(
-          reason: "audio session activated"
-        )
+        // Schedule restoration asynchronously. The XPC-blocking preference
+        // calls (setPreferredPolarPattern, setPreferredDataSource, etc.) now
+        // run off the main actor, so this Task lets the activation return
+        // promptly while preferences are restored in the background.
+        Task { @MainActor [weak self] in
+          await self?.restorePreferredInputAndConfigurationIfPossible(
+            reason: "audio session activated"
+          )
+        }
       }
     }
 
@@ -917,9 +925,7 @@
                 throw ManagerError.audioEnvironment(error)
               }
 
-              await MainActor.run {
-                self.restorePreferredInputAndConfigurationIfPossible(reason: "run() startup")
-              }
+              await self.restorePreferredInputAndConfigurationIfPossible(reason: "run() startup")
 
               log.info(
                 """
@@ -1225,16 +1231,13 @@
               @unknown default: "unknowndefault"
               }
             await self.updateAudioInputs(reason: "routeChange notification: .\(reasonMsg)")
-            await MainActor.run { [weak self] in
-              guard let self else { return }
-              if !self.isAudioSessionActive
-                && (notification.reason == .newDeviceAvailable
-                  || notification.reason == .oldDeviceUnavailable)
-              {
-                self.restorePreferredInputAndConfigurationIfPossible(
-                  reason: "routeChange notification: .\(reasonMsg)"
-                )
-              }
+            if await !self.isAudioSessionActive
+              && (notification.reason == .newDeviceAvailable
+                || notification.reason == .oldDeviceUnavailable)
+            {
+              await self.restorePreferredInputAndConfigurationIfPossible(
+                reason: "routeChange notification: .\(reasonMsg)"
+              )
             }
 
             // Forward route change to audio engine
@@ -1317,7 +1320,7 @@
       } catch {
         errorManager.enqueue(error)
       }
-      restorePreferredInputAndConfigurationIfPossible(
+      await restorePreferredInputAndConfigurationIfPossible(
         reason: "mediaServicesReset notification"
       )
       await dispatchMediaServicesReset()
@@ -1326,7 +1329,7 @@
 
   extension AudioEnvironmentManager {
     @MainActor
-    private func restorePreferredInputAndConfigurationIfPossible(reason: String) {
+    private func restorePreferredInputAndConfigurationIfPossible(reason: String) async {
       guard !isRestoringFromDefaults else { return }
       isRestoringFromDefaults = true
       defer { isRestoringFromDefaults = false }
@@ -1365,9 +1368,9 @@
           if let channelCount = prefs.channelCount {
             do {
               if channelCount > 1 {
-                try applyStereo()
+                try await applyStereo()
               } else {
-                try applyMono()
+                try await applyMono()
               }
             } catch {
               errorManager.enqueue(error)
@@ -1382,7 +1385,7 @@
               // Best-effort fallback: choose another stereo-capable source when the remembered one
               // is no longer available.
               do {
-                try applyStereo()
+                try await applyStereo()
               } catch {
                 errorManager.enqueue(error)
               }
@@ -1397,7 +1400,7 @@
         // First-run default: prefer stereo if available.
         if inputHasStereoSource {
           do {
-            try applyStereo()
+            try await applyStereo()
           } catch {
             errorManager.enqueue(error)
           }
