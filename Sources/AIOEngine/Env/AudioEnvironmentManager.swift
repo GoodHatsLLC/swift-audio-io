@@ -204,64 +204,52 @@
       _ plan: InputConfigurationPlan,
       session: AVAudioSession
     ) async throws(ManagerError) {
-      do {
-        try await Task.detached {
-          if let count = plan.channelCount {
-            do {
-              try session.setPreferredInputNumberOfChannels(count)
-            } catch {
-              throw _InputConfigError.channelCount(ErrorContext(error))
-            }
+      let t = Task.detached {
+        if let count = plan.channelCount {
+          do {
+            try session.setPreferredInputNumberOfChannels(count)
+          } catch {
+            return Result<Void, ManagerError>.failure(
+              .audioSessionFailed(
+                operation: .setPreferredInputNumberOfChannels, error: ErrorContext(error)))
           }
-          if let source = plan.polarPatternSource, let pattern = plan.polarPattern {
-            do {
-              try source.set(preferredPolarPattern: pattern)
-            } catch let error as AudioSource.PreferenceError {
-              throw _InputConfigError.polarPattern(error)
-            } catch {
-              throw _InputConfigError.unexpected(ErrorContext(error))
-            }
-          }
-          if let input = plan.preferredInput, let source = plan.preferredSource {
-            do {
-              try input.set(preferredSource: source)
-            } catch let error as AudioInput.PreferenceError {
-              throw _InputConfigError.preferredSource(error)
-            } catch {
-              throw _InputConfigError.unexpected(ErrorContext(error))
-            }
-          }
-          if let orientation = plan.inputOrientation {
-            do {
-              try session.setPreferredInputOrientation(orientation)
-            } catch {
-              throw _InputConfigError.inputOrientation(ErrorContext(error))
-            }
-          }
-        }.value
-      } catch let error as _InputConfigError {
-        switch error {
-        case .channelCount(let ctx):
-          throw .audioSessionFailed(operation: .setPreferredInputNumberOfChannels, error: ctx)
-        case .polarPattern(let err):
-          throw .audioSource(err)
-        case .preferredSource(let err):
-          throw .audioInput(err)
-        case .inputOrientation(let ctx):
-          throw .audioSessionFailed(operation: .setPreferredInputOrientation, error: ctx)
-        case .unexpected(let ctx):
-          throw .unexpected(ctx)
         }
+
         if let source = plan.polarPatternSource, let pattern = plan.polarPattern {
-          source.set(preferredPolarPattern: pattern)
+          do {
+            try source.set(preferredPolarPattern: pattern)
+          } catch let err as AudioSource.PreferenceError {
+            return Result<Void, ManagerError>.failure(.audioSource(err))
+          }
         }
+
         if let input = plan.preferredInput, let source = plan.preferredSource {
-          input.set(preferredSource: source)
+          do {
+            try input.set(preferredSource: source)
+          } catch let error as AudioInput.PreferenceError {
+            return Result<Void, ManagerError>.failure(.audioInput(error))
+          }
         }
+
         if let orientation = plan.inputOrientation {
-          session.setPreferredInputOrientation(orientation)
+          do {
+            try session.setPreferredInputOrientation(orientation)
+          } catch {
+            return Result<Void, ManagerError>.failure(
+              .audioSessionFailed(operation: .setPreferredInputOrientation, error: .init(error)))
+          }
         }
-      }.value
+        return .success(())
+      }
+      do {
+        let result = try await t.value
+        switch result {
+        case .success: return
+        case .failure(let managerError): throw managerError
+        }
+      } catch {
+        throw ManagerError.unexpected(ErrorContext(error))
+      }
     }
 
     private enum StorageKey {
@@ -743,15 +731,18 @@
         }
       }
 
-      // Execute XPC-blocking calls off MainActor to avoid run-loop hangs.
-      await Self.executeInputConfiguration(plan, session: session)
+      defer {
+        // Refresh cached mirrors
+        _input = env.input
+        _selectedNumberOfChannels = (env.input?.channelCount) ?? .mono
+        _availableInputs = env.availableInputs
+        _selectedSource = env.source
+        _availableSources = filterSources(env.availableSources, for: _selectedNumberOfChannels)
+      }
 
-      // Refresh cached mirrors
-      _input = env.input
-      _selectedNumberOfChannels = (env.input?.channelCount) ?? .mono
-      _availableInputs = env.availableInputs
-      _selectedSource = env.source
-      _availableSources = filterSources(env.availableSources, for: _selectedNumberOfChannels)
+      // Execute XPC-blocking calls off MainActor to avoid run-loop hangs.
+      try await Self.executeInputConfiguration(plan, session: session)
+
       if persistPreference {
         persistInputPreferencesIfNeeded { prefs in
           prefs.sourceId = env.source?.id
