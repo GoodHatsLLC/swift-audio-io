@@ -1075,21 +1075,26 @@
 
     @MainActor
     public func scrub(
-      to progress: Double
-    ) async throws(AIOError) {
+      to time: TimeInterval,
+      updatePlaybackTimer: Bool = true
+    ) throws(AIOError) -> Playback? {
+      _ = updatePlaybackTimer
       guard var current = playback else {
         throw .invalidScrubTrack
       }
-      let normalized = max(progress, 0)
+      guard current.duration > time, time >= 0 else {
+        throw .invalidScrubTime(details: time)
+      }
       current = Playback(
         id: current.id,
         file: current.file,
         isPlaying: current.isPlaying,
-        time: normalized,
+        time: time,
         duration: current.duration
       )
       playback = current
       onPlaybackUpdated?(current)
+      return current
     }
 
     @MainActor
