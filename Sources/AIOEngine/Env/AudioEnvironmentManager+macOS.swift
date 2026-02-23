@@ -26,42 +26,43 @@
     @MainActor
     public static func prepareAudioSessionCategoryForAppLaunch() {}
 
-    public init(
+    public convenience init(
       env: AudioEnvironment,
       errorManager: any ErrorManaging,
       defaults: UserDefaults = .standard
     ) {
+      self.init(
+        env: env,
+        errorManager: errorManager,
+        defaults: defaults,
+        platformAudioBackend: PlatformAudioBackendFactory.makeDefault()
+      )
+    }
+
+    init(
+      env: AudioEnvironment,
+      errorManager: any ErrorManaging,
+      defaults: UserDefaults,
+      platformAudioBackend: any PlatformAudioBackend
+    ) {
       self.env = env
       self.errorManager = errorManager
       self.defaults = defaults
+      self.platformAudioBackend = platformAudioBackend
       self._useMeasurement = defaults.bool(forKey: StorageKey.useMeasurement)
-      let initialChannels: ChannelCount = .mono
-      let initialSampleRate: SampleRate = .common(.sr48000)
-
-      let defaultSource = AudioSource(
-        id: "default-source",
-        name: "Default Source",
-        supportedPolarPatterns: [.omnidirectional]
-      )
-      let defaultInput = AudioInput(
-        id: "default-input",
-        name: "Default Input",
-        type: .builtInMic,
-        channelCount: initialChannels,
-        availableSources: [defaultSource]
-      )
-
-      _availableInputs = [defaultInput]
-      _selectedInput = defaultInput
-      _availableSources = defaultInput.availableSources
-      _selectedSource = defaultInput.selectedSource
-      _sampleRate = initialSampleRate
-      _channels = initialChannels
+      _availableInputs = []
+      _selectedInput = nil
+      _availableSources = []
+      _selectedSource = nil
+      _sampleRate = .common(.sr48000)
+      _channels = .mono
     }
 
     private let env: AudioEnvironment
     private let errorManager: any ErrorManaging
     private let defaults: UserDefaults
+    private let platformAudioBackend: any PlatformAudioBackend
+    private var backendRouteTask: Task<Void, Never>?
 
     private enum StorageKey {
       static let useMeasurement = "aio.audio_env.use_measurement"
@@ -140,6 +141,7 @@
     public var selectedInput: AudioInput? {
       get { _selectedInput }
       set {
+        let requestedChannelPreference = _channels
         _selectedInput = newValue
         _availableSources = newValue?.availableSources ?? []
         if let selected = _selectedSource, !_availableSources.contains(selected) {
@@ -148,7 +150,12 @@
           _selectedSource = _availableSources.first
         }
 
-        _channels = newValue?.channelCount ?? .mono
+        let maxSupportedChannels = newValue?.channelCount ?? .mono
+        if requestedChannelPreference == .stereo && maxSupportedChannels == .stereo {
+          _channels = .stereo
+        } else {
+          _channels = .mono
+        }
       }
     }
 
@@ -187,7 +194,7 @@
     }
 
     public func applyStereo() async throws(ManagerError) {
-      guard inputHasStereoSource else {
+      guard selectedInput?.channelCount == .stereo else {
         throw .unsupportedOperation
       }
       _channels = .stereo
@@ -274,13 +281,66 @@
       }
       isRunning = true
       isReady = true
+      await refreshInputsFromPlatform()
+
+      backendRouteTask?.cancel()
+      backendRouteTask = Task { @MainActor [weak self] in
+        guard let self else { return }
+        for await _ in platformAudioBackend.routeChanges() {
+          await self.refreshInputsFromPlatform()
+          await self.notifyRouteChangeSubscribers()
+        }
+      }
 
       // Keep parity with iOS semantics: `run()` represents a long-lived manager loop
       // and only returns after cancellation.
       await withCancellationOperation {
+        backendRouteTask?.cancel()
+        backendRouteTask = nil
         isAudioSessionActive = false
         isReady = false
         isRunning = false
+      }
+    }
+
+    private func refreshInputsFromPlatform() async {
+      let descriptors = await platformAudioBackend.availableInputs()
+      let inputs = descriptors.map { descriptor in
+        makeAudioInput(from: descriptor)
+      }
+
+      _availableInputs = inputs
+      let defaultInputID = descriptors.first(where: \.isDefault)?.id
+      let selected =
+        inputs.first(where: { $0.id == _selectedInput?.id })
+        ?? inputs.first(where: { $0.id == defaultInputID })
+        ?? inputs.first
+      selectedInput = selected
+    }
+
+    private func makeAudioInput(from descriptor: PlatformAudioInputDescriptor) -> AudioInput {
+      let supportsStereo = descriptor.channelCount >= 2
+      let sourcePatterns: [PolarPattern] =
+        supportsStereo ? [.omnidirectional, .stereo] : [.omnidirectional]
+      let defaultSource = AudioSource(
+        id: "\(descriptor.id)-source",
+        name: descriptor.name,
+        supportedPolarPatterns: sourcePatterns
+      )
+      return AudioInput(
+        id: descriptor.id,
+        name: descriptor.name,
+        type: .unknown,
+        channelCount: supportsStereo ? .stereo : .mono,
+        availableSources: [defaultSource]
+      )
+    }
+
+    private func notifyRouteChangeSubscribers() async {
+      guard !routeChangeSubscribers.isEmpty else { return }
+      let event = AudioRouteChangeEvent(userMessage: "Audio route changed")
+      for handler in routeChangeSubscribers.values {
+        await handler(event)
       }
     }
   }

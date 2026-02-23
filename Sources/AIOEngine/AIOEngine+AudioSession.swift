@@ -1,4 +1,4 @@
-#if os(iOS)
+#if canImport(AVFoundation)
   import AVFoundation
   import os
   import SystemLog
@@ -16,50 +16,54 @@
         throw .audioSessionFailed(operation: .setActive, error: ErrorContext(error))
       }
 
-      let session = AVAudioSession.sharedInstance()
+      #if os(iOS)
+        let session = AVAudioSession.sharedInstance()
 
-      try applyAudioSessionConfiguration(session, configuration: recordingSessionConfiguration)
+        try applyAudioSessionConfiguration(session, configuration: recordingSessionConfiguration)
 
-      // Set preferred sample rate
-      do {
-        try session.setPreferredSampleRate(configuration.inputConfiguration.sampleRate.platform)
-      } catch {
-        throw .audioSessionFailed(operation: .setPreferredSampleRate, error: ErrorContext(error))
-      }
+        // Set preferred sample rate
+        do {
+          try session.setPreferredSampleRate(configuration.inputConfiguration.sampleRate.platform)
+        } catch {
+          throw .audioSessionFailed(operation: .setPreferredSampleRate, error: ErrorContext(error))
+        }
 
-      // Set preferred buffer duration for optimal performance
-      let preferredDuration = calculatePreferredBufferDuration(
-        sampleRate: configuration.inputConfiguration.sampleRate.platform
-      )
-      do {
-        try session.setPreferredIOBufferDuration(preferredDuration)
-      } catch {
-        throw .audioSessionFailed(
-          operation: .setPreferredIOBufferDuration, error: ErrorContext(error))
-      }
+        // Set preferred buffer duration for optimal performance
+        let preferredDuration = calculatePreferredBufferDuration(
+          sampleRate: configuration.inputConfiguration.sampleRate.platform
+        )
+        do {
+          try session.setPreferredIOBufferDuration(preferredDuration)
+        } catch {
+          throw .audioSessionFailed(
+            operation: .setPreferredIOBufferDuration, error: ErrorContext(error))
+        }
 
-      // Set preferred input channels if possible
-      let desiredChannels = configuration.inputConfiguration.channels.platform
-      let channelCount =
-        desiredChannels > session.maximumInputNumberOfChannels
-        ? AVAudioChannelCount(session.maximumInputNumberOfChannels) : desiredChannels
-      do {
-        try session.setPreferredInputNumberOfChannels(Int(channelCount))
-      } catch {
-        throw .audioSessionFailed(
-          operation: .setPreferredInputNumberOfChannels, error: ErrorContext(error))
-      }
+        // Set preferred input channels if possible
+        let desiredChannels = configuration.inputConfiguration.channels.platform
+        let channelCount =
+          desiredChannels > session.maximumInputNumberOfChannels
+          ? AVAudioChannelCount(session.maximumInputNumberOfChannels) : desiredChannels
+        do {
+          try session.setPreferredInputNumberOfChannels(Int(channelCount))
+        } catch {
+          throw .audioSessionFailed(
+            operation: .setPreferredInputNumberOfChannels, error: ErrorContext(error))
+        }
 
-      do {
-        try session.setActive(true)
-      } catch {
-        throw .audioSessionFailed(operation: .setActive, error: ErrorContext(error))
-      }
+        do {
+          try session.setActive(true)
+        } catch {
+          throw .audioSessionFailed(operation: .setActive, error: ErrorContext(error))
+        }
 
-      // Verify actual settings
-      log.info(
-        "Audio session configured - Sample rate: \(session.sampleRate, privacy: .public), Buffer duration: \(session.ioBufferDuration, privacy: .public), Input channels: \(session.inputNumberOfChannels, privacy: .public)"
-      )
+        // Verify actual settings
+        log.info(
+          "Audio session configured - Sample rate: \(session.sampleRate, privacy: .public), Buffer duration: \(session.ioBufferDuration, privacy: .public), Input channels: \(session.inputNumberOfChannels, privacy: .public)"
+        )
+      #else
+        _ = configuration
+      #endif
     }
 
     @MainActor
@@ -71,72 +75,74 @@
       }
     }
 
-    @MainActor
-    func applyAudioSessionConfiguration(
-      _ session: AVAudioSession,
-      configuration: AudioSessionConfiguration
-    ) throws(AIOError) {
+    #if os(iOS)
+      @MainActor
+      func applyAudioSessionConfiguration(
+        _ session: AVAudioSession,
+        configuration: AudioSessionConfiguration
+      ) throws(AIOError) {
 
-      if session.category != configuration.category
-        || session.mode != configuration.mode
-        || session.categoryOptions != configuration.options
-      {
-        do {
-          try session.setCategory(
-            configuration.category,
-            mode: configuration.mode,
-            options: configuration.options
-          )
-        } catch {
-          throw .audioSessionFailed(operation: .setCategory, error: ErrorContext(error))
+        if session.category != configuration.category
+          || session.mode != configuration.mode
+          || session.categoryOptions != configuration.options
+        {
+          do {
+            try session.setCategory(
+              configuration.category,
+              mode: configuration.mode,
+              options: configuration.options
+            )
+          } catch {
+            throw .audioSessionFailed(operation: .setCategory, error: ErrorContext(error))
+          }
+        }
+
+        if session.allowHapticsAndSystemSoundsDuringRecording
+          != configuration.allowsHapticsAndSystemSoundsDuringRecording
+        {
+          do {
+            try session.setAllowHapticsAndSystemSoundsDuringRecording(
+              configuration.allowsHapticsAndSystemSoundsDuringRecording
+            )
+          } catch {
+            throw .audioSessionFailed(
+              operation: .setAllowHapticsAndSystemSoundsDuringRecording,
+              error: ErrorContext(error)
+            )
+          }
+        }
+
+        if session.prefersNoInterruptionsFromSystemAlerts
+          != configuration.prefersNoInterruptionsFromSystemAlerts
+        {
+          do {
+            try session.setPrefersNoInterruptionsFromSystemAlerts(
+              configuration.prefersNoInterruptionsFromSystemAlerts
+            )
+          } catch {
+            throw .audioSessionFailed(
+              operation: .setPrefersNoInterruptionsFromSystemAlerts,
+              error: ErrorContext(error)
+            )
+          }
+        }
+
+        if session.prefersInterruptionOnRouteDisconnect
+          != configuration.prefersInterruptionOnRouteDisconnect
+        {
+          do {
+            try session.setPrefersInterruptionOnRouteDisconnect(
+              configuration.prefersInterruptionOnRouteDisconnect
+            )
+          } catch {
+            throw .audioSessionFailed(
+              operation: .setPrefersInterruptionOnRouteDisconnect,
+              error: ErrorContext(error)
+            )
+          }
         }
       }
-
-      if session.allowHapticsAndSystemSoundsDuringRecording
-        != configuration.allowsHapticsAndSystemSoundsDuringRecording
-      {
-        do {
-          try session.setAllowHapticsAndSystemSoundsDuringRecording(
-            configuration.allowsHapticsAndSystemSoundsDuringRecording
-          )
-        } catch {
-          throw .audioSessionFailed(
-            operation: .setAllowHapticsAndSystemSoundsDuringRecording,
-            error: ErrorContext(error)
-          )
-        }
-      }
-
-      if session.prefersNoInterruptionsFromSystemAlerts
-        != configuration.prefersNoInterruptionsFromSystemAlerts
-      {
-        do {
-          try session.setPrefersNoInterruptionsFromSystemAlerts(
-            configuration.prefersNoInterruptionsFromSystemAlerts
-          )
-        } catch {
-          throw .audioSessionFailed(
-            operation: .setPrefersNoInterruptionsFromSystemAlerts,
-            error: ErrorContext(error)
-          )
-        }
-      }
-
-      if session.prefersInterruptionOnRouteDisconnect
-        != configuration.prefersInterruptionOnRouteDisconnect
-      {
-        do {
-          try session.setPrefersInterruptionOnRouteDisconnect(
-            configuration.prefersInterruptionOnRouteDisconnect
-          )
-        } catch {
-          throw .audioSessionFailed(
-            operation: .setPrefersInterruptionOnRouteDisconnect,
-            error: ErrorContext(error)
-          )
-        }
-      }
-    }
+    #endif
 
     @MainActor
     func deactivateAudioSessionIfNeeded(reason: String) {
