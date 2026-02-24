@@ -76,6 +76,7 @@ let package = Package(
       name: "AudioSignals",
       dependencies: [
         "Tools",
+        "SystemLog",
         .product(name: "Atomics", package: "swift-atomics"),
       ],
       swiftSettings: [
@@ -127,7 +128,7 @@ let package = Package(
     ),
     .testTarget(
       name: "AudioVisualizationTests",
-      dependencies: ["AIOEngine"],
+      dependencies: ["AIOEngine", "AudioSignals"],
       swiftSettings: [
         .swiftLanguageMode(.v6),
         .strictMemorySafety(),
