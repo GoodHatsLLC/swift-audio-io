@@ -106,7 +106,7 @@
     }
   }
 #else
-  public import Foundation
+  import Foundation
 
   /// Native macOS compatibility shape for call sites that configure audio session semantics.
   /// macOS does not expose `AVAudioSession`, so this type models equivalent intent-only values.

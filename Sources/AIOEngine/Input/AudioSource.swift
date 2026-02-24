@@ -1,8 +1,8 @@
 #if canImport(AVFoundation)
-  public import AVFAudio
-  public import Tools
 
   #if os(iOS)
+    public import AVFAudio
+    public import Tools
     public struct AudioSource: Hashable, Sendable, Identifiable, CustomStringConvertible, Comparable
     {
       public enum PreferenceError: AudioError {

@@ -1,7 +1,7 @@
-public import Foundation
-public import SwiftUI
+import Foundation
 
 #if canImport(MessageUI)
+  public import SwiftUI
   import MessageUI
 #endif
 
