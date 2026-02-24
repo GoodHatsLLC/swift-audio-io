@@ -12,6 +12,10 @@ let package = Package(
       targets: ["Tools"]
     ),
     .library(
+      name: "AudioSignals",
+      targets: ["AudioSignals"]
+    ),
+    .library(
       name: "AIOEngine",
       targets: ["AIOEngine"]
     ),
@@ -69,9 +73,27 @@ let package = Package(
       ]
     ),
     .target(
+      name: "AudioSignals",
+      dependencies: [
+        "Tools",
+        .product(name: "Atomics", package: "swift-atomics"),
+      ],
+      swiftSettings: [
+        .swiftLanguageMode(.v6),
+        .strictMemorySafety(),
+        .defaultIsolation(.none),
+        .enableUpcomingFeature("ExistentialAny"),
+        .enableUpcomingFeature("ImmutableWeakCaptures"),
+        .enableUpcomingFeature("InternalImportsByDefault"),
+        .enableUpcomingFeature("MemberImportVisibility"),
+        .enableUpcomingFeature("NonisolatedNonsendingByDefault"),
+      ]
+    ),
+    .target(
       name: "AIOEngine",
       dependencies: [
         "Tools",
+        "AudioSignals",
         "SystemLog",
         .product(name: "AsyncAlgorithms", package: "swift-async-algorithms"),
         .product(name: "Atomics", package: "swift-atomics"),
