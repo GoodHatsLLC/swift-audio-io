@@ -552,7 +552,7 @@
         )
         let receiverTiming = SPSCRingBuffer<TimingPacket>(capacity: timingCapacity)
 
-        let (url, protection) = try resolveOutputURL(
+        let (url, protection): (URL, OutputFileProtection?) = try resolveOutputURL(
           for: configuration,
           allowExplicitFile: true
         )
@@ -1436,7 +1436,7 @@
       }
 
       // Create new file with fresh filename
-      let (newURL, protection) = try resolveOutputURL(
+      let (newURL, protection): (URL, OutputFileProtection?) = try resolveOutputURL(
         for: configuration,
         allowExplicitFile: false
       )
