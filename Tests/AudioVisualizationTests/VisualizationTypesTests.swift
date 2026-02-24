@@ -1,5 +1,6 @@
 #if canImport(AVFoundation)
   import AIOEngine
+  import AudioSignals
   import Foundation
   import Testing
 
