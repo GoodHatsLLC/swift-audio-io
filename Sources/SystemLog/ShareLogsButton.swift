@@ -89,7 +89,7 @@ extension SystemLog {
             Spacer()
             if isLoading {
               ProgressView()
-                .controlSize(.small)
+
             }
           }
         }
