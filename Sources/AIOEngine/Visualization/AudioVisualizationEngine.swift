@@ -1,5 +1,6 @@
 #if canImport(AVFAudio)
   import Atomics
+  public import AudioSignals
   public import AVFAudio
   import Foundation
   public import Observation

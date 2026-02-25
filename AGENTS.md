@@ -60,11 +60,28 @@ Contains:
 
 **Swift**: 6.2 with strict concurrency enabled
 
+### AudioSignals
+**Location**: `Sources/AudioSignals/`
+**Purpose**: Visualization data layer — LOD extraction, offline processing, and heuristics for waveform rendering
+
+Contains:
+- `MultiBandLODSnapshot` — immutable snapshot of multi-band LOD data
+- `MultiBandLODConfiguration` — configuration for LOD generation
+- `MultiBandLODProcessor` — async file-based LOD extraction
+- `WaveformLODHeuristics` — LOD ratio recommendations based on file length
+- `OfflineLODExtractor` — protocol for offline LOD extraction (bridged from AIOEngine)
+
+**Dependencies**:
+- Tools (local)
+
+**Swift**: 6.2 with strict concurrency enabled
+
 ## Products
 
-The package exposes three library products:
+The package exposes four library products:
 - **Tools**: Core utilities library (for standalone use)
 - **AIOEngine**: Full audio engine library (includes Tools)
+- **AudioSignals**: Visualization data layer (depends on Tools only)
 - **SystemLog**: Structured logging for the audio engine
 
 ## Testing
