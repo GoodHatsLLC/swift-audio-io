@@ -357,7 +357,6 @@
 
     @MainActor
     func drainWriterSession(_ session: WriterSession, notifyOnFailure: Bool) async {
-      let clock = ContinuousClock()
       let start = clock.now
       log.info("🧹 Drain start for \(session.fileURL.lastPathComponent, privacy: .public)")
       let outcome = await awaitWriterDrainOutcome(session)
@@ -1036,6 +1035,7 @@
       writeBuffer: AVAudioPCMBuffer?,
       control: WriterControl,
       metrics: EngineMetrics,
+      clock: ContinuousClock = .continuous,
       shouldCancel: @escaping @Sendable () -> Bool,
       errorHandler: @escaping @Sendable (ErrorContext) -> Void,
       tapErrorPoll: (@Sendable () -> TapErrorCode?)?,
@@ -1045,7 +1045,6 @@
         _ = metrics
       #endif
       let bufferSize = 1024  // Write in chunks
-      let clock = ContinuousClock()
       var stopRequestedAt: ContinuousClock.Instant?
       var lastStallLog = clock.now
       var writtenSampleTime: Int64 = 0
@@ -1179,12 +1178,9 @@
         }
       }
 
-      let cadenceComponents = cadence.components
-      let sleepInterval =
-        max(
+      let sleepInterval =  max(
           0.001,
-          Double(cadenceComponents.seconds)
-            + (Double(cadenceComponents.attoseconds) / 1_000_000_000_000_000_000)
+          cadence / Duration.seconds(1.0)
         )
 
       let maxBacklog = 4
@@ -1260,7 +1256,8 @@
       from audioBuffers: [SPSCRingBuffer<Float>],
       in audioFormat: AVAudioFormat,
       to writer: any RecordingFileWriter,
-      using reusableBuffer: AVAudioPCMBuffer? = nil
+      using reusableBuffer: AVAudioPCMBuffer? = nil,
+      clock: ContinuousClock = .continuous
     ) -> Result<WriteResult, any Error> {
       let channelCount = Int(audioFormat.channelCount)
       let framesToRead = minimumAvailableFrames(
@@ -1307,7 +1304,6 @@
       pcmBuffer.frameLength = AVAudioFrameCount(actualFrames)
 
       do {
-        let clock = ContinuousClock()
         let start = clock.now
         try writer.write(pcmBuffer)
         let elapsed = start.duration(to: clock.now)

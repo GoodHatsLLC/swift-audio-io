@@ -1,7 +1,7 @@
 #if canImport(AVFAudio)
   import AVFAudio
   public import Foundation
-  public import Tools
+  import Tools
 
   /// Result of offline LOD extraction from an audio file.
   public struct OfflineLODResult: Sendable {
@@ -42,7 +42,7 @@
       let sampleRate = max(file.processingFormat.sampleRate, 1)
       let durationSeconds = Double(file.length) / sampleRate
 
-      let snapshot = try await MultiBandLODProcessor.generateFromFile(
+      let snapshot = unsafe try await MultiBandLODProcessor.generateFromFile(
         url: url, configuration: configuration)
 
       return OfflineLODResult(
@@ -61,7 +61,7 @@
       let sampleRate = max(file.processingFormat.sampleRate, 1)
       let totalDuration = segments.reduce(0.0) { $0 + ($1.upperBound - $1.lowerBound) }
 
-      let snapshot = try await MultiBandLODProcessor.generateFromFile(
+      let snapshot = unsafe try await MultiBandLODProcessor.generateFromFile(
         url: url, segments: segments, configuration: configuration)
 
       return OfflineLODResult(
