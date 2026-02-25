@@ -487,7 +487,7 @@ public enum SystemLog {
         }
 
       }
-      .buttonStyle(.borderless)
+
       .accessibilityLabel(title)
     }
   }
@@ -549,12 +549,11 @@ public enum SystemLog {
           Section {
             if activeSummaryChips.isEmpty {
               Text("No filters applied.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+
                 .frame(maxWidth: .infinity, alignment: .leading)
             } else {
               ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
+                HStack {
                   ForEach(activeSummaryChips, id: \.text) { chip in
                     FilterChip(text: chip.text, tint: chip.tint)
                   }
@@ -588,7 +587,7 @@ public enum SystemLog {
 
             if filteredCategories.isEmpty {
               Text(categoryQuery.isEmpty ? "No categories available yet." : "No categories match.")
-                .foregroundStyle(.secondary)
+
             } else {
               ForEach(filteredCategories, id: \.self) { category in
                 selectionRow(
@@ -623,7 +622,7 @@ public enum SystemLog {
 
             if filteredSubsystems.isEmpty {
               Text(subsystemQuery.isEmpty ? "No subsystems available yet." : "No subsystems match.")
-                .foregroundStyle(.secondary)
+
             } else {
               ForEach(filteredSubsystems, id: \.self) { subsystem in
                 selectionRow(
@@ -658,7 +657,7 @@ public enum SystemLog {
               Image(systemName: "xmark")
                 .fontWeight(.semibold)
             }
-            .buttonStyle(.bordered)
+
             .buttonBorderShape(.circle)
           }
           ToolbarItem(placement: .confirmationAction) {
@@ -785,16 +784,16 @@ public enum SystemLog {
       action: @escaping () -> Void
     ) -> some View {
       Button(action: action) {
-        HStack(spacing: 8) {
+        HStack {
           Text(title)
             .font(.callout)
-            .foregroundStyle(.primary)
+
           Spacer()
           Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
             .foregroundStyle(isSelected ? Color.accentColor : .secondary)
         }
       }
-      .buttonStyle(.plain)
+
     }
 
     private struct FilterChip: View {
@@ -805,9 +804,7 @@ public enum SystemLog {
         Text(text)
           .font(.caption.weight(.semibold))
           .foregroundStyle(tint)
-          .padding(.horizontal, 10)
-          .padding(.vertical, 6)
-          .background(tint.opacity(0.16), in: Capsule())
+
       }
     }
 
@@ -822,11 +819,11 @@ public enum SystemLog {
       let clearAction: () -> Void
 
       var body: some View {
-        HStack(spacing: 8) {
+        HStack {
           Text(title)
           if totalCount > 0 {
             Text("\(selectedCount)/\(totalCount)")
-              .foregroundStyle(.secondary)
+
           }
           Spacer()
           Button(selectAllTitle, action: selectAllAction)
@@ -834,9 +831,9 @@ public enum SystemLog {
           Button("Clear", action: clearAction)
             .disabled(!clearEnabled)
         }
-        .font(.caption)
+
         .textCase(nil)
-        .buttonStyle(.borderless)
+
       }
     }
   }
@@ -857,7 +854,7 @@ public enum SystemLog {
           Section {
             HStack {
               Image(systemName: "doc.text")
-                .foregroundStyle(.secondary)
+
               Text("\(logs.count) log entries")
                 .font(.headline)
             }
@@ -882,7 +879,7 @@ public enum SystemLog {
             Section {
               Label {
                 Text(error.localizedDescription)
-                  .font(.caption)
+
               } icon: {
                 Image(systemName: "exclamationmark.triangle.fill")
                   .foregroundStyle(.orange)
@@ -902,8 +899,7 @@ public enum SystemLog {
                 Label("Share Logs", systemImage: "square.and.arrow.up")
                   .frame(maxWidth: .infinity)
               }
-              .buttonStyle(.borderedProminent)
-              .controlSize(.large)
+
             } else {
               Button {
                 Task {
@@ -913,8 +909,7 @@ public enum SystemLog {
                 Label("Prepare Export", systemImage: "doc.badge.gearshape")
                   .frame(maxWidth: .infinity)
               }
-              .buttonStyle(.borderedProminent)
-              .controlSize(.large)
+
               .disabled(logs.isEmpty)
             }
           }
@@ -928,7 +923,7 @@ public enum SystemLog {
               Image(systemName: "xmark")
                 .fontWeight(.semibold)
             }
-            .buttonStyle(.bordered)
+
             .buttonBorderShape(.circle)
           }
         }
@@ -1007,7 +1002,7 @@ public enum SystemLog {
     }
 
     private var headerSection: some View {
-      HStack(spacing: 12) {
+      HStack {
         ZStack {
           RoundedRectangle(cornerRadius: 8, style: .continuous)
             .fill(
@@ -1018,24 +1013,20 @@ public enum SystemLog {
               )
             )
             .frame(width: 32, height: 32)
-            .shadow(color: log.level.color.opacity(0.3), radius: 4, x: 0, y: 2)
 
           Image(systemName: log.level.sfSymbol)
-            .font(.system(size: 16, weight: .semibold))
+
             .foregroundStyle(.white)
         }
 
         VStack(alignment: .leading, spacing: 4) {
           Text(log.date.formatted(date: .abbreviated, time: .standard))
-            .font(.system(.subheadline, design: .rounded, weight: .medium))
-            .foregroundStyle(.primary)
 
           HStack(spacing: 6) {
             Image(systemName: "tag.fill")
-              .font(.system(size: 9))
-              .foregroundStyle(.secondary)
+
             Text(log.level.description)
-              .font(.system(.caption, design: .rounded, weight: .semibold))
+
               .foregroundStyle(log.level.color)
           }
         }
@@ -1045,35 +1036,32 @@ public enum SystemLog {
     }
 
     private var logDetailsSection: some View {
-      VStack(alignment: .leading, spacing: 8) {
-        HStack(spacing: 8) {
+      VStack(alignment: .leading) {
+        HStack {
           Label {
             Text(log.subsystem ?? "")
-              .font(.system(.caption, design: .monospaced, weight: .semibold))
-              .foregroundStyle(.primary)
+
           } icon: {
             Image(systemName: "cube.fill")
-              .font(.system(size: 10))
+
           }
-          .foregroundStyle(.primary)
 
           Label {
             Text(log.category ?? "")
-              .font(.system(.caption, design: .monospaced))
+
           } icon: {
             Image(systemName: "folder.fill")
-              .font(.system(size: 10))
+
               .foregroundStyle(.purple)
           }
-          .foregroundStyle(.secondary)
+
         }
         .padding(.bottom, 4)
 
         VStack(alignment: .leading, spacing: 4) {
           HStack {
             Text("Message")
-              .font(.system(.caption2, weight: .bold))
-              .foregroundStyle(.secondary)
+
               .textCase(.uppercase)
             Spacer()
             if log.composedMessage.count > 100 {
@@ -1085,21 +1073,18 @@ public enum SystemLog {
                 Image(
                   systemName: isExpanded ? "chevron.up.circle.fill" : "chevron.down.circle.fill"
                 )
-                .font(.caption)
-                .foregroundStyle(.secondary)
+
               }
-              .buttonStyle(.plain)
+
             }
           }
 
           Text(log.composedMessage)
-            .font(.system(.callout, design: .default))
-            .foregroundStyle(.primary)
+
             .lineLimit(isExpanded ? nil : 3)
             .textSelection(.enabled)
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
+
         .background(
           RoundedRectangle(cornerRadius: 8, style: .continuous)
             .fill(Color(white: 0.5, opacity: 0.05))
@@ -1171,11 +1156,8 @@ public enum SystemLog {
       List {
         ForEach(sortedLogs) { log in
           LogCell(for: log)
-            .listRowInsets(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
-            .listRowSeparator(.hidden)
         }
       }
-      .listStyle(.plain)
       .overlay {
         if isLoading && model.logs.isEmpty {
           loadingOverlay
@@ -1299,7 +1281,7 @@ public enum SystemLog {
     private func errorOverlay(error: any Error) -> some View {
       VStack(spacing: 16) {
         Image(systemName: "exclamationmark.triangle.fill")
-          .font(.system(size: 48))
+
           .foregroundStyle(.orange)
           .symbolEffect(
             .bounce,
@@ -1316,11 +1298,8 @@ public enum SystemLog {
           }
         } label: {
           Label("Retry", systemImage: "arrow.clockwise")
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
+
         }
-        .buttonStyle(.borderedProminent)
-        .controlSize(.large)
 
         ScrollView(.vertical) {
           Text(error.localizedDescription)
@@ -1328,9 +1307,9 @@ public enum SystemLog {
             .font(Font.body.monospaced())
             .padding()
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color(white: 0.5, opacity: 0.1))
+
             .clipShape(RoundedRectangle(cornerRadius: 12))
-            .padding(.horizontal)
+
         }
       }
       .padding()
@@ -1345,10 +1324,10 @@ public enum SystemLog {
 
         Text("Loading logs…")
           .font(.headline)
-          .foregroundStyle(.secondary)
+
       }
       .frame(maxWidth: .infinity, maxHeight: .infinity)
-      .background(.ultraThinMaterial)
+
       .transition(.opacity)
     }
   }
