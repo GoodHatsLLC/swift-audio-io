@@ -309,7 +309,7 @@
     // │  prepare, reset, installTap         │   │
     // └──────────────────┬──────────────────┘   │
     //                    │                      │
-    //             [AVAudioEngine               │
+    //             [AVAudioEngine                │
     //              manages internally]          │
     //                    │                      │
     // ┌──────────────────▼──────────────────┐   │
@@ -355,14 +355,13 @@
     /// Cached snapshot of tap-relevant state for low-contention reads in `processAudio()`.
     ///
     /// Thread Domain: tapCallback (read via `withLockIfAvailable`),
-    ///                MainActor + engineControl + writerQueue (write via `withLock`).
+    /// MainActor + engineControl + writerQueue (write via `withLock`).
     ///
     /// This is a separate, lightweight lock dedicated to the tap snapshot. Unlike the
     /// main `state` lock (which protects all of `InternalState` and can be held during
     /// complex operations), this lock is only held for trivial struct copies —
     /// nanosecond-scale. The tap thread uses `withLockIfAvailable` so it never blocks
-    /// if a writer happens to be updating concurrently (extremely unlikely given the
-    /// tiny hold time).
+    /// if a writer is to be updating concurrently.
     ///
     /// The brief staleness window (one or two tap callbacks using the previous snapshot
     /// if the lock is contended during a write) is safe because the old converter
@@ -457,6 +456,8 @@
     }
 
     public let bufferReceivers: Synchronized<[any BufferReceiver<Float>]> = .init([])
+
+    let clock = ContinuousClock()
 
     let errorSubject: Subject<any Error> = .init()
 
