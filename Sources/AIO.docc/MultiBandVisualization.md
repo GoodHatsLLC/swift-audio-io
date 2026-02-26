@@ -164,12 +164,14 @@ final class AudioVisualizationEngine {
     func register(consumer: VisualizationConsumer)
     func unregister(consumer: VisualizationConsumer)
 
-    // Enable/disable multi-band processing (legacy API)
-    func enableMultiBandLOD(configuration: MultiBandLODConfiguration = .default)
-    func disableMultiBandLOD()
-    func resetMultiBandLOD()
+    // Lifecycle control
+    func startVisualization()
+    func pauseVisualization()
+    func resumeVisualization()
+    func stopVisualization()
 
     // Access current state
+    var multiBandLODRef: LODSnapshotRef?
     var multiBandLOD: MultiBandLODSnapshot?
     var isMultiBandLODEnabled: Bool
 

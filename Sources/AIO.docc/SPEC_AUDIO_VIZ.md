@@ -84,16 +84,15 @@ It has two broad responsibilities:
 
 `AudioVisualizationEngine` can host an optional `MultiBandLODProcessor`:
 
-- Enable: `enableMultiBandLOD(configuration:)`
-  - Must be called **before** attaching/activating the engine as a receiver (guarded by `precondition` in `#if DEBUG`).
+- Configure via `VisualizationWork.lod` on the active `VisualizationConsumer`
+  - LOD processing is enabled only when a consumer is registered with both LOD work and an LOD sink.
 - Read:
   - `multiBandLODRef: LODSnapshotRef?` (preferred; zero-copy)
   - `multiBandLOD: MultiBandLODSnapshot?` (copying; avoid per-frame)
-- Reset: `resetMultiBandLOD()` (used when starting a new recording).
 
 The LOD processor runs from `processBuffer(_:timing:)` and is fed the raw float samples.
 
-#### 3.2 Time/frequency/beat (build-flag caveat)
+#### 3.2 Time/frequency/beat
 
 `AudioVisualizationEngine` also exposes:
 
@@ -101,9 +100,7 @@ The LOD processor runs from `processBuffer(_:timing:)` and is fed the raw float 
 - `frequencyDomain: FrequencyDomainData` (includes bucketed spectrum, centroid, etc.)
 - `beat: BeatInfo`
 
-However, the analysis pipeline (ring buffer + timer + vDSP analyzers) is compiled under `#if DEBUG` inside `AudioVisualizationEngine`.
-
-Implication: in non-`DEBUG` builds, `timeDomain` / `frequencyDomain` / `beat` remain `.empty` unless a different build configuration defines `DEBUG`. Multi-band LOD still runs.
+Analysis work is declared by the active consumer through `VisualizationWork.analysis` and emitted only when corresponding sinks are present.
 
 ### 4) `MultiBandLODProcessor` (AIO’s LOD generator)
 
@@ -163,8 +160,8 @@ The Recorder app wires live visualization when a recording successfully starts:
 
 1) Create `AudioVisualizationEngine` with low-power configuration and the negotiated input sample rate:
    - `AudioVisualizationEngine(configuration: .lowPower.withSampleRate(inputConfig.sampleRate.platform))`
-2) Enable multi-band LOD:
-   - `visualizationEngine.enableMultiBandLOD()`
+2) Create and store a consumer state with declared visualization work:
+   - `LiveVisualizationState(engine: visualizationEngine, work: VisualizationWork(lod: ...))`
 3) Attach as a buffer receiver to `AIOEngine`:
    - `await engine.attachBufferReceiver(visualizationEngine)`
 4) Start the visualization engine:
@@ -182,9 +179,9 @@ The main live waveform uses Metal rendering:
 - `RecordingView` resolves the active provider and renders `WaveformProviding.liveRecordingView`.
   - Metal pipeline uses `MetalWaveformView(snapshotProvider: { visualizationEngine.multiBandLODRef }, ...)`.
   - Beat pipeline uses `BeatLiveWaveformView` with beat detection configured.
-- Provider-owned views notify visibility to gate work:
-  - `.onAppear { visualizationEngine.visualizationConsumerDidAppear() }`
-  - `.onDisappear { visualizationEngine.visualizationConsumerDidDisappear() }`
+- View visibility is forwarded through `LiveVisualizationState`:
+  - `viewDidAppear()` registers the consumer
+  - `viewDidDisappear()` unregisters the consumer
 
 ### Lifecycle gating
 

@@ -59,10 +59,28 @@
     ) async throws(MultiBandLODProcessor.LODGenerationError) -> OfflineLODResult {
       let file = try openFile(at: url)
       let sampleRate = max(file.processingFormat.sampleRate, 1)
-      let totalDuration = segments.reduce(0.0) { $0 + ($1.upperBound - $1.lowerBound) }
+      let fileDuration = Double(file.length) / sampleRate
+      let normalizedSegments = Self.normalizeSegments(
+        segments,
+        fileDuration: fileDuration
+      )
+
+      if normalizedSegments.isEmpty {
+        return OfflineLODResult(
+          snapshot: .empty,
+          durationSeconds: 0,
+          sampleRate: sampleRate
+        )
+      }
 
       let snapshot = unsafe try await MultiBandLODProcessor.generateFromFile(
-        url: url, segments: segments, configuration: configuration)
+        url: url,
+        segments: normalizedSegments,
+        configuration: configuration
+      )
+      let totalDuration = normalizedSegments.reduce(0.0) { total, range in
+        total + (range.upperBound - range.lowerBound)
+      }
 
       return OfflineLODResult(
         snapshot: snapshot,
@@ -78,6 +96,20 @@
         return try AVAudioFile(forReading: url)
       } catch {
         throw .audioFileOpenFailed(url: url, error: ErrorContext(error))
+      }
+    }
+
+    private static func normalizeSegments(
+      _ segments: [ClosedRange<TimeInterval>],
+      fileDuration: TimeInterval
+    ) -> [ClosedRange<TimeInterval>] {
+      segments.compactMap { range in
+        let lower = max(0, min(range.lowerBound, range.upperBound))
+        let upper = max(0, max(range.lowerBound, range.upperBound))
+        let clampedLower = min(lower, fileDuration)
+        let clampedUpper = min(max(clampedLower, upper), fileDuration)
+        guard clampedUpper > clampedLower else { return nil }
+        return clampedLower...clampedUpper
       }
     }
   }
