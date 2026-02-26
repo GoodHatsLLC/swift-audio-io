@@ -50,8 +50,9 @@
   ///
   /// ### Configuring Visualization
   ///
-  /// - ``updateBucketMode(_:)``
-  /// - ``updateBeatDetectionConfiguration(_:)``
+  /// - ``VisualizationWork`` (declared by a ``VisualizationConsumer``)
+  /// - ``register(consumer:)``
+  /// - ``unregister(consumer:)``
   ///
   /// This type is `@unchecked Sendable` because it is used as a real-time audio callback
   /// target (via `BufferReceiver`) and is passed across concurrency boundaries.
@@ -61,8 +62,7 @@
   ///   touch `@Observable` state directly).
   /// - Observable state (`timeDomain` / `frequencyDomain` / `beat`) is published from the
   ///   main queue.
-  /// - Optional LOD processing must be configured before the instance is attached as a
-  ///   buffer receiver; it must not be enabled/disabled while active.
+  /// - LOD and analysis processing are configured from active consumer work declarations.
   @safe @Observable
   // SAFETY: Cross-thread access is atomics/callback-boundary only; UI state is main-queue published.
   public final class AudioVisualizationEngine: @unchecked Sendable, Identifiable {
@@ -271,7 +271,7 @@
     // MARK: - Multi-Band LOD (Optional)
 
     /// Multi-band Level-of-Detail processor for Metal visualization.
-    /// Enable with `enableMultiBandLOD(configuration:)`.
+    /// Configured through `VisualizationWork.lod` from the active consumer.
 
     @ObservationIgnored
     private var lodProcessor: MultiBandLODProcessor?
@@ -440,11 +440,21 @@
     }
 
     /// Registers a visualization consumer and applies its declared work and sinks.
+    ///
+    /// Only one consumer is active at a time. Registering a new consumer replaces the
+    /// existing one.
     @MainActor
     public func register(consumer: any VisualizationConsumer) {
       let consumerId = ObjectIdentifier(consumer)
       let work = consumer.work
       let sinks = consumer.sinks
+      let previousConsumerId = consumerSnapshot().consumerId
+
+      if let previousConsumerId, previousConsumerId != consumerId {
+        log.warning(
+          "Replacing existing visualization consumer \(String(describing: previousConsumerId), privacy: .public) with \(String(describing: consumerId), privacy: .public)"
+        )
+      }
 
       updateConsumerState(consumerId: consumerId, work: work, sinks: sinks)
       hasConsumerAtomic.store(true, ordering: .relaxed)
