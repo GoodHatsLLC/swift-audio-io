@@ -1,4 +1,4 @@
-# SPEC — AIO (Tools, SystemLog, AIOEngine)
+# SPEC — AIO (Tools, AIOEngine)
 
 **Scope**: `Packages/AIO/` as a reusable audio + utilities library, with a particular focus on the `AIOEngine` module.  
 **Primary consumers**: Recorder‽ app + extensions (via AppLibrary), and any future apps that need the same “robust capture/playback” behavior.
@@ -54,13 +54,7 @@ Key building blocks (non-exhaustive):
 
 **Contract**: `Tools` types must be safe to depend on from app and extension targets (no UI coupling).
 
-### 2.2 `SystemLog`
-
-**Purpose**: a thin logging wrapper to provide consistent `os.Logger` usage and formatting across modules.
-
-**Contract**: logging should never be required for correctness; it is strictly observability.
-
-### 2.3 `AIOEngine`
+### 2.2 `AIOEngine`
 
 **Purpose**: the audio I/O library:
 

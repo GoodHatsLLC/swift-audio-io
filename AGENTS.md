@@ -42,21 +42,10 @@ Contains:
 
 **Dependencies**:
 - Tools (local)
-- SystemLog (local)
+- SystemLog (external package: `Packages/SystemLog/`)
 - swift-atomics (Atomics)
 - swift-collections (Collections, DequeModule, OrderedCollections)
 - swift-async-algorithms (AsyncAlgorithms)
-
-**Swift**: 6.2 with strict concurrency enabled
-
-### SystemLog
-**Location**: `Sources/SystemLog/`
-**Purpose**: Logging utilities for the audio engine
-
-Contains:
-- Structured logging
-- Performance monitoring
-- Debug output
 
 **Swift**: 6.2 with strict concurrency enabled
 
@@ -78,11 +67,10 @@ Contains:
 
 ## Products
 
-The package exposes four library products:
+The package exposes three library products:
 - **Tools**: Core utilities library (for standalone use)
 - **AIOEngine**: Full audio engine library (includes Tools)
 - **AudioSignals**: Visualization data layer (depends on Tools only)
-- **SystemLog**: Structured logging for the audio engine
 
 ## Testing
 
