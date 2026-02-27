@@ -19,12 +19,9 @@ let package = Package(
       name: "AIOEngine",
       targets: ["AIOEngine"]
     ),
-    .library(
-      name: "SystemLog",
-      targets: ["SystemLog"]
-    ),
   ],
   dependencies: [
+    .package(path: "../SystemLog"),
     .package(
       url: "https://github.com/apple/swift-collections.git",
       from: "1.3.0"
@@ -76,7 +73,7 @@ let package = Package(
       name: "AudioSignals",
       dependencies: [
         "Tools",
-        "SystemLog",
+        .product(name: "SystemLog", package: "SystemLog"),
         .product(name: "Atomics", package: "swift-atomics"),
       ],
       swiftSettings: [
@@ -95,7 +92,7 @@ let package = Package(
       dependencies: [
         "Tools",
         "AudioSignals",
-        "SystemLog",
+        .product(name: "SystemLog", package: "SystemLog"),
         .product(name: "AsyncAlgorithms", package: "swift-async-algorithms"),
         .product(name: "Atomics", package: "swift-atomics"),
         .product(name: "DequeModule", package: "swift-collections"),
@@ -129,26 +126,6 @@ let package = Package(
     .testTarget(
       name: "AudioVisualizationTests",
       dependencies: ["AIOEngine", "AudioSignals"],
-      swiftSettings: [
-        .swiftLanguageMode(.v6),
-        .strictMemorySafety(),
-        .defaultIsolation(.none),
-        .enableUpcomingFeature("ExistentialAny"),
-        .enableUpcomingFeature("ImmutableWeakCaptures"),
-        .enableUpcomingFeature("InternalImportsByDefault"),
-        .enableUpcomingFeature("MemberImportVisibility"),
-        .enableUpcomingFeature("NonisolatedNonsendingByDefault"),
-      ]
-    ),
-    .target(
-      name: "SystemLog",
-      dependencies: [
-        "Tools",
-        .product(name: "AsyncAlgorithms", package: "swift-async-algorithms"),
-        .product(name: "Atomics", package: "swift-atomics"),
-        .product(name: "DequeModule", package: "swift-collections"),
-        .product(name: "OrderedCollections", package: "swift-collections"),
-      ],
       swiftSettings: [
         .swiftLanguageMode(.v6),
         .strictMemorySafety(),
