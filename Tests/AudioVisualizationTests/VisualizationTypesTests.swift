@@ -177,16 +177,29 @@
       #expect(config.historySize == 43)
     }
 
-    @Test("BeatDetectionConfiguration sensitivity clamping")
+    @Test("BeatDetectionConfiguration clamping initializer")
     func testBeatDetectionConfigurationSensitivityClamping() {
-      let tooLow = BeatDetectionConfiguration(sensitivity: -0.5)
+      let tooLow = BeatDetectionConfiguration(clampingSensitivity: -0.5)
       #expect(tooLow.sensitivity == 0)
 
-      let tooHigh = BeatDetectionConfiguration(sensitivity: 1.5)
+      let tooHigh = BeatDetectionConfiguration(clampingSensitivity: 1.5)
       #expect(tooHigh.sensitivity == 1)
 
-      let normal = BeatDetectionConfiguration(sensitivity: 0.7)
+      let normal = BeatDetectionConfiguration(clampingSensitivity: 0.7)
       #expect(normal.sensitivity == 0.7)
+    }
+
+    @Test("BeatDetectionConfiguration validating initializer rejects invalid values")
+    func testBeatDetectionConfigurationValidatingInitializer() throws {
+      do {
+        _ = try BeatDetectionConfiguration(validatingSensitivity: -0.1)
+        #expect(Bool(false), "Expected validating initializer to throw for invalid sensitivity")
+      } catch let error {
+        #expect(
+          error
+            == .sensitivityOutOfRange(
+              actual: -0.1, valid: BeatDetectionConfiguration.validSensitivityRange))
+      }
     }
 
     @Test("BeatDetectionConfiguration presets")
@@ -196,6 +209,53 @@
 
       let low = BeatDetectionConfiguration.lowSensitivity
       #expect(low.sensitivity == 0.7)
+    }
+
+    @Test("Visualization work validating/clamping initializers")
+    func testVisualizationWorkValidationAndClamping() throws {
+      let clampedLod = LODWork(clampingConfiguration: .default, publishRateHz: 0)
+      #expect(clampedLod.publishRateHz == 1)
+
+      do {
+        _ = try LODWork(validatingConfiguration: .default, publishRateHz: 0)
+        #expect(Bool(false), "Expected LODWork validating initializer to throw")
+      } catch let error {
+        #expect(error == .publishRateMustBePositive(actual: 0))
+      }
+
+      let clampedAnalysis = AnalysisWork(clampingUpdateRateHz: 0)
+      #expect(clampedAnalysis.updateRateHz == 1)
+
+      do {
+        _ = try AnalysisWork(validatingUpdateRateHz: 0)
+        #expect(Bool(false), "Expected AnalysisWork validating initializer to throw")
+      } catch let error {
+        #expect(error == .updateRateMustBePositive(actual: 0))
+      }
+
+      let frequencyConfig = FrequencyAnalyzer.Configuration(
+        fftSize: 1024,
+        spectrumSize: 512,
+        sampleRate: 44_100,
+        smoothingFactor: 0.3,
+        noiseFloor: -60,
+        windowType: .hann
+      )
+      let clampedFrequencyWork = FrequencyDomainWork(
+        clampingConfiguration: frequencyConfig,
+        peakHoldDecayRate: -0.25
+      )
+      #expect(clampedFrequencyWork.peakHoldDecayRate == 0)
+
+      do {
+        _ = try FrequencyDomainWork(
+          validatingConfiguration: frequencyConfig,
+          peakHoldDecayRate: -0.25
+        )
+        #expect(Bool(false), "Expected FrequencyDomainWork validating initializer to throw")
+      } catch let error {
+        #expect(error == .peakHoldDecayRateMustBeNonNegative(actual: -0.25))
+      }
     }
   }
 

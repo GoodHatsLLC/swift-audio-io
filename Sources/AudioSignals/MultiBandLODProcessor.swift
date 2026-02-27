@@ -769,41 +769,6 @@
   // MARK: - Offline Generation
 
   extension MultiBandLODProcessor {
-    /// Deprecated wrapper for offline file generation.
-    ///
-    /// Use `OfflineLODExtractor.extract(from:)` instead.
-    @available(
-      *,
-      deprecated,
-      message: "Use OfflineLODExtractor(configuration:).extract(from:)"
-    )
-    public static func generateFromFile(
-      url: URL,
-      configuration: MultiBandLODConfiguration = .default
-    ) async throws(LODGenerationError) -> MultiBandLODSnapshot {
-      let extractor = OfflineLODExtractor(configuration: configuration)
-      let result = try await extractor.extract(from: url)
-      return result.snapshot
-    }
-
-    /// Deprecated wrapper for offline segmented file generation.
-    ///
-    /// Use `OfflineLODExtractor.extract(from:segments:)` instead.
-    @available(
-      *,
-      deprecated,
-      message: "Use OfflineLODExtractor(configuration:).extract(from:segments:)"
-    )
-    public static func generateFromFile(
-      url: URL,
-      segments: [ClosedRange<TimeInterval>],
-      configuration: MultiBandLODConfiguration = .default
-    ) async throws(LODGenerationError) -> MultiBandLODSnapshot {
-      let extractor = OfflineLODExtractor(configuration: configuration)
-      let result = try await extractor.extract(from: url, segments: segments)
-      return result.snapshot
-    }
-
     /// Errors that can occur during LOD generation.
     public enum LODGenerationError: AudioError, LocalizedError {
       case bufferCreationFailed

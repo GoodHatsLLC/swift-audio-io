@@ -34,7 +34,6 @@
   /// ### Controlling Visualization
   ///
   /// - ``startVisualization()``
-  /// - ``subscribe(request:sinks:)``
   /// - ``subscribe(request:handler:)``
   /// - ``subscribe(request:sink:)``
   /// - ``stopVisualization()``
@@ -55,7 +54,7 @@
   ///
   /// - ``VisualizationRequest``
   /// - ``VisualizationWork``
-  /// - ``subscribe(request:sinks:)``
+  /// - ``subscribe(request:handler:)``
   ///
   /// This type is `@unchecked Sendable` because it is used as a real-time audio callback
   /// target (via `BufferReceiver`) and is passed across concurrency boundaries.
@@ -134,8 +133,8 @@
       public let amplitudeWindowSize: Int
       /// The number of bins to use for the spectrum analysis.
       public let spectrumSize: Int
-      /// The number of times per second at which the visualization should be updated.
-      public let updateRateHz: Double
+      /// Fallback analysis update rate when a request does not specify one.
+      public let analysisUpdateRateHz: Double
       /// A factor that controls the amount of smoothing applied to the visualization data.
       public let smoothingFactor: Float
       /// The nominal sample rate of the source audio.
@@ -156,7 +155,7 @@
       /// - Parameters:
       ///   - amplitudeWindowSize: The number of samples to use for the amplitude waveform. Defaults to 512.
       ///   - spectrumSize: The number of bins to use for the spectrum analysis. Defaults to 256.
-      ///   - updateRateHz: The rate at which the visualization should be updated, in Hertz. Defaults to 60.0.
+      ///   - analysisUpdateRateHz: Fallback analysis update rate in Hertz. Defaults to 30.0.
       ///   - smoothingFactor: A factor that controls the amount of smoothing applied. Defaults to 0.3.
       ///   - sampleRate: The nominal sample rate of the source audio. Defaults to 44100.0.
       ///   - bucketMode: The frequency bucketing mode. Defaults to MEL scale with 24 buckets.
@@ -165,7 +164,7 @@
       public init(
         amplitudeWindowSize: Int = 512,
         spectrumSize: Int = 256,
-        updateRateHz: Double = 60.0,
+        analysisUpdateRateHz: Double = VisualizationRateDefaults.analysisUpdateRateHz,
         smoothingFactor: Float = 0.3,
         sampleRate: Double = 44_100.0,
         amplitudeAnalyzerConfiguration: AmplitudeAnalyzer.Configuration? = nil,
@@ -176,7 +175,7 @@
       ) {
         self.amplitudeWindowSize = amplitudeWindowSize
         self.spectrumSize = spectrumSize
-        self.updateRateHz = updateRateHz
+        self.analysisUpdateRateHz = analysisUpdateRateHz
         self.smoothingFactor = smoothingFactor
         self.sampleRate = sampleRate
         self.bucketMode = bucketMode
@@ -253,10 +252,12 @@
       qos: .userInteractive
     )
 
+    private typealias SubscriberEventHandler = @Sendable (VisualizationEvent) -> Void
+
     private struct SubscriberState: Sendable {
       let id: UUID
       var request: VisualizationRequest
-      var sinks: VisualizationSinks
+      var eventHandler: SubscriberEventHandler
     }
 
     private struct AnalysisFlags: OptionSet {
@@ -371,20 +372,20 @@
       updateProcessingState()
     }
 
-    /// Subscribes to visualization events using explicit request + sinks.
+    /// Subscribes to visualization events using an event handler closure.
     ///
     /// Multiple subscriptions can be active at once. Work demand is resolved as the
     /// union of all active requests.
     @MainActor
     public func subscribe(
       request: VisualizationRequest,
-      sinks: VisualizationSinks
+      handler: @escaping @Sendable (VisualizationEvent) -> Void
     ) -> VisualizationSubscription {
       let id = UUID()
       addSubscriber(
         id: id,
         request: request,
-        sinks: sinks
+        eventHandler: handler
       )
       recalculateDemandAndApply()
       updateProcessingState()
@@ -392,18 +393,6 @@
       return VisualizationSubscription { [weak self] in
         self?.removeSubscription(id: id)
       }
-    }
-
-    /// Subscribes to visualization events using an event handler closure.
-    @MainActor
-    public func subscribe(
-      request: VisualizationRequest,
-      handler: @escaping @Sendable (VisualizationEvent) -> Void
-    ) -> VisualizationSubscription {
-      subscribe(
-        request: request,
-        sinks: .eventForwarding(handler)
-      )
     }
 
     /// Subscribes to visualization events via a sink object.
@@ -499,14 +488,14 @@
     private func addSubscriber(
       id: UUID,
       request: VisualizationRequest,
-      sinks: VisualizationSinks
+      eventHandler: @escaping SubscriberEventHandler
     ) {
       subscriberLock.lock()
       defer { subscriberLock.unlock() }
       let state = SubscriberState(
         id: id,
         request: request,
-        sinks: sinks
+        eventHandler: eventHandler
       )
       subscribersById[id] = state
       subscriberOrder.append(id)
@@ -552,20 +541,11 @@
       var selectedTimeDomain: AmplitudeAnalyzer.Configuration?
       var selectedFrequencyDomain: FrequencyDomainWork?
       var selectedBeatDetection: BeatDetectionConfiguration?
-      var wantsTimeDomain = false
-      var wantsFrequencyDomain = false
-      var wantsBeat = false
 
       for subscriber in subscribers {
         let work = subscriber.request.work
-        let sinks = subscriber.sinks
 
         if let lodWork = work.lod {
-          if sinks.lodSnapshot == nil && sinks.lodSnapshotBackground == nil {
-            log.debug(
-              "VisualizationWork.lod requested without LOD callbacks; assuming pull-based access via withCurrentLODSnapshotRef."
-            )
-          }
           let normalizedConfig = normalizedLODConfig(lodWork.configuration)
           if let selectedLodConfig, selectedLodConfig != normalizedConfig {
             log.warning(
@@ -584,60 +564,32 @@
           analysisWork.updateRateHz
         )
 
-        let wantsBeatOutput = analysisWork.beatDetection != nil && sinks.beat != nil
-        let wantsTimeOutput = analysisWork.timeDomain != nil && sinks.timeDomain != nil
-        let wantsFrequencyOutput =
-          analysisWork.frequencyDomain != nil && sinks.frequencyDomain != nil
-
-        let wantsTimeAnalysis = wantsTimeOutput || wantsBeatOutput
-        if analysisWork.timeDomain != nil || analysisWork.beatDetection != nil {
-          if wantsTimeAnalysis {
-            wantsTimeDomain = true
-            if selectedTimeDomain == nil {
-              selectedTimeDomain = analysisWork.timeDomain
-            } else if let requested = analysisWork.timeDomain,
-              selectedTimeDomain != requested
-            {
-              log.warning(
-                "Conflicting time-domain configurations across subscribers. Using the first requested configuration."
-              )
-            }
-          } else {
-            log.warning("VisualizationWork.timeDomain requested without any time-domain sinks.")
-          }
+        if selectedTimeDomain == nil {
+          selectedTimeDomain = analysisWork.timeDomain
+        } else if let requested = analysisWork.timeDomain, selectedTimeDomain != requested {
+          log.warning(
+            "Conflicting time-domain configurations across subscribers. Using the first requested configuration."
+          )
         }
 
         if let frequencyDomainWork = analysisWork.frequencyDomain {
-          let wantsFrequencyAnalysis = wantsFrequencyOutput || wantsBeatOutput
-          if wantsFrequencyAnalysis {
-            wantsFrequencyDomain = true
-            let normalizedFrequency = normalizedFrequencyWork(frequencyDomainWork)
-            if let selectedFrequencyDomain, selectedFrequencyDomain != normalizedFrequency {
-              log.warning(
-                "Conflicting frequency-domain configurations across subscribers. Using the first requested configuration."
-              )
-            } else {
-              selectedFrequencyDomain = normalizedFrequency
-            }
-          } else {
+          let normalizedFrequency = normalizedFrequencyWork(frequencyDomainWork)
+          if let selectedFrequencyDomain, selectedFrequencyDomain != normalizedFrequency {
             log.warning(
-              "VisualizationWork.frequencyDomain requested without any frequency sinks."
+              "Conflicting frequency-domain configurations across subscribers. Using the first requested configuration."
             )
+          } else {
+            selectedFrequencyDomain = normalizedFrequency
           }
         }
 
         if let beatDetection = analysisWork.beatDetection {
-          if wantsBeatOutput {
-            wantsBeat = true
-            if let selectedBeatDetection, selectedBeatDetection != beatDetection {
-              log.warning(
-                "Conflicting beat-detection configurations across subscribers. Using the first requested configuration."
-              )
-            } else {
-              selectedBeatDetection = beatDetection
-            }
+          if let selectedBeatDetection, selectedBeatDetection != beatDetection {
+            log.warning(
+              "Conflicting beat-detection configurations across subscribers. Using the first requested configuration."
+            )
           } else {
-            log.warning("VisualizationWork.beatDetection requested without a beat sink.")
+            selectedBeatDetection = beatDetection
           }
         }
       }
@@ -646,17 +598,21 @@
       if let selectedLodConfig {
         resolvedLodWork = LODWork(
           configuration: selectedLodConfig,
-          publishRateHz: maxLodPublishRate ?? 60
+          publishRateHz: maxLodPublishRate ?? VisualizationRateDefaults.lodPublishRateHz
         )
       }
 
       var resolvedAnalysisWork: AnalysisWork?
-      if analysisRequested && (wantsTimeDomain || wantsFrequencyDomain || wantsBeat) {
+      let hasAnyAnalysisDemand =
+        selectedTimeDomain != nil
+        || selectedFrequencyDomain != nil
+        || selectedBeatDetection != nil
+      if analysisRequested && hasAnyAnalysisDemand {
         resolvedAnalysisWork = AnalysisWork(
-          updateRateHz: selectedAnalysisUpdateRate ?? configuration.updateRateHz,
-          timeDomain: wantsTimeDomain ? selectedTimeDomain : nil,
-          frequencyDomain: wantsFrequencyDomain ? selectedFrequencyDomain : nil,
-          beatDetection: wantsBeat ? selectedBeatDetection : nil
+          updateRateHz: selectedAnalysisUpdateRate ?? configuration.analysisUpdateRateHz,
+          timeDomain: selectedTimeDomain,
+          frequencyDomain: selectedFrequencyDomain,
+          beatDetection: selectedBeatDetection
         )
       }
 
@@ -706,7 +662,7 @@
       analysisUpdateRateHz =
         flags.isEmpty
         ? nil
-        : (work.analysis?.updateRateHz ?? configuration.updateRateHz)
+        : (work.analysis?.updateRateHz ?? configuration.analysisUpdateRateHz)
 
       configureAnalysisPipelineIfNeeded(analysisWork: work.analysis, flags: flags)
       updateAnalysisTimerIfNeeded()
@@ -933,30 +889,27 @@
         )
       }
 
-      let sinks = subscriberSnapshots().map(\.sinks)
-      let shouldPublishTimeDomain = sinks.contains { $0.timeDomain != nil }
-      let shouldPublishFrequencyDomain = sinks.contains { $0.frequencyDomain != nil }
-      let shouldPublishBeat = sinks.contains { $0.beat != nil }
+      let subscribers = subscriberSnapshots()
       DispatchQueue.main.async {
-        if let newTimeDomain, shouldPublishTimeDomain {
+        if let newTimeDomain {
           self.timeDomain = newTimeDomain
-          for sink in sinks {
-            sink.timeDomain?(newTimeDomain)
+          for subscriber in subscribers {
+            subscriber.eventHandler(.timeDomain(newTimeDomain))
           }
         }
 
-        if let newFrequencyDomain, shouldPublishFrequencyDomain {
+        if let newFrequencyDomain {
           self.frequencyDomain = newFrequencyDomain
-          for sink in sinks {
-            sink.frequencyDomain?(newFrequencyDomain)
+          for subscriber in subscribers {
+            subscriber.eventHandler(.frequencyDomain(newFrequencyDomain))
           }
           self.spectrumPeakHold = newSpectrumPeakHold
         }
 
-        if let beatInfo, shouldPublishBeat {
+        if let beatInfo {
           self.beat = beatInfo
-          for sink in sinks {
-            sink.beat?(beatInfo)
+          for subscriber in subscribers {
+            subscriber.eventHandler(.beat(beatInfo))
           }
         }
       }
@@ -965,17 +918,13 @@
     private func publishLODSnapshot() {
       guard lodEnabledAtomic.load(ordering: .relaxed) else { return }
       let snapshot = unsafe lodProcessor?.withCurrentLODSnapshotRef { $0 }
-      let sinks = subscriberSnapshots().map(\.sinks)
-      guard sinks.contains(where: { $0.lodSnapshot != nil || $0.lodSnapshotBackground != nil })
-      else { return }
-      for sink in sinks {
-        sink.lodSnapshotBackground?(snapshot)
+      let subscribers = subscriberSnapshots()
+      for subscriber in subscribers {
+        subscriber.eventHandler(.lodSnapshotBackground(snapshot))
       }
-      if sinks.contains(where: { $0.lodSnapshot != nil }) {
-        DispatchQueue.main.async {
-          for sink in sinks {
-            sink.lodSnapshot?(snapshot)
-          }
+      DispatchQueue.main.async {
+        for subscriber in subscribers {
+          subscriber.eventHandler(.lodSnapshot(snapshot))
         }
       }
     }
@@ -1035,11 +984,11 @@
         unsafe lodProcessor?.process(data)
       }
 
-      let sinks = subscriberSnapshots().map(\.sinks)
+      let subscribers = subscriberSnapshots()
       DispatchQueue.main.async {
         self.latestBufferTiming = timing
-        for sink in sinks {
-          sink.latestBufferTiming?(timing)
+        for subscriber in subscribers {
+          subscriber.eventHandler(.latestBufferTiming(timing))
         }
       }
     }
@@ -1060,7 +1009,7 @@
       AudioVisualizationEngine.Configuration(
         amplitudeWindowSize: amplitudeWindowSize,
         spectrumSize: spectrumSize,
-        updateRateHz: updateRateHz,
+        analysisUpdateRateHz: analysisUpdateRateHz,
         smoothingFactor: smoothingFactor,
         sampleRate: sampleRate,
         amplitudeAnalyzerConfiguration: amplitudeAnalyzerConfiguration,
@@ -1075,7 +1024,7 @@
     public static let realTimeRecording = AudioVisualizationEngine.Configuration(
       amplitudeWindowSize: 256,
       spectrumSize: 128,
-      updateRateHz: 60.0,
+      analysisUpdateRateHz: 60.0,
       smoothingFactor: 0.4,
       bucketMode: .mel(bucketCount: 24),
       beatDetectionConfiguration: .default
@@ -1085,7 +1034,7 @@
     public static let lowPower = AudioVisualizationEngine.Configuration(
       amplitudeWindowSize: 128,
       spectrumSize: 64,
-      updateRateHz: 30.0,
+      analysisUpdateRateHz: 30.0,
       smoothingFactor: 0.5,
       bucketMode: .mel(bucketCount: 16),
       beatDetectionConfiguration: .lowSensitivity
@@ -1095,7 +1044,7 @@
     public static let highQuality = AudioVisualizationEngine.Configuration(
       amplitudeWindowSize: 1024,
       spectrumSize: 512,
-      updateRateHz: 60.0,
+      analysisUpdateRateHz: 60.0,
       smoothingFactor: 0.2,
       bucketMode: .mel(bucketCount: 32),
       beatDetectionConfiguration: .highSensitivity

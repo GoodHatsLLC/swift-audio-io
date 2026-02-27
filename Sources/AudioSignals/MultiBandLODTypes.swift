@@ -8,6 +8,34 @@
   /// This configuration controls how audio is split into frequency bands and
   /// downsampled for efficient GPU-based waveform rendering.
   public struct MultiBandLODConfiguration: Sendable, Equatable {
+    public enum ValidationError: Error, Sendable, Equatable, CustomStringConvertible {
+      case bandCountOutOfRange(actual: Int, valid: ClosedRange<Int>)
+      case lodRatioMustBePositive(actual: Int)
+      case bufferSecondsMustBePositive(actual: Int)
+      case sampleRateMustBePositive(actual: Int)
+      case snapshotSwapIntervalMustBePositive(actual: Int)
+      case rawBufferLengthOverrideMustBePositive(actual: Int)
+
+      public var description: String {
+        switch self {
+        case .bandCountOutOfRange(let actual, let valid):
+          return "bandCount must be in \(valid), got \(actual)"
+        case .lodRatioMustBePositive(let actual):
+          return "lodRatio must be > 0, got \(actual)"
+        case .bufferSecondsMustBePositive(let actual):
+          return "bufferSeconds must be > 0, got \(actual)"
+        case .sampleRateMustBePositive(let actual):
+          return "sampleRate must be > 0, got \(actual)"
+        case .snapshotSwapIntervalMustBePositive(let actual):
+          return "snapshotSwapInterval must be > 0, got \(actual)"
+        case .rawBufferLengthOverrideMustBePositive(let actual):
+          return "rawBufferLengthOverride must be > 0, got \(actual)"
+        }
+      }
+    }
+
+    public static let validBandCountRange: ClosedRange<Int> = 1...128
+
     /// Number of frequency bands to split audio into (3-8 recommended).
     public let bandCount: Int
 
@@ -62,7 +90,7 @@
     /// Creates a new multi-band LOD configuration.
     ///
     /// - Parameters:
-    ///   - bandCount: Number of frequency bands (3-8). Default: 5.
+    ///   - bandCount: Number of frequency bands (3-8 recommended, 1...128 valid). Default: 5.
     ///   - lodRatio: Samples per LOD bucket. Default: 128.
     ///   - bufferSeconds: Maximum buffer duration. Default: 300.
     ///   - sampleRate: Audio sample rate. Default: 44100.
@@ -77,13 +105,100 @@
       snapshotSwapInterval: Int = 6,
       rawBufferLengthOverride: Int? = nil
     ) {
-      self.bandCount = max(1, min(128, bandCount))
-      self.lodRatio = max(1, lodRatio)
-      self.bufferSeconds = max(1, bufferSeconds)
-      self.sampleRate = max(1, sampleRate)
+      precondition(
+        Self.validBandCountRange.contains(bandCount),
+        "MultiBandLODConfiguration.bandCount must be in \(Self.validBandCountRange), got \(bandCount)"
+      )
+      precondition(
+        lodRatio > 0,
+        "MultiBandLODConfiguration.lodRatio must be > 0, got \(lodRatio)"
+      )
+      precondition(
+        bufferSeconds > 0,
+        "MultiBandLODConfiguration.bufferSeconds must be > 0, got \(bufferSeconds)"
+      )
+      precondition(
+        sampleRate > 0,
+        "MultiBandLODConfiguration.sampleRate must be > 0, got \(sampleRate)"
+      )
+      precondition(
+        snapshotSwapInterval > 0,
+        "MultiBandLODConfiguration.snapshotSwapInterval must be > 0, got \(snapshotSwapInterval)"
+      )
+      if let rawBufferLengthOverride {
+        precondition(
+          rawBufferLengthOverride > 0,
+          "MultiBandLODConfiguration.rawBufferLengthOverride must be > 0, got \(rawBufferLengthOverride)"
+        )
+      }
+      self.bandCount = bandCount
+      self.lodRatio = lodRatio
+      self.bufferSeconds = bufferSeconds
+      self.sampleRate = sampleRate
       self.crossoverMode = crossoverMode
-      self.snapshotSwapInterval = max(1, snapshotSwapInterval)
+      self.snapshotSwapInterval = snapshotSwapInterval
       self.rawBufferLengthOverride = rawBufferLengthOverride
+    }
+
+    /// Creates a configuration from untrusted values and throws on invalid input.
+    public init(
+      validatingBandCount bandCount: Int,
+      lodRatio: Int = 128,
+      bufferSeconds: Int = 300,
+      sampleRate: Int = 44_100,
+      crossoverMode: CrossoverMode = .mel(minFreq: 40, maxFreq: 15000),
+      snapshotSwapInterval: Int = 6,
+      rawBufferLengthOverride: Int? = nil
+    ) throws(ValidationError) {
+      guard Self.validBandCountRange.contains(bandCount) else {
+        throw .bandCountOutOfRange(actual: bandCount, valid: Self.validBandCountRange)
+      }
+      guard lodRatio > 0 else {
+        throw .lodRatioMustBePositive(actual: lodRatio)
+      }
+      guard bufferSeconds > 0 else {
+        throw .bufferSecondsMustBePositive(actual: bufferSeconds)
+      }
+      guard sampleRate > 0 else {
+        throw .sampleRateMustBePositive(actual: sampleRate)
+      }
+      guard snapshotSwapInterval > 0 else {
+        throw .snapshotSwapIntervalMustBePositive(actual: snapshotSwapInterval)
+      }
+      if let rawBufferLengthOverride, rawBufferLengthOverride <= 0 {
+        throw .rawBufferLengthOverrideMustBePositive(actual: rawBufferLengthOverride)
+      }
+      self.init(
+        bandCount: bandCount,
+        lodRatio: lodRatio,
+        bufferSeconds: bufferSeconds,
+        sampleRate: sampleRate,
+        crossoverMode: crossoverMode,
+        snapshotSwapInterval: snapshotSwapInterval,
+        rawBufferLengthOverride: rawBufferLengthOverride
+      )
+    }
+
+    /// Convenience initializer that clamps out-of-range values.
+    public init(
+      clamping bandCount: Int,
+      lodRatio: Int = 128,
+      bufferSeconds: Int = 300,
+      sampleRate: Int = 44_100,
+      crossoverMode: CrossoverMode = .mel(minFreq: 40, maxFreq: 15000),
+      snapshotSwapInterval: Int = 6,
+      rawBufferLengthOverride: Int? = nil
+    ) {
+      self.init(
+        bandCount: min(
+          max(bandCount, Self.validBandCountRange.lowerBound), Self.validBandCountRange.upperBound),
+        lodRatio: max(1, lodRatio),
+        bufferSeconds: max(1, bufferSeconds),
+        sampleRate: max(1, sampleRate),
+        crossoverMode: crossoverMode,
+        snapshotSwapInterval: max(1, snapshotSwapInterval),
+        rawBufferLengthOverride: rawBufferLengthOverride.map { max(1, $0) }
+      )
     }
 
     /// Default configuration optimized for real-time recording visualization.

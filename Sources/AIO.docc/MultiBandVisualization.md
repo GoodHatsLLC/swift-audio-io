@@ -28,9 +28,11 @@ let request = VisualizationRequest(
 
 let subscription = vizEngine.subscribe(
     request: request,
-    sinks: VisualizationSinks(lodSnapshot: { snapshot in
-    renderWaveform(snapshot)
-    })
+    handler: { event in
+      if case let .lodSnapshot(snapshot) = event {
+        renderWaveform(snapshot)
+      }
+    }
 )
 vizEngine.startVisualization()
 
@@ -157,10 +159,10 @@ The `AudioVisualizationEngine` provides convenient integration:
 ```swift
 @MainActor
 final class AudioVisualizationEngine {
-    // Subscribe with work + sinks
+    // Subscribe with work + event handler
     func subscribe(
         request: VisualizationRequest,
-        sinks: VisualizationSinks
+        handler: @escaping @Sendable (VisualizationEvent) -> Void
     ) -> VisualizationSubscription
 
     // Lifecycle control
@@ -185,9 +187,11 @@ final class AudioVisualizationEngine {
 let request = VisualizationRequest(
     work: VisualizationWork(lod: LODWork(configuration: .default, publishRateHz: 60))
 )
-let subscription = vizEngine.subscribe(request: request, sinks: VisualizationSinks(lodSnapshot: { snapshot in
-    // Cache or render snapshot
-}))
+let subscription = vizEngine.subscribe(request: request) { event in
+    if case let .lodSnapshot(snapshot) = event {
+        // Cache or render snapshot
+    }
+}
 vizEngine.startVisualization()
 
 // In audio callback

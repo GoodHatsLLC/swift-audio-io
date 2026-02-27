@@ -100,7 +100,7 @@ The LOD processor runs from `processBuffer(_:timing:)` and is fed the raw float 
 - `frequencyDomain: FrequencyDomainData` (includes bucketed spectrum, centroid, etc.)
 - `beat: BeatInfo`
 
-Analysis work is declared by active subscriptions through `VisualizationRequest.work.analysis` and emitted only when corresponding sinks are present.
+Analysis work is declared by active subscriptions through `VisualizationRequest.work.analysis` and emitted as `VisualizationEvent` values to each subscriber.
 
 ### 4) `MultiBandLODProcessor` (AIO’s LOD generator)
 

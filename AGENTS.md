@@ -67,9 +67,9 @@ Contains:
 Contains:
 - `MultiBandLODSnapshot` — immutable snapshot of multi-band LOD data
 - `MultiBandLODConfiguration` — configuration for LOD generation
-- `MultiBandLODProcessor` — async file-based LOD extraction
+- `MultiBandLODProcessor` — realtime sample-to-LOD processor
 - `WaveformLODHeuristics` — LOD ratio recommendations based on file length
-- `OfflineLODExtractor` — protocol for offline LOD extraction (bridged from AIOEngine)
+- `OfflineLODExtractor` — offline file/segment LOD extraction with explicit channel strategy
 
 **Dependencies**:
 - Tools (local)
@@ -157,7 +157,7 @@ The package provides multi-band Level-of-Detail (LOD) visualization:
 let request = VisualizationRequest(
     work: VisualizationWork(lod: LODWork(configuration: .default, publishRateHz: 60))
 )
-let subscription = vizEngine.subscribe(request: request, sinks: .empty)
+let subscription = vizEngine.subscribe(request: request) { _ in }
 vizEngine.startVisualization()
 
 // Feed audio samples
@@ -193,6 +193,7 @@ Technical specs and design documents for the audio engine:
 - `waveform-memory-optimization-followups.md` - Memory optimization follow-ups for waveform data
 - `MultiBandVisualization.md` - Multi-band LOD API documentation
 - `MultiBandLODContract.md` - Multi-band LOD data contract
+- `VisualizationSubscriptionMigration.md` - migration guide for event-first subscriptions and config validation
 
 ## Development Guidelines
 
