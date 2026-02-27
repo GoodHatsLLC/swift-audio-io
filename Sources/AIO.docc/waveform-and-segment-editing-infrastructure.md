@@ -107,7 +107,7 @@ We add a configuration knob:
 
 When present, `rawBufferLength` is driven by this override instead of `sampleRate * bufferSeconds`.
 
-`MultiBandLODProcessor.generateFromFile(...)` now:
+`OfflineLODExtractor.extract(...)` now:
 
 1. Reads the file length in frames (`file.length`)
 2. Sets:
@@ -115,7 +115,7 @@ When present, `rawBufferLength` is driven by this override instead of `sampleRat
 3. Processes the file in chunks
 4. After the loop, commits one final LOD bucket if there is a partial window pending
 
-File: `Packages/AIO/Sources/AIOEngine/Visualization/MultiBandLODProcessor.swift`
+File: `Packages/AIO/Sources/AudioSignals/OfflineLODExtractor.swift`
 
 ### Why `+ lodRatio` matters
 
