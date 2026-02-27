@@ -1,6 +1,12 @@
 #if canImport(AVFAudio)
   public import Foundation
 
+  /// Shared default rates for visualization pipelines.
+  public enum VisualizationRateDefaults: Sendable {
+    public static let lodPublishRateHz: Double = 60
+    public static let analysisUpdateRateHz: Double = 30
+  }
+
   // MARK: - Time Domain Data
 
   /// Time-domain audio visualization data providing amplitude and level information.
@@ -256,6 +262,25 @@
 
   /// Configuration for beat detection behavior.
   public struct BeatDetectionConfiguration: Sendable, Equatable {
+    public enum ValidationError: Error, Sendable, Equatable, CustomStringConvertible {
+      case sensitivityOutOfRange(actual: Float, valid: ClosedRange<Float>)
+      case minimumBeatIntervalMustBeNonNegative(actual: TimeInterval)
+      case historySizeMustBePositive(actual: Int)
+
+      public var description: String {
+        switch self {
+        case .sensitivityOutOfRange(let actual, let valid):
+          return "sensitivity must be in \(valid), got \(actual)"
+        case .minimumBeatIntervalMustBeNonNegative(let actual):
+          return "minimumBeatInterval must be >= 0, got \(actual)"
+        case .historySizeMustBePositive(let actual):
+          return "historySize must be > 0, got \(actual)"
+        }
+      }
+    }
+
+    public static let validSensitivityRange: ClosedRange<Float> = 0...1
+
     /// Sensitivity threshold for beat detection.
     /// Higher values require louder transients to trigger a beat.
     /// Range: [0.0, 1.0], default: 0.5
@@ -282,10 +307,63 @@
       bassFocused: Bool = true,
       historySize: Int = 43
     ) {
-      self.sensitivity = max(0, min(1, sensitivity))
+      precondition(
+        Self.validSensitivityRange.contains(sensitivity),
+        "BeatDetectionConfiguration.sensitivity must be in \(Self.validSensitivityRange), got \(sensitivity)"
+      )
+      precondition(
+        minimumBeatInterval >= 0,
+        "BeatDetectionConfiguration.minimumBeatInterval must be >= 0, got \(minimumBeatInterval)"
+      )
+      precondition(
+        historySize > 0,
+        "BeatDetectionConfiguration.historySize must be > 0, got \(historySize)"
+      )
+      self.sensitivity = sensitivity
       self.minimumBeatInterval = minimumBeatInterval
       self.bassFocused = bassFocused
       self.historySize = historySize
+    }
+
+    /// Creates a configuration from untrusted values and throws on invalid input.
+    public init(
+      validatingSensitivity sensitivity: Float,
+      minimumBeatInterval: TimeInterval = 0.1,
+      bassFocused: Bool = true,
+      historySize: Int = 43
+    ) throws(ValidationError) {
+      guard Self.validSensitivityRange.contains(sensitivity) else {
+        throw .sensitivityOutOfRange(actual: sensitivity, valid: Self.validSensitivityRange)
+      }
+      guard minimumBeatInterval >= 0 else {
+        throw .minimumBeatIntervalMustBeNonNegative(actual: minimumBeatInterval)
+      }
+      guard historySize > 0 else {
+        throw .historySizeMustBePositive(actual: historySize)
+      }
+      self.init(
+        sensitivity: sensitivity,
+        minimumBeatInterval: minimumBeatInterval,
+        bassFocused: bassFocused,
+        historySize: historySize
+      )
+    }
+
+    /// Convenience initializer that clamps out-of-range values.
+    public init(
+      clampingSensitivity sensitivity: Float,
+      minimumBeatInterval: TimeInterval = 0.1,
+      bassFocused: Bool = true,
+      historySize: Int = 43
+    ) {
+      self.init(
+        sensitivity: min(
+          max(sensitivity, Self.validSensitivityRange.lowerBound),
+          Self.validSensitivityRange.upperBound),
+        minimumBeatInterval: max(0, minimumBeatInterval),
+        bassFocused: bassFocused,
+        historySize: max(1, historySize)
+      )
     }
 
     /// Default configuration optimized for general music.
@@ -321,40 +399,132 @@
 
   /// LOD (multi-band waveform) processing requirements.
   public struct LODWork: Sendable, Equatable {
+    public enum ValidationError: Error, Sendable, Equatable, CustomStringConvertible {
+      case publishRateMustBePositive(actual: Double)
+
+      public var description: String {
+        switch self {
+        case .publishRateMustBePositive(let actual):
+          return "publishRateHz must be > 0, got \(actual)"
+        }
+      }
+    }
+
     public var configuration: MultiBandLODConfiguration
     public var publishRateHz: Double
 
     public init(
       configuration: MultiBandLODConfiguration = .default,
-      publishRateHz: Double = 60
+      publishRateHz: Double = VisualizationRateDefaults.lodPublishRateHz
     ) {
+      precondition(
+        publishRateHz > 0,
+        "LODWork.publishRateHz must be > 0, got \(publishRateHz)"
+      )
       self.configuration = configuration
-      self.publishRateHz = max(1, publishRateHz)
+      self.publishRateHz = publishRateHz
+    }
+
+    public init(
+      validatingConfiguration configuration: MultiBandLODConfiguration,
+      publishRateHz: Double = VisualizationRateDefaults.lodPublishRateHz
+    ) throws(ValidationError) {
+      guard publishRateHz > 0 else {
+        throw .publishRateMustBePositive(actual: publishRateHz)
+      }
+      self.init(configuration: configuration, publishRateHz: publishRateHz)
+    }
+
+    public init(
+      clampingConfiguration configuration: MultiBandLODConfiguration,
+      publishRateHz: Double = VisualizationRateDefaults.lodPublishRateHz
+    ) {
+      self.init(
+        configuration: configuration,
+        publishRateHz: max(1, publishRateHz)
+      )
     }
   }
 
   /// Analysis processing requirements for time/frequency/beat data.
   public struct AnalysisWork: Sendable, Equatable {
+    public enum ValidationError: Error, Sendable, Equatable, CustomStringConvertible {
+      case updateRateMustBePositive(actual: Double)
+
+      public var description: String {
+        switch self {
+        case .updateRateMustBePositive(let actual):
+          return "updateRateHz must be > 0, got \(actual)"
+        }
+      }
+    }
+
     public var updateRateHz: Double
     public var timeDomain: AmplitudeAnalyzer.Configuration?
     public var frequencyDomain: FrequencyDomainWork?
     public var beatDetection: BeatDetectionConfiguration?
 
     public init(
-      updateRateHz: Double = 30,
+      updateRateHz: Double = VisualizationRateDefaults.analysisUpdateRateHz,
       timeDomain: AmplitudeAnalyzer.Configuration? = nil,
       frequencyDomain: FrequencyDomainWork? = nil,
       beatDetection: BeatDetectionConfiguration? = nil
     ) {
-      self.updateRateHz = max(1, updateRateHz)
+      precondition(
+        updateRateHz > 0,
+        "AnalysisWork.updateRateHz must be > 0, got \(updateRateHz)"
+      )
+      self.updateRateHz = updateRateHz
       self.timeDomain = timeDomain
       self.frequencyDomain = frequencyDomain
       self.beatDetection = beatDetection
+    }
+
+    public init(
+      validatingUpdateRateHz updateRateHz: Double,
+      timeDomain: AmplitudeAnalyzer.Configuration? = nil,
+      frequencyDomain: FrequencyDomainWork? = nil,
+      beatDetection: BeatDetectionConfiguration? = nil
+    ) throws(ValidationError) {
+      guard updateRateHz > 0 else {
+        throw .updateRateMustBePositive(actual: updateRateHz)
+      }
+      self.init(
+        updateRateHz: updateRateHz,
+        timeDomain: timeDomain,
+        frequencyDomain: frequencyDomain,
+        beatDetection: beatDetection
+      )
+    }
+
+    public init(
+      clampingUpdateRateHz updateRateHz: Double,
+      timeDomain: AmplitudeAnalyzer.Configuration? = nil,
+      frequencyDomain: FrequencyDomainWork? = nil,
+      beatDetection: BeatDetectionConfiguration? = nil
+    ) {
+      self.init(
+        updateRateHz: max(1, updateRateHz),
+        timeDomain: timeDomain,
+        frequencyDomain: frequencyDomain,
+        beatDetection: beatDetection
+      )
     }
   }
 
   /// Frequency-domain requirements including FFT and bucketing configuration.
   public struct FrequencyDomainWork: Sendable, Equatable {
+    public enum ValidationError: Error, Sendable, Equatable, CustomStringConvertible {
+      case peakHoldDecayRateMustBeNonNegative(actual: Float)
+
+      public var description: String {
+        switch self {
+        case .peakHoldDecayRateMustBeNonNegative(let actual):
+          return "peakHoldDecayRate must be >= 0, got \(actual)"
+        }
+      }
+    }
+
     public var configuration: FrequencyAnalyzer.Configuration
     public var bucketMode: FrequencyBucketMode
     public var peakHoldDecayRate: Float
@@ -366,10 +536,45 @@
       peakHoldDecayRate: Float = 0.015,
       weighting: FrequencyWeighting = .none
     ) {
+      precondition(
+        peakHoldDecayRate >= 0,
+        "FrequencyDomainWork.peakHoldDecayRate must be >= 0, got \(peakHoldDecayRate)"
+      )
       self.configuration = configuration
       self.bucketMode = bucketMode
-      self.peakHoldDecayRate = max(0, peakHoldDecayRate)
+      self.peakHoldDecayRate = peakHoldDecayRate
       self.weighting = weighting
+    }
+
+    public init(
+      validatingConfiguration configuration: FrequencyAnalyzer.Configuration,
+      bucketMode: FrequencyBucketMode = .default,
+      peakHoldDecayRate: Float = 0.015,
+      weighting: FrequencyWeighting = .none
+    ) throws(ValidationError) {
+      guard peakHoldDecayRate >= 0 else {
+        throw .peakHoldDecayRateMustBeNonNegative(actual: peakHoldDecayRate)
+      }
+      self.init(
+        configuration: configuration,
+        bucketMode: bucketMode,
+        peakHoldDecayRate: peakHoldDecayRate,
+        weighting: weighting
+      )
+    }
+
+    public init(
+      clampingConfiguration configuration: FrequencyAnalyzer.Configuration,
+      bucketMode: FrequencyBucketMode = .default,
+      peakHoldDecayRate: Float = 0.015,
+      weighting: FrequencyWeighting = .none
+    ) {
+      self.init(
+        configuration: configuration,
+        bucketMode: bucketMode,
+        peakHoldDecayRate: max(0, peakHoldDecayRate),
+        weighting: weighting
+      )
     }
   }
 

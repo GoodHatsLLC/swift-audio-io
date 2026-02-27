@@ -162,7 +162,7 @@
       engine.stopVisualization()
     }
 
-    @Test("Main and background sinks dispatch on expected threads")
+    @Test("Main and background events dispatch on expected threads")
     @MainActor
     func sinkThreadDelivery() async {
       let engine = AudioVisualizationEngine(
@@ -181,29 +181,34 @@
       var latestTimingThreadsAreMain: [Bool] = []
       var lodMainCallbackCount = 0
       var lodMainThreadsAreMain: [Bool] = []
-      let sinks = VisualizationSinks(
-        lodSnapshot: { _ in
-          lodMainCallbackCount += 1
-          lodMainThreadsAreMain.append(Thread.isMainThread)
-        },
-        lodSnapshotBackground: { snapshot in
-          let isMainThread = Thread.isMainThread
-          Task {
-            await backgroundCapture.record(
-              isMainThread: isMainThread,
-              hasSnapshot: snapshot != nil
-            )
-          }
-        },
-        latestBufferTiming: { timing in
-          guard timing != nil else { return }
-          latestTimingThreadsAreMain.append(Thread.isMainThread)
-        }
-      )
 
       let subscription = engine.subscribe(
         request: VisualizationRequest(work: work),
-        sinks: sinks
+        handler: { event in
+          switch event {
+          case .lodSnapshot(let snapshot):
+            guard snapshot != nil else { return }
+            Task { @MainActor in
+              lodMainCallbackCount += 1
+              lodMainThreadsAreMain.append(true)
+            }
+          case .lodSnapshotBackground(let snapshot):
+            let isMainThread = Thread.isMainThread
+            Task {
+              await backgroundCapture.record(
+                isMainThread: isMainThread,
+                hasSnapshot: snapshot != nil
+              )
+            }
+          case .latestBufferTiming(let timing):
+            guard timing != nil else { return }
+            Task { @MainActor in
+              latestTimingThreadsAreMain.append(true)
+            }
+          case .timeDomain, .frequencyDomain, .beat:
+            break
+          }
+        }
       )
       engine.startVisualization()
 

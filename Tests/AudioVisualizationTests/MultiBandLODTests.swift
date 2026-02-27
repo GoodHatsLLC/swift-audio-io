@@ -18,9 +18,22 @@
       let customConfig = MultiBandLODConfiguration(snapshotSwapInterval: 10)
       #expect(customConfig.snapshotSwapInterval == 10)
 
-      // Minimum clamping
-      let tooLow = MultiBandLODConfiguration(snapshotSwapInterval: 0)
+      // Explicit clamping initializer
+      let tooLow = MultiBandLODConfiguration(clamping: 5, snapshotSwapInterval: 0)
       #expect(tooLow.snapshotSwapInterval == 1)
+    }
+
+    @Test("Configuration validating initializer rejects invalid values")
+    func testConfigurationValidatingInitializer() throws {
+      do {
+        _ = try MultiBandLODConfiguration(validatingBandCount: 0)
+        #expect(Bool(false), "Expected validating initializer to throw for invalid band count")
+      } catch let error {
+        #expect(
+          error
+            == .bandCountOutOfRange(actual: 0, valid: MultiBandLODConfiguration.validBandCountRange)
+        )
+      }
     }
 
     @Test("Configuration default presets")
