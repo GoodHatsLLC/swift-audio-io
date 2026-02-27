@@ -20,26 +20,25 @@ import AIOEngine
 // Get the visualization engine (typically from your audio recording setup)
 let vizEngine = AudioVisualizationEngine()
 
-final class LODConsumer: VisualizationConsumer {
-    var work: VisualizationWork = VisualizationWork(
+let request = VisualizationRequest(
+    work: VisualizationWork(
         lod: LODWork(configuration: .default, publishRateHz: 60)
     )
-    let sinks: VisualizationSinks
+)
 
-    init(onSnapshot: @escaping @MainActor (LODSnapshotRef?) -> Void) {
-        sinks = VisualizationSinks(lodSnapshot: onSnapshot)
-    }
-}
-
-// Register a consumer that declares LOD work and a sink.
-let consumer = LODConsumer { snapshot in
+let subscription = vizEngine.subscribe(
+    request: request,
+    sinks: VisualizationSinks(lodSnapshot: { snapshot in
     renderWaveform(snapshot)
-}
-vizEngine.register(consumer: consumer)
+    })
+)
 vizEngine.startVisualization()
 
 // Start feeding audio data (called from your audio callback)
 vizEngine.processBuffer(audioSamples)
+
+// Later, stop receiving updates
+subscription.cancel()
 ```
 
 ### Offline Generation from Audio File
@@ -108,15 +107,15 @@ let snapshot = processor.snapshot()
 
 // Per-band access
 for band in snapshot.bands {
-    let minValues = band.min   // [Float] - minimum per LOD point
-    let maxValues = band.max   // [Float] - maximum per LOD point
-    let rmsValues = band.rms   // [Float] - RMS energy per LOD point
+    let minValues = band.minBuffer   // [Float] - minimum per LOD point
+    let maxValues = band.maxBuffer   // [Float] - maximum per LOD point
+    let rmsValues = band.rmsBuffer   // [Float] - RMS energy per LOD point
 }
 
 // Flat buffers for GPU (band-contiguous)
-let flatMin = snapshot.flatMinBuffer()  // [band0...][band1...]...
-let flatMax = snapshot.flatMaxBuffer()
-let flatRMS = snapshot.flatRMSBuffer()
+let flatMin = snapshot.copyContiguousLODChannel(.min)  // [band0...][band1...]...
+let flatMax = snapshot.copyContiguousLODChannel(.max)
+let flatRMS = snapshot.copyContiguousLODChannel(.rms)
 ```
 
 ### BandLODData
@@ -160,9 +159,11 @@ The `AudioVisualizationEngine` provides convenient integration:
 ```swift
 @MainActor
 final class AudioVisualizationEngine {
-    // Register work + sinks for visualization
-    func register(consumer: VisualizationConsumer)
-    func unregister(consumer: VisualizationConsumer)
+    // Subscribe with work + sinks
+    func subscribe(
+        request: VisualizationRequest,
+        sinks: VisualizationSinks
+    ) -> VisualizationSubscription
 
     // Lifecycle control
     func startVisualization()
@@ -171,8 +172,8 @@ final class AudioVisualizationEngine {
     func stopVisualization()
 
     // Access current state
-    var multiBandLODRef: LODSnapshotRef?
     var multiBandLOD: MultiBandLODSnapshot?
+    func withCurrentLODSnapshotRef<R>(_ body: (LODSnapshotRef) -> R) -> R?
     var isMultiBandLODEnabled: Bool
 
     // Feed audio (called from processBuffer)
@@ -183,10 +184,12 @@ final class AudioVisualizationEngine {
 **Usage in Recording Pipeline:**
 ```swift
 // During recording setup
-let consumer = LODConsumer { snapshot in
+let request = VisualizationRequest(
+    work: VisualizationWork(lod: LODWork(configuration: .default, publishRateHz: 60))
+)
+let subscription = vizEngine.subscribe(request: request, sinks: VisualizationSinks(lodSnapshot: { snapshot in
     // Cache or render snapshot
-}
-vizEngine.register(consumer: consumer)
+}))
 vizEngine.startVisualization()
 
 // In audio callback
@@ -199,7 +202,8 @@ struct WaveformView: View {
     @State private var snapshot: LODSnapshotRef?
 
     var body: some View {
-        // Render waveform using snapshot
+        // Fetch a frame-scoped snapshot in your display-link/timer update path.
+        // Avoid caching one LODSnapshotRef across multiple frames.
     }
 }
 ```
@@ -260,13 +264,13 @@ The LOD snapshot is designed for efficient GPU rendering:
 ```swift
 // Create GPU buffers from snapshot
 let minBuffer = device.makeBuffer(
-    bytes: snapshot.flatMinBuffer(),
+    bytes: snapshot.copyContiguousLODChannel(.min),
     length: bufferSize,
     options: .storageModeShared
 )
 
 let maxBuffer = device.makeBuffer(
-    bytes: snapshot.flatMaxBuffer(),
+    bytes: snapshot.copyContiguousLODChannel(.max),
     length: bufferSize,
     options: .storageModeShared
 )

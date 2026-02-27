@@ -212,6 +212,13 @@
 
   // MARK: - LOD Snapshot Protocol
 
+  /// Channel selector for contiguous LOD data access.
+  public enum LODChannel: Sendable, CaseIterable {
+    case min
+    case max
+    case rms
+  }
+
   /// Protocol defining the interface for LOD snapshot data sources.
   ///
   /// This protocol is implemented by both `LODSnapshotRef` (for live streaming data)
@@ -233,6 +240,16 @@
     /// LOD buffer length per band.
     var lodBufferLength: Int { get }
 
+    /// Direct access to one channel for a specific band.
+    ///
+    /// This is the zero-copy primitive API. Existing per-channel helpers
+    /// (`withMinBuffer`, `withMaxBuffer`, `withRMSBuffer`) are wrappers.
+    func withContiguousLODChannel<R>(
+      band: Int,
+      channel: LODChannel,
+      _ body: (UnsafeBufferPointer<Float>) -> R
+    ) -> R
+
     /// Direct access to a band's min buffer.
     func withMinBuffer<R>(band: Int, _ body: (UnsafeBufferPointer<Float>) -> R) -> R
 
@@ -247,6 +264,71 @@
   }
 
   extension LODSnapshot {
+    /// Returns `true` when `band` is within `0..<bandCount`.
+    public func isValidBand(_ band: Int) -> Bool {
+      band >= 0 && band < bandCount
+    }
+
+    /// Checked variant of `withContiguousLODChannel`.
+    public func withContiguousLODChannelIfValid<R>(
+      band: Int,
+      channel: LODChannel,
+      _ body: (UnsafeBufferPointer<Float>) -> R
+    ) -> R? {
+      guard isValidBand(band) else { return nil }
+      return unsafe withContiguousLODChannel(band: band, channel: channel, body)
+    }
+
+    public func withMinBuffer<R>(band: Int, _ body: (UnsafeBufferPointer<Float>) -> R) -> R {
+      unsafe withContiguousLODChannel(band: band, channel: .min, body)
+    }
+
+    public func withMaxBuffer<R>(band: Int, _ body: (UnsafeBufferPointer<Float>) -> R) -> R {
+      unsafe withContiguousLODChannel(band: band, channel: .max, body)
+    }
+
+    public func withRMSBuffer<R>(band: Int, _ body: (UnsafeBufferPointer<Float>) -> R) -> R {
+      unsafe withContiguousLODChannel(band: band, channel: .rms, body)
+    }
+
+    public func withMinBufferIfValid<R>(band: Int, _ body: (UnsafeBufferPointer<Float>) -> R)
+      -> R?
+    {
+      unsafe withContiguousLODChannelIfValid(band: band, channel: .min, body)
+    }
+
+    public func withMaxBufferIfValid<R>(band: Int, _ body: (UnsafeBufferPointer<Float>) -> R)
+      -> R?
+    {
+      unsafe withContiguousLODChannelIfValid(band: band, channel: .max, body)
+    }
+
+    public func withRMSBufferIfValid<R>(band: Int, _ body: (UnsafeBufferPointer<Float>) -> R)
+      -> R?
+    {
+      unsafe withContiguousLODChannelIfValid(band: band, channel: .rms, body)
+    }
+
+    /// Creates a flat copy for one LOD channel.
+    public func copyContiguousLODChannel(_ channel: LODChannel) -> [Float] {
+      guard bandCount > 0, lodBufferLength > 0 else { return [] }
+      var flat = Array(repeating: Float(0), count: bandCount * lodBufferLength)
+      for band in 0..<bandCount {
+        let base = band * lodBufferLength
+        unsafe withContiguousLODChannel(band: band, channel: channel) { src in
+          guard let srcBase = src.baseAddress else { return }
+          unsafe flat.withUnsafeMutableBufferPointer { dst in
+            guard let dstBase = dst.baseAddress else { return }
+            unsafe (dstBase + base).update(
+              from: srcBase,
+              count: min(src.count, lodBufferLength)
+            )
+          }
+        }
+      }
+      return flat
+    }
+
     public func withRawBuffer<R>(band: Int, _ body: (UnsafeBufferPointer<Float>) -> R) -> R {
       unsafe body(UnsafeBufferPointer(start: nil, count: 0))
     }
@@ -343,43 +425,33 @@
 
     // MARK: - GPU Buffer Helpers
 
-    /// Creates a flat float array of min values for all bands.
-    /// Format: [Band0 LOD samples...][Band1 LOD samples...]...
-    public func flatMinBuffer() -> [Float] {
-      bands.flatMap { $0.minBuffer }
-    }
-
-    /// Creates a flat float array of max values for all bands.
-    /// Format: [Band0 LOD samples...][Band1 LOD samples...]...
-    public func flatMaxBuffer() -> [Float] {
-      bands.flatMap { $0.maxBuffer }
-    }
-
-    /// Creates a flat float array of RMS values for all bands.
-    /// Format: [Band0 LOD samples...][Band1 LOD samples...]...
-    public func flatRMSBuffer() -> [Float] {
-      bands.flatMap { $0.rmsBuffer }
-    }
-
     // MARK: - LODSnapshot Protocol Conformance
 
-    /// Direct access to a band's min buffer.
-    public func withMinBuffer<R>(band: Int, _ body: (UnsafeBufferPointer<Float>) -> R) -> R {
-      unsafe bands[band].minBuffer.withUnsafeBufferPointer(body)
-    }
-
-    /// Direct access to a band's max buffer.
-    public func withMaxBuffer<R>(band: Int, _ body: (UnsafeBufferPointer<Float>) -> R) -> R {
-      unsafe bands[band].maxBuffer.withUnsafeBufferPointer(body)
-    }
-
-    /// Direct access to a band's RMS buffer.
-    public func withRMSBuffer<R>(band: Int, _ body: (UnsafeBufferPointer<Float>) -> R) -> R {
-      unsafe bands[band].rmsBuffer.withUnsafeBufferPointer(body)
+    public func withContiguousLODChannel<R>(
+      band: Int,
+      channel: LODChannel,
+      _ body: (UnsafeBufferPointer<Float>) -> R
+    ) -> R {
+      precondition(
+        (0..<bands.count).contains(band),
+        "LODSnapshot band index out of range: \(band), valid range: 0..<\(bands.count)"
+      )
+      switch channel {
+      case .min:
+        return unsafe bands[band].minBuffer.withUnsafeBufferPointer(body)
+      case .max:
+        return unsafe bands[band].maxBuffer.withUnsafeBufferPointer(body)
+      case .rms:
+        return unsafe bands[band].rmsBuffer.withUnsafeBufferPointer(body)
+      }
     }
 
     /// Direct access to a band's raw buffer.
     public func withRawBuffer<R>(band: Int, _ body: (UnsafeBufferPointer<Float>) -> R) -> R {
+      precondition(
+        (0..<bands.count).contains(band),
+        "LODSnapshot band index out of range: \(band), valid range: 0..<\(bands.count)"
+      )
       if let raw = bands[band].rawBuffer {
         return unsafe raw.withUnsafeBufferPointer(body)
       } else {

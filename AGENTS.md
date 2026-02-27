@@ -154,17 +154,22 @@ The package provides multi-band Level-of-Detail (LOD) visualization:
 
 ### Quick Start
 ```swift
-// Enable multi-band LOD on visualization engine
-vizEngine.enableMultiBandLOD()
+let request = VisualizationRequest(
+    work: VisualizationWork(lod: LODWork(configuration: .default, publishRateHz: 60))
+)
+let subscription = vizEngine.subscribe(request: request, sinks: .empty)
+vizEngine.startVisualization()
 
 // Feed audio samples
 vizEngine.processBuffer(audioSamples)
 
-// Get snapshot for rendering
-if let snapshot = vizEngine.multiBandLOD {
-    // Use snapshot.flatMinBuffer(), flatMaxBuffer(), flatRMSBuffer()
-    // for Metal rendering
+// Frame-scoped read for rendering
+vizEngine.withCurrentLODSnapshotRef { snapshot in
+    let flatMin = snapshot.copyContiguousLODChannel(.min)
+    _ = flatMin
 }
+
+subscription.cancel()
 ```
 
 ### Offline Generation

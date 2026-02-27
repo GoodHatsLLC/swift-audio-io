@@ -113,6 +113,28 @@
       unsafe #expect(ref.lodBufferLength > 0)
     }
 
+    @Test("Processor exposes frame-scoped snapshot accessor")
+    func testProcessorFrameScopedSnapshotAccessor() {
+      let config = MultiBandLODConfiguration(
+        bandCount: 3,
+        lodRatio: 1,
+        bufferSeconds: 10,
+        sampleRate: 100,
+        snapshotSwapInterval: 1
+      )
+      let processor = unsafe MultiBandLODProcessor(configuration: config)
+
+      unsafe processor.process([0.1, 0.2, 0.3, 0.4])
+
+      let scopedWriteIndex = unsafe processor.withCurrentLODSnapshotRef { $0.writeIndex }
+      let directWriteIndex = unsafe processor.snapshotRef().writeIndex
+      #expect(scopedWriteIndex == directWriteIndex)
+
+      unsafe processor.process([0.5, 0.6, 0.7, 0.8])
+      let nextWriteIndex = unsafe processor.withCurrentLODSnapshotRef { $0.writeIndex }
+      #expect(nextWriteIndex != scopedWriteIndex)
+    }
+
     @Test("LODSnapshotRef provides buffer access")
     func testSnapshotRefBufferAccess() {
       let config = MultiBandLODConfiguration(bandCount: 3, lodRatio: 64, bufferSeconds: 5)
@@ -127,17 +149,38 @@
       let ref = unsafe processor.snapshotRef()
 
       // Test direct buffer access
-      unsafe ref.withMinBuffer(band: 0) { buffer in
+      unsafe ref.withContiguousLODChannel(band: 0, channel: .min) { buffer in
         unsafe #expect(buffer.count == ref.lodBufferLength)
       }
 
-      unsafe ref.withMaxBuffer(band: 0) { buffer in
+      unsafe ref.withContiguousLODChannel(band: 0, channel: .max) { buffer in
         unsafe #expect(buffer.count == ref.lodBufferLength)
       }
 
-      unsafe ref.withRMSBuffer(band: 0) { buffer in
+      unsafe ref.withContiguousLODChannel(band: 0, channel: .rms) { buffer in
         unsafe #expect(buffer.count == ref.lodBufferLength)
       }
+    }
+
+    @Test("LODSnapshotRef checked band access returns nil out-of-range")
+    func testSnapshotRefCheckedBandAccess() {
+      let config = MultiBandLODConfiguration(bandCount: 2, lodRatio: 32, bufferSeconds: 5)
+      let processor = unsafe MultiBandLODProcessor(configuration: config)
+      unsafe processor.process(generateSineWave(frequency: 440, sampleRate: 44100, samples: 256))
+
+      let ref = unsafe processor.snapshotRef()
+      let valid = unsafe ref.withContiguousLODChannelIfValid(band: 1, channel: .min) { $0.count }
+      let invalidNegative = unsafe ref.withContiguousLODChannelIfValid(band: -1, channel: .min) {
+        $0.count
+      }
+      let invalidUpper = unsafe ref.withContiguousLODChannelIfValid(
+        band: ref.bandCount,
+        channel: .min
+      ) { $0.count }
+
+      #expect(valid == ref.lodBufferLength)
+      #expect(invalidNegative == nil)
+      #expect(invalidUpper == nil)
     }
 
     // MARK: - Lock-Free Behavior Tests
@@ -187,7 +230,7 @@
               unsafe readIndices.append(ref.writeIndex)
 
               // Access buffer data (verifies no crash from concurrent access)
-              unsafe ref.withMinBuffer(band: 0) { buffer in
+              unsafe ref.withContiguousLODChannel(band: 0, channel: .min) { buffer in
                 _ = unsafe buffer.first
               }
             }
@@ -233,9 +276,15 @@
               var maxCount = 0
               var rmsCount = 0
 
-              unsafe ref.withMinBuffer(band: band) { buffer in minCount = buffer.count }
-              unsafe ref.withMaxBuffer(band: band) { buffer in maxCount = buffer.count }
-              unsafe ref.withRMSBuffer(band: band) { buffer in rmsCount = buffer.count }
+              unsafe ref.withContiguousLODChannel(band: band, channel: .min) { buffer in
+                minCount = buffer.count
+              }
+              unsafe ref.withContiguousLODChannel(band: band, channel: .max) { buffer in
+                maxCount = buffer.count
+              }
+              unsafe ref.withContiguousLODChannel(band: band, channel: .rms) { buffer in
+                rmsCount = buffer.count
+              }
 
               if minCount != maxCount || maxCount != rmsCount {
                 return false
@@ -355,9 +404,9 @@
         let ref = unsafe processor.snapshotRef()
         // Access all bands - should be zero-copy
         for band in unsafe 0..<ref.bandCount {
-          unsafe ref.withMinBuffer(band: band) { _ = unsafe $0.first }
-          unsafe ref.withMaxBuffer(band: band) { _ = unsafe $0.first }
-          unsafe ref.withRMSBuffer(band: band) { _ = unsafe $0.first }
+          unsafe ref.withContiguousLODChannel(band: band, channel: .min) { _ = unsafe $0.first }
+          unsafe ref.withContiguousLODChannel(band: band, channel: .max) { _ = unsafe $0.first }
+          unsafe ref.withContiguousLODChannel(band: band, channel: .rms) { _ = unsafe $0.first }
         }
       }
 
@@ -400,7 +449,7 @@
       unsafe #expect(ref.writeIndex == 0)
 
       // All buffers should be zero
-      unsafe ref.withMinBuffer(band: 0) { buffer in
+      unsafe ref.withContiguousLODChannel(band: 0, channel: .min) { buffer in
         let nonZero = unsafe buffer.contains { $0 != 0 }
         #expect(!nonZero, "Buffer should be zeroed after reset")
       }

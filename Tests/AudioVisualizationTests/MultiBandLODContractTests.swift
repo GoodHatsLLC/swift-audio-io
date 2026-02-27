@@ -34,8 +34,8 @@
       #expect(positiveModulo(11, 10) == 1)
     }
 
-    @Test("Flat buffers are band-contiguous")
-    func testFlatBufferLayoutBandContiguous() {
+    @Test("copyContiguousLODChannel returns band-contiguous buffers")
+    func testCopyContiguousLODChannelBandContiguous() {
       var band0 = BandLODData(bandIndex: 0, capacity: 3)
       band0.minBuffer = [1, 2, 3]
       band0.maxBuffer = [11, 12, 13]
@@ -53,9 +53,27 @@
         rawBufferLength: 6
       )
 
-      #expect(snapshot.flatMinBuffer() == [1, 2, 3, 4, 5, 6])
-      #expect(snapshot.flatMaxBuffer() == [11, 12, 13, 14, 15, 16])
-      #expect(snapshot.flatRMSBuffer() == [21, 22, 23, 24, 25, 26])
+      #expect(snapshot.copyContiguousLODChannel(.min) == [1, 2, 3, 4, 5, 6])
+      #expect(snapshot.copyContiguousLODChannel(.max) == [11, 12, 13, 14, 15, 16])
+      #expect(snapshot.copyContiguousLODChannel(.rms) == [21, 22, 23, 24, 25, 26])
+    }
+
+    @Test("Checked band access returns nil for out-of-range bands")
+    func testCheckedBandAccess() {
+      let snapshot = MultiBandLODSnapshot(
+        bands: [BandLODData(bandIndex: 0, capacity: 4)],
+        writeIndex: 0,
+        lodRatio: 2,
+        rawBufferLength: 8
+      )
+
+      let validCount = unsafe snapshot.withMinBufferIfValid(band: 0) { $0.count }
+      let invalidNegative = unsafe snapshot.withMinBufferIfValid(band: -1) { $0.count }
+      let invalidUpper = unsafe snapshot.withMinBufferIfValid(band: 1) { $0.count }
+
+      #expect(validCount == 4)
+      #expect(invalidNegative == nil)
+      #expect(invalidUpper == nil)
     }
   }
 
