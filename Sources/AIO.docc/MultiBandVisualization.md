@@ -47,10 +47,8 @@ subscription.cancel()
 import AIOEngine
 
 // Generate LOD snapshot from an audio file
-let snapshot = try await MultiBandLODProcessor.generateFromFile(
-    url: audioFileURL,
-    configuration: .default
-)
+let extractor = OfflineLODExtractor(configuration: .default)
+let snapshot = try await extractor.extract(from: audioFileURL).snapshot
 
 // Render to image
 let renderer = try WaveformSnapshotRenderer()
@@ -213,15 +211,16 @@ struct WaveformView: View {
 Generate LOD data from existing audio files:
 
 ```swift
-let snapshot = try await MultiBandLODProcessor.generateFromFile(
-    url: audioURL,
+let extractor = OfflineLODExtractor(
     configuration: MultiBandLODConfiguration(
         bandCount: 5,
         lodRatio: 128,
         bufferSeconds: 600,  // Support up to 10 min
         sampleRate: 44_100
-    )
+    ),
+    channelStrategy: .average
 )
+let snapshot = try await extractor.extract(from: audioURL).snapshot
 ```
 
 This reads the entire audio file and produces a complete LOD snapshot suitable for rendering static waveform images.

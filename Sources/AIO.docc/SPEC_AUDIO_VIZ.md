@@ -116,8 +116,8 @@ Analysis work is declared by active subscriptions through `VisualizationRequest.
 
 Offline generation is supported via:
 
-- `static func generateFromFile(url:configuration:) async throws -> MultiBandLODSnapshot`
-  - Reads the file in chunks, averages channels for multi-channel content, and returns a static snapshot sized to the file’s exact frame count (via `rawBufferLengthOverride` padding).
+- `OfflineLODExtractor.extract(from:)` / `extract(from:segments:)`
+  - Reads the file in chunks, applies explicit channel strategy, and returns a static snapshot sized to the file’s exact frame count (via `rawBufferLengthOverride` padding).
 
 ## Data Model and Layout
 
@@ -209,7 +209,7 @@ For track detail playback UI, the Metal pipeline generates an offline multi-band
 
 - Resolve the `AudioSource` (URL + cached duration/sample rate) from DB.
 - Choose `lodRatio` via `WaveformLODHeuristics.recommendedOfflineLodRatio(fileFrameCount:)`.
-- Call `MultiBandLODProcessor.generateFromFile(url:configuration:)`.
+- Call `OfflineLODExtractor(configuration:).extract(from:)`.
 - Render with `MetalTrackPlaybackWaveformView` / `MetalWaveformView` using a static snapshot provider.
 
 **Detail view UX implementation details:**

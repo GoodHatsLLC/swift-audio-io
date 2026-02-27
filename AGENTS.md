@@ -174,10 +174,8 @@ subscription.cancel()
 
 ### Offline Generation
 ```swift
-let snapshot = try await MultiBandLODProcessor.generateFromFile(
-    url: audioURL,
-    configuration: .default
-)
+let extractor = OfflineLODExtractor(configuration: .default)
+let snapshot = try await extractor.extract(from: audioURL).snapshot
 ```
 
 See `Sources/AIO.docc/MultiBandVisualization.md` for complete API documentation.

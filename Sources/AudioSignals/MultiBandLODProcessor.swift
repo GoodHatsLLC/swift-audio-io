@@ -769,275 +769,39 @@
   // MARK: - Offline Generation
 
   extension MultiBandLODProcessor {
-    /// Generate LOD data from an audio file.
+    /// Deprecated wrapper for offline file generation.
     ///
-    /// This processes the entire audio file and returns a snapshot suitable
-    /// for static waveform rendering.
-    ///
-    /// - Parameters:
-    ///   - url: URL of the audio file to process.
-    ///   - configuration: LOD configuration to use.
-    /// - Returns: Complete LOD snapshot of the audio file.
-    /// Maximum LOD samples per band for offline generation.
-    ///
-    /// This caps the LOD buffer size to prevent unbounded memory growth for long
-    /// audio files. 16384 samples provides ample detail — the default rendering
-    /// `maxPixelWidth` is 8192, so this is 2× oversampled. For files shorter
-    /// than `maxOfflineLODSamplesPerBand * lodRatio` raw samples the original
-    /// `lodRatio` is preserved; for longer files it increases proportionally.
-    private static let maxOfflineLODSamplesPerBand = 16384
-
+    /// Use `OfflineLODExtractor.extract(from:)` instead.
+    @available(
+      *,
+      deprecated,
+      message: "Use OfflineLODExtractor(configuration:).extract(from:)"
+    )
     public static func generateFromFile(
       url: URL,
       configuration: MultiBandLODConfiguration = .default
     ) async throws(LODGenerationError) -> MultiBandLODSnapshot {
-      let file: AVFAudio.AVAudioFile
-      do {
-        file = try AVFAudio.AVAudioFile(forReading: url)
-      } catch {
-        throw .audioFileOpenFailed(url: url, error: ErrorContext(error))
-      }
-      let processingFormat = file.processingFormat
-      let totalFrames = AVFAudio.AVAudioFrameCount(file.length)
-
-      // Adjust configuration for the file, using the *exact* frame count for buffer sizing.
-      // This avoids padding up to whole seconds (or a default live buffer size), which can
-      // otherwise make offline waveforms look "chunky" and allow panning into empty space.
-      let fileFrameCount = max(Int(file.length), 0)
-
-      // Scale lodRatio for long files so LOD buffer memory stays bounded.
-      // Without this, a 1-hour file at 48 kHz with the default lodRatio of 128
-      // produces ~1.35 M LOD samples/band × 5 bands × 3 buffers × 3 slots ≈ 243 MB.
-      // With scaling, the LOD buffer is capped at ~maxOfflineLODSamplesPerBand entries
-      // per band regardless of file length.
-      let effectiveLodRatio: Int
-      if unsafe fileFrameCount > maxOfflineLODSamplesPerBand * configuration.lodRatio {
-        effectiveLodRatio = unsafe max(
-          configuration.lodRatio,
-          Int(ceil(Double(fileFrameCount) / Double(maxOfflineLODSamplesPerBand)))
-        )
-      } else {
-        effectiveLodRatio = configuration.lodRatio
-      }
-
-      let (paddedFrameCount, paddedOverflow) = fileFrameCount.addingReportingOverflow(
-        max(effectiveLodRatio, 1)
-      )
-      // Ensure offline buffers have at least one extra LOD slot so `writeIndex` doesn't wrap.
-      // This keeps offline `writeIndex` monotonic (useful for sizing and mapping) while still
-      // allowing us to commit the final partial window.
-      let rawBufferLengthOverride = paddedOverflow ? fileFrameCount : paddedFrameCount
-      let sampleRate = max(processingFormat.sampleRate, 1)
-      let fileDuration = Double(file.length) / sampleRate
-      let adjustedConfig = MultiBandLODConfiguration(
-        bandCount: configuration.bandCount,
-        lodRatio: effectiveLodRatio,
-        bufferSeconds: max(Int(ceil(fileDuration)), 1),
-        sampleRate: Int(sampleRate),
-        crossoverMode: configuration.crossoverMode,
-        snapshotSwapInterval: configuration.snapshotSwapInterval,
-        rawBufferLengthOverride: rawBufferLengthOverride
-      )
-
-      let processor = unsafe MultiBandLODProcessor(
-        configuration: adjustedConfig,
-        allocateRawStorage: false
-      )
-
-      // Process in chunks
-      let bufferSize: AVFAudio.AVAudioFrameCount = 4096
-      guard
-        let buffer = AVFAudio.AVAudioPCMBuffer(
-          pcmFormat: processingFormat,
-          frameCapacity: bufferSize
-        )
-      else {
-        throw LODGenerationError.bufferCreationFailed
-      }
-
-      file.framePosition = 0
-      var framesRemaining = totalFrames
-
-      while framesRemaining > 0 {
-        let framesToRead = min(bufferSize, framesRemaining)
-        do {
-          try file.read(into: buffer, frameCount: framesToRead)
-        } catch {
-          throw .audioFileReadFailed(url: url, error: ErrorContext(error))
-        }
-
-        guard buffer.frameLength > 0 else { break }
-
-        // If stereo, average channels
-        if let channels = unsafe buffer.floatChannelData {
-          let frameCount = Int(buffer.frameLength)
-          let channelCount = Int(processingFormat.channelCount)
-
-          if channelCount == 1 {
-            unsafe processor.process(buffer)
-          } else {
-            // Average channels
-            var monoBuffer = [Float](repeating: 0, count: frameCount)
-            for frame in 0..<frameCount {
-              var sum: Float = 0
-              for ch in 0..<channelCount {
-                unsafe sum += channels[ch][frame]
-              }
-              monoBuffer[frame] = sum / Float(channelCount)
-            }
-            unsafe processor.process(monoBuffer)
-          }
-        }
-
-        framesRemaining -= buffer.frameLength
-      }
-
-      // Ensure the final partial interval is included even if it didn't reach a full LOD window.
-      if unsafe processor.windowStats.first?.count ?? 0 > 0 {
-        unsafe processor.commitLOD()
-      }
-
-      return unsafe processor.snapshotLocking()
+      let extractor = OfflineLODExtractor(configuration: configuration)
+      let result = try await extractor.extract(from: url)
+      return result.snapshot
     }
 
-    /// Generate LOD data from specific segments of an audio file.
+    /// Deprecated wrapper for offline segmented file generation.
     ///
-    /// Segments are concatenated in the order provided to form a trimmed snapshot.
-    ///
-    /// - Parameters:
-    ///   - url: URL of the audio file to process.
-    ///   - segments: Ordered time ranges (in seconds) to include.
-    ///   - configuration: LOD configuration to use.
-    /// - Returns: LOD snapshot representing only the provided segments.
+    /// Use `OfflineLODExtractor.extract(from:segments:)` instead.
+    @available(
+      *,
+      deprecated,
+      message: "Use OfflineLODExtractor(configuration:).extract(from:segments:)"
+    )
     public static func generateFromFile(
       url: URL,
       segments: [ClosedRange<TimeInterval>],
       configuration: MultiBandLODConfiguration = .default
     ) async throws(LODGenerationError) -> MultiBandLODSnapshot {
-      let file: AVFAudio.AVAudioFile
-      do {
-        file = try AVFAudio.AVAudioFile(forReading: url)
-      } catch {
-        throw .audioFileOpenFailed(url: url, error: ErrorContext(error))
-      }
-      let processingFormat = file.processingFormat
-      let sampleRate = max(processingFormat.sampleRate, 1)
-      let fileDuration = Double(file.length) / sampleRate
-
-      let normalizedSegments: [ClosedRange<TimeInterval>] = segments.compactMap { range in
-        let lower = max(0, min(range.lowerBound, range.upperBound))
-        let upper = max(0, max(range.lowerBound, range.upperBound))
-        let clampedLower = min(lower, fileDuration)
-        let clampedUpper = min(max(clampedLower, upper), fileDuration)
-        guard clampedUpper > clampedLower else { return nil }
-        return clampedLower...clampedUpper
-      }
-
-      guard !normalizedSegments.isEmpty else {
-        return .empty
-      }
-
-      let segmentFrames:
-        [(start: AVFAudio.AVAudioFramePosition, end: AVFAudio.AVAudioFramePosition)]
-      segmentFrames = normalizedSegments.map { range in
-        let start = AVFAudio.AVAudioFramePosition(range.lowerBound * sampleRate)
-        let end = AVFAudio.AVAudioFramePosition(range.upperBound * sampleRate)
-        return (start: start, end: max(start, end))
-      }
-
-      let totalFrames = segmentFrames.reduce(0) { sum, frames in
-        let count = max(AVFAudio.AVAudioFramePosition(0), frames.end - frames.start)
-        return sum + max(0, Int(count))
-      }
-
-      guard totalFrames > 0 else {
-        return .empty
-      }
-
-      // Scale lodRatio for long segment totals (same rationale as single-file variant).
-      let effectiveLodRatio: Int
-      if unsafe totalFrames > maxOfflineLODSamplesPerBand * configuration.lodRatio {
-        effectiveLodRatio = unsafe max(
-          configuration.lodRatio,
-          Int(ceil(Double(totalFrames) / Double(maxOfflineLODSamplesPerBand)))
-        )
-      } else {
-        effectiveLodRatio = configuration.lodRatio
-      }
-
-      let (paddedFrameCount, paddedOverflow) = totalFrames.addingReportingOverflow(
-        max(effectiveLodRatio, 1)
-      )
-      let rawBufferLengthOverride = paddedOverflow ? totalFrames : paddedFrameCount
-      let bufferSeconds = max(Int(ceil(Double(totalFrames) / sampleRate)), 1)
-      let adjustedConfig = MultiBandLODConfiguration(
-        bandCount: configuration.bandCount,
-        lodRatio: effectiveLodRatio,
-        bufferSeconds: bufferSeconds,
-        sampleRate: Int(sampleRate),
-        crossoverMode: configuration.crossoverMode,
-        snapshotSwapInterval: configuration.snapshotSwapInterval,
-        rawBufferLengthOverride: rawBufferLengthOverride
-      )
-
-      let processor = unsafe MultiBandLODProcessor(
-        configuration: adjustedConfig,
-        allocateRawStorage: false
-      )
-
-      let bufferSize: AVFAudio.AVAudioFrameCount = 4096
-      guard
-        let buffer = AVFAudio.AVAudioPCMBuffer(
-          pcmFormat: processingFormat,
-          frameCapacity: bufferSize
-        )
-      else {
-        throw LODGenerationError.bufferCreationFailed
-      }
-
-      for frames in segmentFrames {
-        var framesRemaining = max(AVFAudio.AVAudioFramePosition(0), frames.end - frames.start)
-
-        file.framePosition = frames.start
-
-        while framesRemaining > 0 {
-          let framesToRead = min(bufferSize, AVFAudio.AVAudioFrameCount(framesRemaining))
-          do {
-            try file.read(into: buffer, frameCount: framesToRead)
-          } catch {
-            throw .audioFileReadFailed(url: url, error: ErrorContext(error))
-          }
-
-          guard buffer.frameLength > 0 else { break }
-
-          if let channels = unsafe buffer.floatChannelData {
-            let frameCount = Int(buffer.frameLength)
-            let channelCount = Int(processingFormat.channelCount)
-
-            if channelCount == 1 {
-              unsafe processor.process(buffer)
-            } else {
-              var monoBuffer = [Float](repeating: 0, count: frameCount)
-              for frame in 0..<frameCount {
-                var sum: Float = 0
-                for ch in 0..<channelCount {
-                  unsafe sum += channels[ch][frame]
-                }
-                monoBuffer[frame] = sum / Float(channelCount)
-              }
-              unsafe processor.process(monoBuffer)
-            }
-          }
-
-          framesRemaining -= AVFAudio.AVAudioFramePosition(buffer.frameLength)
-        }
-      }
-
-      if unsafe processor.windowStats.first?.count ?? 0 > 0 {
-        unsafe processor.commitLOD()
-      }
-
-      return unsafe processor.snapshotLocking()
+      let extractor = OfflineLODExtractor(configuration: configuration)
+      let result = try await extractor.extract(from: url, segments: segments)
+      return result.snapshot
     }
 
     /// Errors that can occur during LOD generation.
