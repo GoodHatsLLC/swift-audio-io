@@ -34,6 +34,9 @@
   /// ### Controlling Visualization
   ///
   /// - ``startVisualization()``
+  /// - ``subscribe(request:sinks:)``
+  /// - ``subscribe(request:handler:)``
+  /// - ``subscribe(request:sink:)``
   /// - ``stopVisualization()``
   /// - ``isActive``
   ///
@@ -50,9 +53,9 @@
   ///
   /// ### Configuring Visualization
   ///
-  /// - ``VisualizationWork`` (declared by a ``VisualizationConsumer``)
-  /// - ``register(consumer:)``
-  /// - ``unregister(consumer:)``
+  /// - ``VisualizationRequest``
+  /// - ``VisualizationWork``
+  /// - ``subscribe(request:sinks:)``
   ///
   /// This type is `@unchecked Sendable` because it is used as a real-time audio callback
   /// target (via `BufferReceiver`) and is passed across concurrency boundaries.
@@ -62,7 +65,7 @@
   ///   touch `@Observable` state directly).
   /// - Observable state (`timeDomain` / `frequencyDomain` / `beat`) is published from the
   ///   main queue.
-  /// - LOD and analysis processing are configured from active consumer work declarations.
+  /// - LOD and analysis processing are configured from active subscriber requests.
   @safe @Observable
   // SAFETY: Cross-thread access is atomics/callback-boundary only; UI state is main-queue published.
   public final class AudioVisualizationEngine: @unchecked Sendable, Identifiable {
@@ -81,68 +84,8 @@
     /// Beat detection information.
     public var beat: BeatInfo = .empty
 
-    // MARK: Legacy API (for backward compatibility)
-
-    /// An array of floating-point values representing the audio waveform data.
-    /// Normalized to the range `[0.0, 1.0]`.
-    /// - Note: This is a convenience accessor for `timeDomain.samples`.
-    public var amplitudeData: [Float] {
-      get { timeDomain.samples }
-      set { timeDomain.samples = newValue }
-    }
-
-    /// An array of floating-point values representing the audio spectrum data.
-    /// Normalized to the range `[0.0, 1.0]`.
-    /// - Note: This is a convenience accessor for `frequencyDomain.rawSpectrum`.
-    public var spectrumData: [Float] {
-      get { frequencyDomain.rawSpectrum }
-      set { frequencyDomain.rawSpectrum = newValue }
-    }
-
-    /// Frequencies corresponding to the current spectrum data.
-    /// - Note: This is a convenience accessor for `frequencyDomain.frequencies`.
-    public var spectrumFrequencies: [Float] {
-      get { frequencyDomain.frequencies }
-      set { frequencyDomain.frequencies = newValue }
-    }
-
     /// Peak-hold values for the spectrum with decay applied.
     public var spectrumPeakHold: [Float] = []
-
-    /// Peak amplitudes with decay applied by the amplitude analyzer.
-    /// - Note: This is a convenience accessor for `timeDomain.peaks`.
-    public var peakAmplitudes: [Float] {
-      get { timeDomain.peaks }
-      set { timeDomain.peaks = newValue }
-    }
-
-    /// Rolling RMS level of the incoming audio stream.
-    /// - Note: This is a convenience accessor for `timeDomain.rmsLevel`.
-    public var rmsLevel: Float {
-      get { timeDomain.rmsLevel }
-      set { timeDomain.rmsLevel = newValue }
-    }
-
-    /// Overall amplitude level reported by the analyzer.
-    /// - Note: This is a convenience accessor for `timeDomain.level`.
-    public var overallLevel: Float {
-      get { timeDomain.level }
-      set { timeDomain.level = newValue }
-    }
-
-    /// Brightness metric derived from the spectrum analyzer.
-    /// - Note: This is a convenience accessor for `frequencyDomain.spectralCentroid`.
-    public var spectralCentroid: Float {
-      get { frequencyDomain.spectralCentroid }
-      set { frequencyDomain.spectralCentroid = newValue }
-    }
-
-    /// Frequency (Hz) of the strongest band in the latest spectrum frame.
-    /// - Note: This is a convenience accessor for `frequencyDomain.peakFrequency`.
-    public var peakFrequency: Float {
-      get { frequencyDomain.peakFrequency }
-      set { frequencyDomain.peakFrequency = newValue }
-    }
 
     /// Cached frequency labels for UI overlays.
     public var frequencyLabels: [(frequency: Float, label: String)] = []
@@ -152,7 +95,7 @@
     private let isActiveAtomic = ManagedAtomic<Bool>(false)
     private let wantsActiveAtomic = ManagedAtomic<Bool>(false)
     private let isForegroundAtomic = ManagedAtomic<Bool>(true)
-    private let hasConsumerAtomic = ManagedAtomic<Bool>(false)
+    private let hasSubscriberAtomic = ManagedAtomic<Bool>(false)
     private let analysisEnabledAtomic = ManagedAtomic<Bool>(false)
     private let lodEnabledAtomic = ManagedAtomic<Bool>(false)
 
@@ -271,7 +214,7 @@
     // MARK: - Multi-Band LOD (Optional)
 
     /// Multi-band Level-of-Detail processor for Metal visualization.
-    /// Configured through `VisualizationWork.lod` from the active consumer.
+    /// Configured through `VisualizationWork.lod` from active subscribers.
 
     @ObservationIgnored
     private var lodProcessor: MultiBandLODProcessor?
@@ -279,19 +222,17 @@
 
     /// Current multi-band LOD snapshot for GPU rendering (creates a copy).
     /// Returns nil if multi-band LOD is not enabled.
-    /// For zero-copy access, use `multiBandLODRef` instead.
+    /// For frame-scoped zero-copy access, use `withCurrentLODSnapshotRef(_:)`.
     public var multiBandLOD: MultiBandLODSnapshot? {
       unsafe lodProcessor?.snapshot()
     }
 
-    /// Zero-copy reference to current multi-band LOD data for GPU rendering.
-    /// Returns nil if multi-band LOD is not enabled.
+    /// Provides frame-scoped zero-copy access to current LOD data.
     ///
-    /// This returns a reference to pre-allocated buffers without any memory
-    /// allocation or copying. The reference is safe to use for rendering because
-    /// triple-buffering guarantees the audio thread won't write to this data.
-    public var multiBandLODRef: LODSnapshotRef? {
-      unsafe lodProcessor?.snapshotRef()
+    /// Returns `nil` when multi-band LOD is not enabled.
+    public func withCurrentLODSnapshotRef<R>(_ body: (LODSnapshotRef) -> R) -> R? {
+      guard let processor = unsafe lodProcessor else { return nil }
+      return unsafe processor.withCurrentLODSnapshotRef(body)
     }
 
     /// Whether multi-band LOD processing is enabled.
@@ -312,20 +253,10 @@
       qos: .userInteractive
     )
 
-    private struct ConsumerState {
-      var consumerId: ObjectIdentifier?
-      var work: VisualizationWork
+    private struct SubscriberState: Sendable {
+      let id: UUID
+      var request: VisualizationRequest
       var sinks: VisualizationSinks
-
-      init(
-        consumerId: ObjectIdentifier? = nil,
-        work: VisualizationWork = .none,
-        sinks: VisualizationSinks = .empty
-      ) {
-        self.consumerId = consumerId
-        self.work = work
-        self.sinks = sinks
-      }
     }
 
     private struct AnalysisFlags: OptionSet {
@@ -404,8 +335,9 @@
       }
     }
 
-    private let consumerLock = NSLock()
-    private var consumerState = ConsumerState()
+    private let subscriberLock = NSLock()
+    private var subscribersById: [UUID: SubscriberState] = [:]
+    private var subscriberOrder: [UUID] = []
     private let analysisFlagsAtomic = ManagedAtomic<Int>(0)
 
     private var analysisConfig: AnalysisConfig?
@@ -439,38 +371,53 @@
       updateProcessingState()
     }
 
-    /// Registers a visualization consumer and applies its declared work and sinks.
+    /// Subscribes to visualization events using explicit request + sinks.
     ///
-    /// Only one consumer is active at a time. Registering a new consumer replaces the
-    /// existing one.
+    /// Multiple subscriptions can be active at once. Work demand is resolved as the
+    /// union of all active requests.
     @MainActor
-    public func register(consumer: any VisualizationConsumer) {
-      let consumerId = ObjectIdentifier(consumer)
-      let work = consumer.work
-      let sinks = consumer.sinks
-      let previousConsumerId = consumerSnapshot().consumerId
-
-      if let previousConsumerId, previousConsumerId != consumerId {
-        log.warning(
-          "Replacing existing visualization consumer \(String(describing: previousConsumerId), privacy: .public) with \(String(describing: consumerId), privacy: .public)"
-        )
-      }
-
-      updateConsumerState(consumerId: consumerId, work: work, sinks: sinks)
-      hasConsumerAtomic.store(true, ordering: .relaxed)
-      applyWork(work, sinks: sinks)
+    public func subscribe(
+      request: VisualizationRequest,
+      sinks: VisualizationSinks
+    ) -> VisualizationSubscription {
+      let id = UUID()
+      addSubscriber(
+        id: id,
+        request: request,
+        sinks: sinks
+      )
+      recalculateDemandAndApply()
       updateProcessingState()
+
+      return VisualizationSubscription { [weak self] in
+        self?.removeSubscription(id: id)
+      }
     }
 
-    /// Unregisters a visualization consumer if it is currently active.
+    /// Subscribes to visualization events using an event handler closure.
     @MainActor
-    public func unregister(consumer: any VisualizationConsumer) {
-      let consumerId = ObjectIdentifier(consumer)
-      let removed = clearConsumerIfMatching(consumerId)
-      guard removed else { return }
-      hasConsumerAtomic.store(false, ordering: .relaxed)
-      applyWork(.none, sinks: .empty)
-      updateProcessingState()
+    public func subscribe(
+      request: VisualizationRequest,
+      handler: @escaping @Sendable (VisualizationEvent) -> Void
+    ) -> VisualizationSubscription {
+      subscribe(
+        request: request,
+        sinks: .eventForwarding(handler)
+      )
+    }
+
+    /// Subscribes to visualization events via a sink object.
+    @MainActor
+    public func subscribe(
+      request: VisualizationRequest,
+      sink: any VisualizationSink
+    ) -> VisualizationSubscription {
+      subscribe(request: request) { [weak sink] event in
+        guard let sink else { return }
+        Task { @MainActor in
+          sink.receive(event)
+        }
+      }
     }
 
     /// Pauses visualization processing without clearing buffers or resetting history.
@@ -514,9 +461,9 @@
     private func updateProcessingState() {
       let wantsActive = wantsActiveAtomic.load(ordering: .relaxed)
       let isForeground = isForegroundAtomic.load(ordering: .relaxed)
-      let hasConsumer = hasConsumerAtomic.load(ordering: .relaxed)
+      let hasSubscriber = hasSubscriberAtomic.load(ordering: .relaxed)
 
-      let shouldBeActive = wantsActive && isForeground && hasConsumer
+      let shouldBeActive = wantsActive && isForeground && hasSubscriber
       let wasActive = isActiveAtomic.exchange(shouldBeActive, ordering: .relaxed)
       guard wasActive != shouldBeActive else { return }
 
@@ -549,48 +496,180 @@
     }
 
     // MARK: - Private Methods
-    private func updateConsumerState(
-      consumerId: ObjectIdentifier,
-      work: VisualizationWork,
+    private func addSubscriber(
+      id: UUID,
+      request: VisualizationRequest,
       sinks: VisualizationSinks
     ) {
-      consumerLock.lock()
-      consumerState.consumerId = consumerId
-      consumerState.work = work
-      consumerState.sinks = sinks
-      consumerLock.unlock()
+      subscriberLock.lock()
+      defer { subscriberLock.unlock() }
+      let state = SubscriberState(
+        id: id,
+        request: request,
+        sinks: sinks
+      )
+      subscribersById[id] = state
+      subscriberOrder.append(id)
     }
 
-    private func clearConsumerIfMatching(_ consumerId: ObjectIdentifier) -> Bool {
-      consumerLock.lock()
-      defer { consumerLock.unlock() }
-      guard consumerState.consumerId == consumerId else { return false }
-      consumerState = ConsumerState()
+    private func removeSubscriber(id: UUID) -> Bool {
+      subscriberLock.lock()
+      defer { subscriberLock.unlock() }
+      guard subscribersById.removeValue(forKey: id) != nil else { return false }
+      subscriberOrder.removeAll { $0 == id }
       return true
     }
 
-    private func consumerSnapshot() -> ConsumerState {
-      consumerLock.lock()
-      let snapshot = consumerState
-      consumerLock.unlock()
-      return snapshot
+    private func removeSubscription(id: UUID) {
+      let removed = removeSubscriber(id: id)
+      guard removed else { return }
+      recalculateDemandAndApply()
+      updateProcessingState()
     }
 
-    private func sinksSnapshot() -> VisualizationSinks {
-      consumerLock.lock()
-      let sinks = consumerState.sinks
-      consumerLock.unlock()
-      return sinks
+    private func subscriberSnapshots() -> [SubscriberState] {
+      subscriberLock.lock()
+      let snapshots = subscriberOrder.compactMap { subscribersById[$0] }
+      subscriberLock.unlock()
+      return snapshots
     }
 
-    private func applyWork(_ work: VisualizationWork, sinks: VisualizationSinks) {
-      let resolvedLodWork = work.lod
-      let hasLodSink = sinks.lodSnapshot != nil || sinks.lodSnapshotBackground != nil
-      if resolvedLodWork != nil, !hasLodSink {
-        log.warning("VisualizationWork.lod requested without a lodSnapshot sink.")
+    private func recalculateDemandAndApply() {
+      let subscribers = subscriberSnapshots()
+      hasSubscriberAtomic.store(!subscribers.isEmpty, ordering: .relaxed)
+      let aggregatedWork = aggregatedWork(from: subscribers)
+      applyWork(aggregatedWork)
+    }
+
+    private func aggregatedWork(from subscribers: [SubscriberState]) -> VisualizationWork {
+      guard !subscribers.isEmpty else { return .none }
+
+      var selectedLodConfig: MultiBandLODConfiguration?
+      var maxLodPublishRate: Double?
+
+      var analysisRequested = false
+      var selectedAnalysisUpdateRate: Double?
+      var selectedTimeDomain: AmplitudeAnalyzer.Configuration?
+      var selectedFrequencyDomain: FrequencyDomainWork?
+      var selectedBeatDetection: BeatDetectionConfiguration?
+      var wantsTimeDomain = false
+      var wantsFrequencyDomain = false
+      var wantsBeat = false
+
+      for subscriber in subscribers {
+        let work = subscriber.request.work
+        let sinks = subscriber.sinks
+
+        if let lodWork = work.lod {
+          if sinks.lodSnapshot == nil && sinks.lodSnapshotBackground == nil {
+            log.debug(
+              "VisualizationWork.lod requested without LOD callbacks; assuming pull-based access via withCurrentLODSnapshotRef."
+            )
+          }
+          let normalizedConfig = normalizedLODConfig(lodWork.configuration)
+          if let selectedLodConfig, selectedLodConfig != normalizedConfig {
+            log.warning(
+              "Conflicting LOD configurations across subscribers. Using the first requested configuration."
+            )
+          } else {
+            selectedLodConfig = normalizedConfig
+          }
+          maxLodPublishRate = max(maxLodPublishRate ?? 0, lodWork.publishRateHz)
+        }
+
+        guard let analysisWork = work.analysis else { continue }
+        analysisRequested = true
+        selectedAnalysisUpdateRate = max(
+          selectedAnalysisUpdateRate ?? 0,
+          analysisWork.updateRateHz
+        )
+
+        let wantsBeatOutput = analysisWork.beatDetection != nil && sinks.beat != nil
+        let wantsTimeOutput = analysisWork.timeDomain != nil && sinks.timeDomain != nil
+        let wantsFrequencyOutput =
+          analysisWork.frequencyDomain != nil && sinks.frequencyDomain != nil
+
+        let wantsTimeAnalysis = wantsTimeOutput || wantsBeatOutput
+        if analysisWork.timeDomain != nil || analysisWork.beatDetection != nil {
+          if wantsTimeAnalysis {
+            wantsTimeDomain = true
+            if selectedTimeDomain == nil {
+              selectedTimeDomain = analysisWork.timeDomain
+            } else if let requested = analysisWork.timeDomain,
+              selectedTimeDomain != requested
+            {
+              log.warning(
+                "Conflicting time-domain configurations across subscribers. Using the first requested configuration."
+              )
+            }
+          } else {
+            log.warning("VisualizationWork.timeDomain requested without any time-domain sinks.")
+          }
+        }
+
+        if let frequencyDomainWork = analysisWork.frequencyDomain {
+          let wantsFrequencyAnalysis = wantsFrequencyOutput || wantsBeatOutput
+          if wantsFrequencyAnalysis {
+            wantsFrequencyDomain = true
+            let normalizedFrequency = normalizedFrequencyWork(frequencyDomainWork)
+            if let selectedFrequencyDomain, selectedFrequencyDomain != normalizedFrequency {
+              log.warning(
+                "Conflicting frequency-domain configurations across subscribers. Using the first requested configuration."
+              )
+            } else {
+              selectedFrequencyDomain = normalizedFrequency
+            }
+          } else {
+            log.warning(
+              "VisualizationWork.frequencyDomain requested without any frequency sinks."
+            )
+          }
+        }
+
+        if let beatDetection = analysisWork.beatDetection {
+          if wantsBeatOutput {
+            wantsBeat = true
+            if let selectedBeatDetection, selectedBeatDetection != beatDetection {
+              log.warning(
+                "Conflicting beat-detection configurations across subscribers. Using the first requested configuration."
+              )
+            } else {
+              selectedBeatDetection = beatDetection
+            }
+          } else {
+            log.warning("VisualizationWork.beatDetection requested without a beat sink.")
+          }
+        }
       }
-      let wantsLod = resolvedLodWork != nil && hasLodSink
-      lodPublishRateHz = wantsLod ? resolvedLodWork?.publishRateHz : nil
+
+      var resolvedLodWork: LODWork?
+      if let selectedLodConfig {
+        resolvedLodWork = LODWork(
+          configuration: selectedLodConfig,
+          publishRateHz: maxLodPublishRate ?? 60
+        )
+      }
+
+      var resolvedAnalysisWork: AnalysisWork?
+      if analysisRequested && (wantsTimeDomain || wantsFrequencyDomain || wantsBeat) {
+        resolvedAnalysisWork = AnalysisWork(
+          updateRateHz: selectedAnalysisUpdateRate ?? configuration.updateRateHz,
+          timeDomain: wantsTimeDomain ? selectedTimeDomain : nil,
+          frequencyDomain: wantsFrequencyDomain ? selectedFrequencyDomain : nil,
+          beatDetection: wantsBeat ? selectedBeatDetection : nil
+        )
+      }
+
+      return VisualizationWork(
+        lod: resolvedLodWork,
+        analysis: resolvedAnalysisWork
+      )
+    }
+
+    private func applyWork(_ work: VisualizationWork) {
+      let resolvedLodWork = work.lod
+      let wantsLod = resolvedLodWork != nil
+      lodPublishRateHz = resolvedLodWork?.publishRateHz
 
       if let lodWork = resolvedLodWork, wantsLod {
         let resolvedConfig = normalizedLODConfig(lodWork.configuration)
@@ -611,36 +690,14 @@
 
       var flags: AnalysisFlags = []
       if let analysisWork = work.analysis {
-        let wantsBeat = analysisWork.beatDetection != nil && sinks.beat != nil
-        let wantsTimeOutput = analysisWork.timeDomain != nil && sinks.timeDomain != nil
-        let wantsFrequencyOutput =
-          analysisWork.frequencyDomain != nil && sinks.frequencyDomain != nil
-
-        let wantsTimeAnalysis = wantsTimeOutput || wantsBeat
         if analysisWork.timeDomain != nil || analysisWork.beatDetection != nil {
-          if wantsTimeAnalysis {
-            flags.insert(.timeDomain)
-          } else {
-            log.warning("VisualizationWork.timeDomain requested without any time-domain sinks.")
-          }
+          flags.insert(.timeDomain)
         }
-
-        let wantsFrequencyAnalysis =
-          analysisWork.frequencyDomain != nil && (wantsFrequencyOutput || wantsBeat)
         if analysisWork.frequencyDomain != nil {
-          if wantsFrequencyAnalysis {
-            flags.insert(.frequencyDomain)
-          } else {
-            log.warning(
-              "VisualizationWork.frequencyDomain requested without any frequency sinks."
-            )
-          }
+          flags.insert(.frequencyDomain)
         }
-
-        if wantsBeat {
+        if analysisWork.beatDetection != nil {
           flags.insert(.beat)
-        } else if analysisWork.beatDetection != nil {
-          log.warning("VisualizationWork.beatDetection requested without a beat sink.")
         }
       }
 
@@ -876,38 +933,49 @@
         )
       }
 
-      let sinks = sinksSnapshot()
-      let shouldPublishTimeDomain = sinks.timeDomain != nil
-      let shouldPublishFrequencyDomain = sinks.frequencyDomain != nil
-      let shouldPublishBeat = sinks.beat != nil
+      let sinks = subscriberSnapshots().map(\.sinks)
+      let shouldPublishTimeDomain = sinks.contains { $0.timeDomain != nil }
+      let shouldPublishFrequencyDomain = sinks.contains { $0.frequencyDomain != nil }
+      let shouldPublishBeat = sinks.contains { $0.beat != nil }
       DispatchQueue.main.async {
         if let newTimeDomain, shouldPublishTimeDomain {
           self.timeDomain = newTimeDomain
-          sinks.timeDomain?(newTimeDomain)
+          for sink in sinks {
+            sink.timeDomain?(newTimeDomain)
+          }
         }
 
         if let newFrequencyDomain, shouldPublishFrequencyDomain {
           self.frequencyDomain = newFrequencyDomain
-          sinks.frequencyDomain?(newFrequencyDomain)
+          for sink in sinks {
+            sink.frequencyDomain?(newFrequencyDomain)
+          }
           self.spectrumPeakHold = newSpectrumPeakHold
         }
 
         if let beatInfo, shouldPublishBeat {
           self.beat = beatInfo
-          sinks.beat?(beatInfo)
+          for sink in sinks {
+            sink.beat?(beatInfo)
+          }
         }
       }
     }
 
     private func publishLODSnapshot() {
       guard lodEnabledAtomic.load(ordering: .relaxed) else { return }
-      let snapshot = unsafe lodProcessor?.snapshotRef()
-      let sinks = sinksSnapshot()
-      guard sinks.lodSnapshot != nil || sinks.lodSnapshotBackground != nil else { return }
-      sinks.lodSnapshotBackground?(snapshot)
-      if sinks.lodSnapshot != nil {
+      let snapshot = unsafe lodProcessor?.withCurrentLODSnapshotRef { $0 }
+      let sinks = subscriberSnapshots().map(\.sinks)
+      guard sinks.contains(where: { $0.lodSnapshot != nil || $0.lodSnapshotBackground != nil })
+      else { return }
+      for sink in sinks {
+        sink.lodSnapshotBackground?(snapshot)
+      }
+      if sinks.contains(where: { $0.lodSnapshot != nil }) {
         DispatchQueue.main.async {
-          sinks.lodSnapshot?(snapshot)
+          for sink in sinks {
+            sink.lodSnapshot?(snapshot)
+          }
         }
       }
     }
@@ -967,10 +1035,12 @@
         unsafe lodProcessor?.process(data)
       }
 
-      let sinks = sinksSnapshot()
+      let sinks = subscriberSnapshots().map(\.sinks)
       DispatchQueue.main.async {
         self.latestBufferTiming = timing
-        sinks.latestBufferTiming?(timing)
+        for sink in sinks {
+          sink.latestBufferTiming?(timing)
+        }
       }
     }
 

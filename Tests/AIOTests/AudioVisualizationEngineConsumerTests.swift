@@ -5,43 +5,159 @@
   import AIOEngine
   import AudioSignals
 
-  @Suite("AudioVisualizationEngine Consumer API")
+  @Suite("AudioVisualizationEngine Subscription API")
   struct AudioVisualizationEngineConsumerTests {
-    @Test("Register/unregister uses active consumer semantics")
+    @Test("Subscriptions fan out latest buffer timing and support cancellation")
     @MainActor
-    func registerAndUnregisterActiveConsumer() async {
+    func subscriptionsFanOutAndCancel() async {
       let engine = AudioVisualizationEngine(
         configuration: .lowPower.withSampleRate(48_000)
       )
-      let first = TestVisualizationConsumer(work: .none, includeTiming: true)
-      let second = TestVisualizationConsumer(work: .none, includeTiming: true)
+      let firstRecorder = VisualizationEventRecorder()
+      let secondRecorder = VisualizationEventRecorder()
+      let request = VisualizationRequest(work: .none)
 
-      engine.register(consumer: first)
+      let first = engine.subscribe(request: request) { event in
+        Task { await firstRecorder.record(event) }
+      }
+      let second = engine.subscribe(request: request) { event in
+        Task { await secondRecorder.record(event) }
+      }
+
+      engine.startVisualization()
+      sendBuffer(engine, sampleTime: 0)
+
+      #expect(
+        await waitUntilAsync {
+          let firstSnapshot = await firstRecorder.snapshot()
+          let secondSnapshot = await secondRecorder.snapshot()
+          return firstSnapshot.sampleTimes == [0] && secondSnapshot.sampleTimes == [0]
+        }
+      )
+
+      first.cancel()
+      sendBuffer(engine, sampleTime: 64)
+
+      #expect(
+        await waitUntilAsync {
+          let secondSnapshot = await secondRecorder.snapshot()
+          return secondSnapshot.sampleTimes == [0, 64]
+        }
+      )
+
+      let firstAfterCancel = await firstRecorder.snapshot()
+      #expect(firstAfterCancel.sampleTimes == [0])
+
+      second.cancel()
+      sendBuffer(engine, sampleTime: 128)
+      try? await Task.sleep(for: .milliseconds(80))
+
+      let secondAfterCancel = await secondRecorder.snapshot()
+      #expect(secondAfterCancel.sampleTimes == [0, 64])
+      engine.stopVisualization()
+    }
+
+    @Test("Subscriptions fan out LOD background snapshots")
+    @MainActor
+    func subscriptionsFanOutLodBackgroundSnapshots() async {
+      let engine = AudioVisualizationEngine(
+        configuration: .lowPower.withSampleRate(48_000)
+      )
+      let firstRecorder = VisualizationEventRecorder()
+      let secondRecorder = VisualizationEventRecorder()
+
+      let request = VisualizationRequest(
+        work: VisualizationWork(
+          lod: LODWork(
+            configuration: MultiBandLODConfiguration(
+              lodRatio: 8,
+              snapshotSwapInterval: 1
+            ),
+            publishRateHz: 120
+          )
+        )
+      )
+
+      let first = engine.subscribe(request: request) { event in
+        Task { await firstRecorder.record(event) }
+      }
+      let second = engine.subscribe(request: request) { event in
+        Task { await secondRecorder.record(event) }
+      }
+
+      engine.startVisualization()
+      for step in 0..<8 {
+        sendBuffer(engine, sampleTime: Int64(step * 64))
+        try? await Task.sleep(for: .milliseconds(8))
+      }
+
+      #expect(
+        await waitUntilAsync {
+          let firstSnapshot = await firstRecorder.snapshot()
+          let secondSnapshot = await secondRecorder.snapshot()
+          return firstSnapshot.lodBackgroundCount > 0 && secondSnapshot.lodBackgroundCount > 0
+        }
+      )
+
+      first.cancel()
+      second.cancel()
+      engine.stopVisualization()
+    }
+
+    @Test("Subscriptions can join late and cancel independently")
+    @MainActor
+    func subscriptionsJoinLateAndCancelIndependently() async {
+      let engine = AudioVisualizationEngine(
+        configuration: .lowPower.withSampleRate(48_000)
+      )
+      let firstRecorder = VisualizationEventRecorder()
+      let secondRecorder = VisualizationEventRecorder()
+      let request = VisualizationRequest(work: .none)
+
+      let first = engine.subscribe(request: request) { event in
+        Task { await firstRecorder.record(event) }
+      }
       engine.startVisualization()
 
       sendBuffer(engine, sampleTime: 0)
-      #expect(await waitUntil { first.latestSampleTimes.count == 1 })
-      #expect(first.latestSampleTimes == [0])
-      #expect(second.latestSampleTimes.isEmpty)
+      #expect(
+        await waitUntilAsync {
+          let firstSnapshot = await firstRecorder.snapshot()
+          let secondSnapshot = await secondRecorder.snapshot()
+          return firstSnapshot.sampleTimes == [0] && secondSnapshot.sampleTimes.isEmpty
+        }
+      )
 
-      engine.register(consumer: second)
+      let second = engine.subscribe(request: request) { event in
+        Task { await secondRecorder.record(event) }
+      }
       sendBuffer(engine, sampleTime: 64)
-      #expect(await waitUntil { second.latestSampleTimes.count == 1 })
-      #expect(second.latestSampleTimes == [64])
-      #expect(first.latestSampleTimes == [0])
+      #expect(
+        await waitUntilAsync {
+          let firstSnapshot = await firstRecorder.snapshot()
+          let secondSnapshot = await secondRecorder.snapshot()
+          return firstSnapshot.sampleTimes == [0, 64] && secondSnapshot.sampleTimes == [64]
+        }
+      )
 
-      // Unregistering a non-active consumer should be a no-op.
-      engine.unregister(consumer: first)
+      first.cancel()
       sendBuffer(engine, sampleTime: 128)
-      #expect(await waitUntil { second.latestSampleTimes.count == 2 })
-      #expect(second.latestSampleTimes == [64, 128])
-      #expect(first.latestSampleTimes == [0])
+      #expect(
+        await waitUntilAsync {
+          let firstSnapshot = await firstRecorder.snapshot()
+          let secondSnapshot = await secondRecorder.snapshot()
+          return firstSnapshot.sampleTimes == [0, 64] && secondSnapshot.sampleTimes == [64, 128]
+        }
+      )
 
-      // Unregistering the active consumer should stop sink delivery.
-      engine.unregister(consumer: second)
+      second.cancel()
       sendBuffer(engine, sampleTime: 192)
       try? await Task.sleep(for: .milliseconds(80))
-      #expect(second.latestSampleTimes == [64, 128])
+
+      let firstAfterCancel = await firstRecorder.snapshot()
+      let secondAfterCancel = await secondRecorder.snapshot()
+      #expect(firstAfterCancel.sampleTimes == [0, 64])
+      #expect(secondAfterCancel.sampleTimes == [64, 128])
 
       engine.stopVisualization()
     }
@@ -62,15 +178,33 @@
           publishRateHz: 120
         )
       )
-      let consumer = TestVisualizationConsumer(
-        work: work,
-        includeTiming: true,
-        includeLodMain: true,
-        includeLodBackground: true,
-        backgroundCapture: backgroundCapture
+      var latestTimingThreadsAreMain: [Bool] = []
+      var lodMainCallbackCount = 0
+      var lodMainThreadsAreMain: [Bool] = []
+      let sinks = VisualizationSinks(
+        lodSnapshot: { _ in
+          lodMainCallbackCount += 1
+          lodMainThreadsAreMain.append(Thread.isMainThread)
+        },
+        lodSnapshotBackground: { snapshot in
+          let isMainThread = Thread.isMainThread
+          Task {
+            await backgroundCapture.record(
+              isMainThread: isMainThread,
+              hasSnapshot: snapshot != nil
+            )
+          }
+        },
+        latestBufferTiming: { timing in
+          guard timing != nil else { return }
+          latestTimingThreadsAreMain.append(Thread.isMainThread)
+        }
       )
 
-      engine.register(consumer: consumer)
+      let subscription = engine.subscribe(
+        request: VisualizationRequest(work: work),
+        sinks: sinks
+      )
       engine.startVisualization()
 
       for step in 0..<6 {
@@ -78,18 +212,19 @@
         try? await Task.sleep(for: .milliseconds(5))
       }
 
-      #expect(await waitUntil { !consumer.latestTimingThreadsAreMain.isEmpty })
-      #expect(await waitUntil { consumer.lodMainCallbackCount > 0 })
+      #expect(await waitUntil { !latestTimingThreadsAreMain.isEmpty })
+      #expect(await waitUntil { lodMainCallbackCount > 0 })
       #expect(await waitForBackgroundCallbacks(backgroundCapture))
 
-      #expect(consumer.latestTimingThreadsAreMain.allSatisfy { $0 })
-      #expect(consumer.lodMainThreadsAreMain.allSatisfy { $0 })
+      #expect(latestTimingThreadsAreMain.allSatisfy { $0 })
+      #expect(lodMainThreadsAreMain.allSatisfy { $0 })
 
       let background = await backgroundCapture.snapshot()
       #expect(background.callbackCount > 0)
       #expect(background.sawNonMainThread)
       #expect(background.sawSnapshot)
 
+      subscription.cancel()
       engine.stopVisualization()
     }
 
@@ -126,6 +261,22 @@
     }
 
     @MainActor
+    private func waitUntilAsync(
+      timeout: Duration = .seconds(1),
+      condition: @Sendable () async -> Bool
+    ) async -> Bool {
+      let clock = ContinuousClock()
+      let deadline = clock.now.advanced(by: timeout)
+      while clock.now < deadline {
+        if await condition() {
+          return true
+        }
+        try? await Task.sleep(for: .milliseconds(10))
+      }
+      return await condition()
+    }
+
+    @MainActor
     private func waitForBackgroundCallbacks(
       _ capture: BackgroundSinkCapture,
       timeout: Duration = .seconds(2)
@@ -140,74 +291,6 @@
         try? await Task.sleep(for: .milliseconds(10))
       }
       return (await capture.snapshot()).callbackCount > 0
-    }
-  }
-
-  @MainActor
-  private final class TestVisualizationConsumer: VisualizationConsumer {
-    var work: VisualizationWork
-    private let includeTiming: Bool
-    private let includeLodMain: Bool
-    private let includeLodBackground: Bool
-    private let backgroundCapture: BackgroundSinkCapture?
-
-    var latestSampleTimes: [Int64] = []
-    var latestTimingThreadsAreMain: [Bool] = []
-    var lodMainCallbackCount: Int = 0
-    var lodMainThreadsAreMain: [Bool] = []
-
-    init(
-      work: VisualizationWork,
-      includeTiming: Bool,
-      includeLodMain: Bool = false,
-      includeLodBackground: Bool = false,
-      backgroundCapture: BackgroundSinkCapture? = nil
-    ) {
-      self.work = work
-      self.includeTiming = includeTiming
-      self.includeLodMain = includeLodMain
-      self.includeLodBackground = includeLodBackground
-      self.backgroundCapture = backgroundCapture
-    }
-
-    var sinks: VisualizationSinks {
-      var lodSnapshotHandler: (@MainActor (LODSnapshotRef?) -> Void)?
-      if includeLodMain {
-        lodSnapshotHandler = { [weak self] (_: LODSnapshotRef?) in
-          guard let self else { return }
-          self.lodMainCallbackCount += 1
-          self.lodMainThreadsAreMain.append(Thread.isMainThread)
-        }
-      }
-
-      var lodSnapshotBackgroundHandler: (@Sendable (LODSnapshotRef?) -> Void)?
-      if includeLodBackground {
-        lodSnapshotBackgroundHandler = { [backgroundCapture] snapshot in
-          guard let backgroundCapture else { return }
-          let isMainThread = Thread.isMainThread
-          Task {
-            await backgroundCapture.record(
-              isMainThread: isMainThread,
-              hasSnapshot: snapshot != nil
-            )
-          }
-        }
-      }
-
-      var latestTimingHandler: (@MainActor (BufferTiming?) -> Void)?
-      if includeTiming {
-        latestTimingHandler = { [weak self] timing in
-          guard let self, let timing else { return }
-          self.latestSampleTimes.append(timing.sampleTime)
-          self.latestTimingThreadsAreMain.append(Thread.isMainThread)
-        }
-      }
-
-      return VisualizationSinks(
-        lodSnapshot: lodSnapshotHandler,
-        lodSnapshotBackground: lodSnapshotBackgroundHandler,
-        latestBufferTiming: latestTimingHandler
-      )
     }
   }
 
@@ -233,6 +316,36 @@
         callbackCount: callbackCount,
         sawNonMainThread: sawNonMainThread,
         sawSnapshot: sawSnapshot
+      )
+    }
+  }
+
+  private actor VisualizationEventRecorder {
+    struct Snapshot: Sendable {
+      let sampleTimes: [Int64]
+      let lodBackgroundCount: Int
+    }
+
+    private var sampleTimes: [Int64] = []
+    private var lodBackgroundCount: Int = 0
+
+    func record(_ event: VisualizationEvent) {
+      switch event {
+      case .latestBufferTiming(let timing):
+        if let timing {
+          sampleTimes.append(timing.sampleTime)
+        }
+      case .lodSnapshotBackground:
+        lodBackgroundCount += 1
+      default:
+        break
+      }
+    }
+
+    func snapshot() -> Snapshot {
+      Snapshot(
+        sampleTimes: sampleTimes,
+        lodBackgroundCount: lodBackgroundCount
       )
     }
   }

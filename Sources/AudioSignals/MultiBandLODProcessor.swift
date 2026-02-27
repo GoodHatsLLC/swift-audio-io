@@ -136,8 +136,8 @@
   /// A reference to LOD data for GPU rendering.
   ///
   /// This class provides access to pre-allocated buffers. Per-band access via
-  /// `withMinBuffer(band:)` etc. is zero-copy. Flat buffer access via
-  /// `copyFlatMinBuffer()` etc. requires allocation (bands aren't contiguous).
+  /// `withContiguousLODChannel(band:channel:_:)` is zero-copy. Flat copies via
+  /// `copyContiguousLODChannel(_:)` allocate.
   ///
   /// ## Thread Safety
   ///
@@ -159,15 +159,14 @@
   ///
   /// // Zero-copy per-band access (preferred for Metal)
   /// for band in 0..<ref.bandCount {
-  ///   ref.withMinBuffer(band: band) { ptr in
+  ///   ref.withContiguousLODChannel(band: band, channel: .min) { ptr in
   ///     metalBuffer.contents().copyMemory(from: ptr.baseAddress!, byteCount: ...)
   ///   }
   /// }
   ///
   /// // Allocating flat access (convenience for simple cases)
-  /// ref.copyFlatMinBuffer { ptr in
-  ///   // ptr contains all bands concatenated
-  /// }
+  /// let flat = ref.copyContiguousLODChannel(.min)
+  /// // `flat` contains all bands concatenated
   /// ```
   // SAFETY: References target atomically published non-writing slots and are frame-scoped.
   @safe public struct LODSnapshotRef: @unchecked Sendable, SnapshotProvider, LODSnapshot {
@@ -189,24 +188,29 @@
     public var rawBufferLength: Int { slot.rawBufferLength }
     public var lodBufferLength: Int { slot.bands.first?.minBuffer.count ?? 0 }
 
-    /// Direct access to a band's min buffer.
-    public func withMinBuffer<R>(band: Int, _ body: (UnsafeBufferPointer<Float>) -> R) -> R {
-      unsafe slot.bands[band].minBuffer.withUnsafeBufferPointer(body)
-    }
-
-    /// Direct access to a band's max buffer.
-    public func withMaxBuffer<R>(band: Int, _ body: (UnsafeBufferPointer<Float>) -> R) -> R {
-      unsafe slot.bands[band].maxBuffer.withUnsafeBufferPointer(body)
-    }
-
-    /// Direct access to a band's RMS buffer.
-    public func withRMSBuffer<R>(band: Int, _ body: (UnsafeBufferPointer<Float>) -> R) -> R {
-      unsafe slot.bands[band].rmsBuffer.withUnsafeBufferPointer(body)
+    public func withContiguousLODChannel<R>(
+      band: Int,
+      channel: LODChannel,
+      _ body: (UnsafeBufferPointer<Float>) -> R
+    ) -> R {
+      precondition(
+        (0..<slot.bands.count).contains(band),
+        "LODSnapshotRef band index out of range: \(band), valid range: 0..<\(slot.bands.count)"
+      )
+      switch channel {
+      case .min:
+        return unsafe slot.bands[band].minBuffer.withUnsafeBufferPointer(body)
+      case .max:
+        return unsafe slot.bands[band].maxBuffer.withUnsafeBufferPointer(body)
+      case .rms:
+        return unsafe slot.bands[band].rmsBuffer.withUnsafeBufferPointer(body)
+      }
     }
 
     /// Direct access to a band's raw buffer.
     public func withRawBuffer<R>(band: Int, _ body: (UnsafeBufferPointer<Float>) -> R) -> R {
-      guard let storage = unsafe rawStorage, unsafe band < storage.buffers.count else {
+      guard let storage = unsafe rawStorage, unsafe (0..<storage.buffers.count).contains(band)
+      else {
         return unsafe body(UnsafeBufferPointer(start: nil, count: 0))
       }
       return unsafe body(UnsafeBufferPointer(storage.buffers[band]))
@@ -217,35 +221,6 @@
     public func withFlatRawBuffer<R>(_ body: (UnsafeBufferPointer<Float>?) -> R) -> R {
       guard let storage = unsafe rawStorage else { return body(nil) }
       return unsafe body(UnsafeBufferPointer(storage.memory))
-    }
-
-    /// Creates a flat copy of min buffers for all bands (for GPU upload).
-    ///
-    /// - Note: This method **allocates** a temporary array. For zero-copy access,
-    ///   use `withMinBuffer(band:)` to upload each band separately.
-    /// - Parameter body: Closure receiving the flat buffer pointer.
-    /// - Returns: The result of the body closure.
-    public func copyFlatMinBuffer<R>(_ body: (UnsafeBufferPointer<Float>) -> R) -> R {
-      let flat = slot.bands.flatMap { Array($0.minBuffer) }
-      return unsafe flat.withUnsafeBufferPointer(body)
-    }
-
-    /// Creates a flat copy of max buffers for all bands (for GPU upload).
-    ///
-    /// - Note: This method **allocates** a temporary array. For zero-copy access,
-    ///   use `withMaxBuffer(band:)` to upload each band separately.
-    public func copyFlatMaxBuffer<R>(_ body: (UnsafeBufferPointer<Float>) -> R) -> R {
-      let flat = slot.bands.flatMap { Array($0.maxBuffer) }
-      return unsafe flat.withUnsafeBufferPointer(body)
-    }
-
-    /// Creates a flat copy of RMS buffers for all bands (for GPU upload).
-    ///
-    /// - Note: This method **allocates** a temporary array. For zero-copy access,
-    ///   use `withRMSBuffer(band:)` to upload each band separately.
-    public func copyFlatRMSBuffer<R>(_ body: (UnsafeBufferPointer<Float>) -> R) -> R {
-      let flat = slot.bands.flatMap { Array($0.rmsBuffer) }
-      return unsafe flat.withUnsafeBufferPointer(body)
     }
 
     /// Convert to a copying snapshot (for compatibility or file export).
@@ -686,6 +661,13 @@
       let rawWIdx = unsafe rawWriteIndex.load(ordering: .relaxed)
       return unsafe LODSnapshotRef(
         bufferSlots[index], rawStorage: rawBandStorage, rawWriteIndex: rawWIdx)
+    }
+
+    /// Provides a frame-scoped zero-copy snapshot reference.
+    ///
+    /// Prefer this in render loops to avoid retaining `LODSnapshotRef` across frames.
+    public func withCurrentLODSnapshotRef<R>(_ body: (LODSnapshotRef) -> R) -> R {
+      unsafe body(snapshotRef())
     }
 
     /// Creates a snapshot of current LOD data for rendering.

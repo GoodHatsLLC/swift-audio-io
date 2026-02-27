@@ -84,10 +84,10 @@ It has two broad responsibilities:
 
 `AudioVisualizationEngine` can host an optional `MultiBandLODProcessor`:
 
-- Configure via `VisualizationWork.lod` on the active `VisualizationConsumer`
-  - LOD processing is enabled only when a consumer is registered with both LOD work and an LOD sink.
+- Configure via `VisualizationRequest(work: VisualizationWork(lod: ...))` on active subscriptions.
+  - LOD processing is enabled only when at least one active subscription requests LOD and provides an LOD sink.
 - Read:
-  - `multiBandLODRef: LODSnapshotRef?` (preferred; zero-copy)
+  - `withCurrentLODSnapshotRef(_:) -> R?` (preferred; frame-scoped zero-copy)
   - `multiBandLOD: MultiBandLODSnapshot?` (copying; avoid per-frame)
 
 The LOD processor runs from `processBuffer(_:timing:)` and is fed the raw float samples.
@@ -100,7 +100,7 @@ The LOD processor runs from `processBuffer(_:timing:)` and is fed the raw float 
 - `frequencyDomain: FrequencyDomainData` (includes bucketed spectrum, centroid, etc.)
 - `beat: BeatInfo`
 
-Analysis work is declared by the active consumer through `VisualizationWork.analysis` and emitted only when corresponding sinks are present.
+Analysis work is declared by active subscriptions through `VisualizationRequest.work.analysis` and emitted only when corresponding sinks are present.
 
 ### 4) `MultiBandLODProcessor` (AIO’s LOD generator)
 
@@ -130,7 +130,8 @@ Both live and static snapshots conform to `LODSnapshot`:
 - `lodRatio`
 - `rawBufferLength`
 - `lodBufferLength`
-- `withMinBuffer(band:)`, `withMaxBuffer(band:)`, `withRMSBuffer(band:)`
+- `withContiguousLODChannel(band:channel:_:)`
+- `copyContiguousLODChannel(_:)` (allocating)
 
 ### Buffer semantics
 
@@ -160,7 +161,7 @@ The Recorder app wires live visualization when a recording successfully starts:
 
 1) Create `AudioVisualizationEngine` with low-power configuration and the negotiated input sample rate:
    - `AudioVisualizationEngine(configuration: .lowPower.withSampleRate(inputConfig.sampleRate.platform))`
-2) Create and store a consumer state with declared visualization work:
+2) Create and store visualization state with declared visualization work:
    - `LiveVisualizationState(engine: visualizationEngine, work: VisualizationWork(lod: ...))`
 3) Attach as a buffer receiver to `AIOEngine`:
    - `await engine.attachBufferReceiver(visualizationEngine)`
@@ -177,11 +178,11 @@ The in-progress model stores the engine:
 The main live waveform uses Metal rendering:
 
 - `RecordingView` resolves the active provider and renders `WaveformProviding.liveRecordingView`.
-  - Metal pipeline uses `MetalWaveformView(snapshotProvider: { visualizationEngine.multiBandLODRef }, ...)`.
+  - Metal pipeline uses a frame-scoped `LODSnapshotRef` from `visualizationEngine.withCurrentLODSnapshotRef { ... }`.
   - Beat pipeline uses `BeatLiveWaveformView` with beat detection configured.
 - View visibility is forwarded through `LiveVisualizationState`:
-  - `viewDidAppear()` registers the consumer
-  - `viewDidDisappear()` unregisters the consumer
+  - `viewDidAppear()` creates a subscription
+  - `viewDidDisappear()` cancels the subscription
 
 ### Lifecycle gating
 
@@ -198,7 +199,7 @@ End-to-end constraints for live mode:
 
 - `AIOEngine` calls `processBuffer(_:timing:)` on the real-time audio thread.
 - `AudioVisualizationEngine.processBuffer` must remain fast and non-blocking.
-- Snapshot reads (`multiBandLODRef`) must be performed per-frame; `LODSnapshotRef` must not be cached across frames.
+- Snapshot reads must be frame-scoped; `LODSnapshotRef` must not be cached across frames.
 
 ## Offline / Static Waveform Pipelines (Recorder)
 
