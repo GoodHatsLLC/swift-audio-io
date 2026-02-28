@@ -4,7 +4,6 @@
   import Atomics
   public import Foundation
   import os
-  import SystemLog
   import Tools
 
   private let log = SystemLog.make()

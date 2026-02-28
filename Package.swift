@@ -37,9 +37,6 @@ let package = Package(
   ],
   dependencies: [
     .package(
-      path: "../swift-log-utility"
-    ),
-    .package(
       url: "https://github.com/apple/swift-collections.git",
       from: "1.3.0"
     ),
@@ -72,7 +69,6 @@ let package = Package(
       name: "AudioSignals",
       dependencies: [
         "Tools",
-        .product(name: "SystemLog", package: "swift-log-utility"),
         .product(name: "Atomics", package: "swift-atomics"),
       ],
       swiftSettings: swiftSettings()
@@ -82,7 +78,6 @@ let package = Package(
       dependencies: [
         "Tools",
         "AudioSignals",
-        .product(name: "SystemLog", package: "swift-log-utility"),
         .product(name: "AsyncAlgorithms", package: "swift-async-algorithms"),
         .product(name: "Atomics", package: "swift-atomics"),
         .product(name: "DequeModule", package: "swift-collections"),
