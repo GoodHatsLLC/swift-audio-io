@@ -3,6 +3,21 @@
 import Foundation
 import PackageDescription
 
+func swiftSettings(_ settings: PackageDescription.SwiftSetting...) -> [PackageDescription
+  .SwiftSetting]
+{
+  [
+    .swiftLanguageMode(.v6),
+    .strictMemorySafety(),
+    .defaultIsolation(.none),
+    .enableUpcomingFeature("ExistentialAny"),
+    .enableUpcomingFeature("ImmutableWeakCaptures"),
+    .enableUpcomingFeature("InternalImportsByDefault"),
+    .enableUpcomingFeature("MemberImportVisibility"),
+    .enableUpcomingFeature("NonisolatedNonsendingByDefault"),
+  ] + settings
+}
+
 let package = Package(
   name: "AIO",
   platforms: [.iOS(.v26), .macOS(.v26)],
@@ -21,7 +36,9 @@ let package = Package(
     ),
   ],
   dependencies: [
-    .package(path: "../SystemLog"),
+    .package(
+      path: "../swift-log-utility"
+    ),
     .package(
       url: "https://github.com/apple/swift-collections.git",
       from: "1.3.0"
@@ -44,98 +61,44 @@ let package = Package(
         .product(name: "OrderedCollections", package: "swift-collections"),
         .product(name: "AsyncAlgorithms", package: "swift-async-algorithms"),
       ],
-      swiftSettings: [
-        .swiftLanguageMode(.v6),
-        .strictMemorySafety(),
-        .defaultIsolation(.none),
-        .enableUpcomingFeature("ExistentialAny"),
-        .enableUpcomingFeature("ImmutableWeakCaptures"),
-        .enableUpcomingFeature("InternalImportsByDefault"),
-        .enableUpcomingFeature("MemberImportVisibility"),
-        .enableUpcomingFeature("NonisolatedNonsendingByDefault"),
-      ]
+      swiftSettings: swiftSettings()
     ),
     .testTarget(
       name: "ToolsTests",
       dependencies: ["Tools"],
-      swiftSettings: [
-        .swiftLanguageMode(.v6),
-        .strictMemorySafety(),
-        .defaultIsolation(.none),
-        .enableUpcomingFeature("ExistentialAny"),
-        .enableUpcomingFeature("ImmutableWeakCaptures"),
-        .enableUpcomingFeature("InternalImportsByDefault"),
-        .enableUpcomingFeature("MemberImportVisibility"),
-        .enableUpcomingFeature("NonisolatedNonsendingByDefault"),
-      ]
+      swiftSettings: swiftSettings()
     ),
     .target(
       name: "AudioSignals",
       dependencies: [
         "Tools",
-        .product(name: "SystemLog", package: "SystemLog"),
+        .product(name: "SystemLog", package: "swift-log-utility"),
         .product(name: "Atomics", package: "swift-atomics"),
       ],
-      swiftSettings: [
-        .swiftLanguageMode(.v6),
-        .strictMemorySafety(),
-        .defaultIsolation(.none),
-        .enableUpcomingFeature("ExistentialAny"),
-        .enableUpcomingFeature("ImmutableWeakCaptures"),
-        .enableUpcomingFeature("InternalImportsByDefault"),
-        .enableUpcomingFeature("MemberImportVisibility"),
-        .enableUpcomingFeature("NonisolatedNonsendingByDefault"),
-      ]
+      swiftSettings: swiftSettings()
     ),
     .target(
       name: "AIOEngine",
       dependencies: [
         "Tools",
         "AudioSignals",
-        .product(name: "SystemLog", package: "SystemLog"),
+        .product(name: "SystemLog", package: "swift-log-utility"),
         .product(name: "AsyncAlgorithms", package: "swift-async-algorithms"),
         .product(name: "Atomics", package: "swift-atomics"),
         .product(name: "DequeModule", package: "swift-collections"),
         .product(name: "OrderedCollections", package: "swift-collections"),
       ],
-      swiftSettings: [
-        .swiftLanguageMode(.v6),
-        .strictMemorySafety(),
-        .defaultIsolation(.none),
-        .enableUpcomingFeature("ExistentialAny"),
-        .enableUpcomingFeature("ImmutableWeakCaptures"),
-        .enableUpcomingFeature("InternalImportsByDefault"),
-        .enableUpcomingFeature("MemberImportVisibility"),
-        .enableUpcomingFeature("NonisolatedNonsendingByDefault"),
-      ]
+      swiftSettings: swiftSettings()
     ),
     .testTarget(
       name: "AIOTests",
       dependencies: ["AIOEngine"],
-      swiftSettings: [
-        .swiftLanguageMode(.v6),
-        .strictMemorySafety(),
-        .defaultIsolation(.none),
-        .enableUpcomingFeature("ExistentialAny"),
-        .enableUpcomingFeature("ImmutableWeakCaptures"),
-        .enableUpcomingFeature("InternalImportsByDefault"),
-        .enableUpcomingFeature("MemberImportVisibility"),
-        .enableUpcomingFeature("NonisolatedNonsendingByDefault"),
-      ]
+      swiftSettings: swiftSettings()
     ),
     .testTarget(
       name: "AudioVisualizationTests",
       dependencies: ["AIOEngine", "AudioSignals"],
-      swiftSettings: [
-        .swiftLanguageMode(.v6),
-        .strictMemorySafety(),
-        .defaultIsolation(.none),
-        .enableUpcomingFeature("ExistentialAny"),
-        .enableUpcomingFeature("ImmutableWeakCaptures"),
-        .enableUpcomingFeature("InternalImportsByDefault"),
-        .enableUpcomingFeature("MemberImportVisibility"),
-        .enableUpcomingFeature("NonisolatedNonsendingByDefault"),
-      ]
+      swiftSettings: swiftSettings()
     ),
   ]
 )
