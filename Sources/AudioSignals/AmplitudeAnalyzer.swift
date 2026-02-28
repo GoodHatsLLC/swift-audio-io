@@ -1,7 +1,6 @@
 #if canImport(Accelerate)
   import Accelerate
   import Foundation
-  import SystemLog
 
   private let sysLog = SystemLog.make()
 

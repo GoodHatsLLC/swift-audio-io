@@ -5,7 +5,6 @@
   import Foundation
   public import Observation
   import os
-  import SystemLog
 
   private let log = SystemLog.make()
 

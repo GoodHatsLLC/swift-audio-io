@@ -2,7 +2,6 @@
   import Accelerate
   public import Foundation
   import os
-  import SystemLog
   public import Tools
 
   private let sysLog = SystemLog.make()

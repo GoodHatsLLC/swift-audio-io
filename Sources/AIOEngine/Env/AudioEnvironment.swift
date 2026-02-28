@@ -1,6 +1,5 @@
 #if os(iOS)
   public import AVFoundation
-  import SystemLog
   public import Tools
   import os
 

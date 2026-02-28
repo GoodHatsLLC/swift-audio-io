@@ -1,6 +1,5 @@
 #if canImport(AVFoundation)
   import AVFoundation
-  import SystemLog
   import Tools
   import os
   private let tapSetupLog = SystemLog.make()
