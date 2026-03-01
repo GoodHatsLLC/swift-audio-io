@@ -7,6 +7,160 @@
 
   @Suite("AudioVisualizationEngine Subscription API")
   struct AudioVisualizationEngineConsumerTests {
+    @Test("eventMask none emits no callbacks")
+    @MainActor
+    func eventMaskNoneEmitsNoCallbacks() async {
+      let engine = AudioVisualizationEngine(
+        configuration: .lowPower.withSampleRate(48_000)
+      )
+      let recorder = EventCountRecorder()
+      let request = VisualizationRequest(
+        work: .none,
+        eventMask: .none
+      )
+
+      let subscription = engine.subscribe(request: request) { event in
+        Task { await recorder.record(event) }
+      }
+
+      engine.startVisualization()
+      sendBuffer(engine, sampleTime: 0)
+      try? await Task.sleep(for: .milliseconds(80))
+
+      let snapshot = await recorder.snapshot()
+      #expect(snapshot.totalCount == 0)
+
+      subscription.cancel()
+      engine.stopVisualization()
+    }
+
+    @Test("eventMask filters each event kind")
+    @MainActor
+    func eventMaskFiltersEachEventKind() async {
+      let engine = AudioVisualizationEngine(
+        configuration: .lowPower.withSampleRate(48_000)
+      )
+      let timingRecorder = EventCountRecorder()
+      let lodRecorder = EventCountRecorder()
+
+      let timingSubscription = engine.subscribe(
+        request: VisualizationRequest(
+          work: .none,
+          eventMask: [.latestBufferTiming]
+        )
+      ) { event in
+        Task { await timingRecorder.record(event) }
+      }
+
+      let lodSubscription = engine.subscribe(
+        request: VisualizationRequest(
+          work: VisualizationWork(
+            lod: LODWork(
+              configuration: MultiBandLODConfiguration(
+                lodRatio: 8,
+                snapshotSwapInterval: 1
+              ),
+              publishRateHz: 120
+            )
+          ),
+          eventMask: [.lodSnapshotBackground, .lodSnapshot]
+        )
+      ) { event in
+        Task { await lodRecorder.record(event) }
+      }
+
+      engine.startVisualization()
+      for step in 0..<8 {
+        sendBuffer(engine, sampleTime: Int64(step * 64))
+        try? await Task.sleep(for: .milliseconds(8))
+      }
+
+      #expect(
+        await waitUntilAsync {
+          let timing = await timingRecorder.snapshot()
+          let lod = await lodRecorder.snapshot()
+          return timing.latestBufferTimingCount > 0 && lod.lodSnapshotCount > 0
+        }
+      )
+
+      let timingSnapshot = await timingRecorder.snapshot()
+      #expect(timingSnapshot.latestBufferTimingCount > 0)
+      #expect(timingSnapshot.lodSnapshotCount == 0)
+      #expect(timingSnapshot.lodSnapshotBackgroundCount == 0)
+      #expect(timingSnapshot.timeDomainCount == 0)
+      #expect(timingSnapshot.frequencyDomainCount == 0)
+      #expect(timingSnapshot.beatCount == 0)
+
+      let lodSnapshot = await lodRecorder.snapshot()
+      #expect(lodSnapshot.latestBufferTimingCount == 0)
+      #expect(lodSnapshot.lodSnapshotCount > 0 || lodSnapshot.lodSnapshotBackgroundCount > 0)
+
+      timingSubscription.cancel()
+      lodSubscription.cancel()
+      engine.stopVisualization()
+    }
+
+    @Test("lod work is active even when eventMask is none")
+    @MainActor
+    func lodWorkEnabledWithMaskNoneStillProcessesLod() async {
+      let engine = AudioVisualizationEngine(
+        configuration: .lowPower.withSampleRate(48_000)
+      )
+      let request = VisualizationRequest(
+        work: VisualizationWork(
+          lod: LODWork(
+            configuration: MultiBandLODConfiguration(
+              lodRatio: 8,
+              snapshotSwapInterval: 1
+            ),
+            publishRateHz: 120
+          )
+        ),
+        eventMask: .none
+      )
+
+      let subscription = engine.subscribe(request: request) { _ in }
+
+      engine.startVisualization()
+      for step in 0..<8 {
+        sendBuffer(engine, sampleTime: Int64(step * 64))
+      }
+      try? await Task.sleep(for: .milliseconds(50))
+
+      let hasLodRef = engine.withCurrentLODSnapshotRef { _ in true } ?? false
+      #expect(hasLodRef)
+
+      subscription.cancel()
+      engine.stopVisualization()
+    }
+
+    @Test("latestBufferTiming is not dispatched when not requested")
+    @MainActor
+    func latestBufferTimingNotDispatchedWhenNotRequested() async {
+      let engine = AudioVisualizationEngine(
+        configuration: .lowPower.withSampleRate(48_000)
+      )
+      let recorder = EventCountRecorder()
+      let request = VisualizationRequest(
+        work: .none,
+        eventMask: [.lodSnapshotBackground]
+      )
+
+      let subscription = engine.subscribe(request: request) { event in
+        Task { await recorder.record(event) }
+      }
+
+      engine.startVisualization()
+      sendBuffer(engine, sampleTime: 0)
+      try? await Task.sleep(for: .milliseconds(80))
+
+      let snapshot = await recorder.snapshot()
+      #expect(snapshot.latestBufferTimingCount == 0)
+
+      subscription.cancel()
+      engine.stopVisualization()
+    }
+
     @Test("Subscriptions fan out latest buffer timing and support cancellation")
     @MainActor
     func subscriptionsFanOutAndCancel() async {
@@ -351,6 +505,61 @@
       Snapshot(
         sampleTimes: sampleTimes,
         lodBackgroundCount: lodBackgroundCount
+      )
+    }
+  }
+
+  private actor EventCountRecorder {
+    struct Snapshot: Sendable {
+      let lodSnapshotCount: Int
+      let lodSnapshotBackgroundCount: Int
+      let timeDomainCount: Int
+      let frequencyDomainCount: Int
+      let beatCount: Int
+      let latestBufferTimingCount: Int
+
+      var totalCount: Int {
+        lodSnapshotCount
+          + lodSnapshotBackgroundCount
+          + timeDomainCount
+          + frequencyDomainCount
+          + beatCount
+          + latestBufferTimingCount
+      }
+    }
+
+    private var lodSnapshotCount = 0
+    private var lodSnapshotBackgroundCount = 0
+    private var timeDomainCount = 0
+    private var frequencyDomainCount = 0
+    private var beatCount = 0
+    private var latestBufferTimingCount = 0
+
+    func record(_ event: VisualizationEvent) {
+      switch event {
+      case .lodSnapshot:
+        lodSnapshotCount += 1
+      case .lodSnapshotBackground:
+        lodSnapshotBackgroundCount += 1
+      case .timeDomain:
+        timeDomainCount += 1
+      case .frequencyDomain:
+        frequencyDomainCount += 1
+      case .beat:
+        beatCount += 1
+      case .latestBufferTiming:
+        latestBufferTimingCount += 1
+      }
+    }
+
+    func snapshot() -> Snapshot {
+      Snapshot(
+        lodSnapshotCount: lodSnapshotCount,
+        lodSnapshotBackgroundCount: lodSnapshotBackgroundCount,
+        timeDomainCount: timeDomainCount,
+        frequencyDomainCount: frequencyDomainCount,
+        beatCount: beatCount,
+        latestBufferTimingCount: latestBufferTimingCount
       )
     }
   }

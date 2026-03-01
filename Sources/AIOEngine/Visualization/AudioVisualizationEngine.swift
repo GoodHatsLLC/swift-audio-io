@@ -259,6 +259,35 @@
       var eventHandler: SubscriberEventHandler
     }
 
+    private func accepts(
+      _ event: VisualizationEvent,
+      mask: VisualizationEventMask
+    ) -> Bool {
+      switch event {
+      case .lodSnapshot:
+        mask.contains(.lodSnapshot)
+      case .lodSnapshotBackground:
+        mask.contains(.lodSnapshotBackground)
+      case .timeDomain:
+        mask.contains(.timeDomain)
+      case .frequencyDomain:
+        mask.contains(.frequencyDomain)
+      case .beat:
+        mask.contains(.beat)
+      case .latestBufferTiming:
+        mask.contains(.latestBufferTiming)
+      }
+    }
+
+    private func deliver(
+      _ event: VisualizationEvent,
+      to subscribers: [SubscriberState]
+    ) {
+      for subscriber in subscribers where accepts(event, mask: subscriber.request.eventMask) {
+        subscriber.eventHandler(event)
+      }
+    }
+
     private struct AnalysisFlags: OptionSet {
       let rawValue: Int
       static let timeDomain = AnalysisFlags(rawValue: 1 << 0)
@@ -892,24 +921,18 @@
       DispatchQueue.main.async {
         if let newTimeDomain {
           self.timeDomain = newTimeDomain
-          for subscriber in subscribers {
-            subscriber.eventHandler(.timeDomain(newTimeDomain))
-          }
+          self.deliver(.timeDomain(newTimeDomain), to: subscribers)
         }
 
         if let newFrequencyDomain {
           self.frequencyDomain = newFrequencyDomain
-          for subscriber in subscribers {
-            subscriber.eventHandler(.frequencyDomain(newFrequencyDomain))
-          }
+          self.deliver(.frequencyDomain(newFrequencyDomain), to: subscribers)
           self.spectrumPeakHold = newSpectrumPeakHold
         }
 
         if let beatInfo {
           self.beat = beatInfo
-          for subscriber in subscribers {
-            subscriber.eventHandler(.beat(beatInfo))
-          }
+          self.deliver(.beat(beatInfo), to: subscribers)
         }
       }
     }
@@ -918,13 +941,9 @@
       guard lodEnabledAtomic.load(ordering: .relaxed) else { return }
       let snapshot = unsafe lodProcessor?.withCurrentLODSnapshotRef { $0 }
       let subscribers = subscriberSnapshots()
-      for subscriber in subscribers {
-        subscriber.eventHandler(.lodSnapshotBackground(snapshot))
-      }
+      deliver(.lodSnapshotBackground(snapshot), to: subscribers)
       DispatchQueue.main.async {
-        for subscriber in subscribers {
-          subscriber.eventHandler(.lodSnapshot(snapshot))
-        }
+        self.deliver(.lodSnapshot(snapshot), to: subscribers)
       }
     }
 
@@ -986,9 +1005,7 @@
       let subscribers = subscriberSnapshots()
       DispatchQueue.main.async {
         self.latestBufferTiming = timing
-        for subscriber in subscribers {
-          subscriber.eventHandler(.latestBufferTiming(timing))
-        }
+        self.deliver(.latestBufferTiming(timing), to: subscribers)
       }
     }
 
@@ -1049,5 +1066,7 @@
       beatDetectionConfiguration: .highSensitivity
     )
   }
+
+  extension AudioVisualizationEngine: VisualizationDriving {}
 
 #endif
