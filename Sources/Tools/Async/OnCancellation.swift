@@ -1,39 +1,63 @@
-public func onCancellationHandler<T: Sendable>(
-  isolation: isolated (any Actor)? = #isolation,
-  cleanup: () async -> T
-) async -> T {
-  let didCancel = AsyncContinuation<Void>()
-  return await withTaskCancellationHandler(
-    operation: {
-      _ = await didCancel.result
-      return await cleanup()
-    },
-    onCancel: {
-      try? didCancel.yield(())
-    },
-    isolation: isolation
-  )
+import Synchronization
+
+public enum CancellationAwaitResult<T> {
+  case cancelled(T)
 }
 
-public func onCancellationHandler<T: Sendable, Failure: AudioError>(
-  isolation: isolated (any Actor)? = #isolation,
-  cleanup: () async throws(Failure) -> T
-) async throws(Failure) -> T {
-  let didCancel = AsyncContinuation<Void>()
-  do {
-    return try await withTaskCancellationHandler(
-      operation: {
-        _ = await didCancel.result
-        return try await cleanup()
-      },
-      onCancel: {
-        try? didCancel.yield(())
-      },
-      isolation: isolation
-    )
-  } catch let error as Failure {
-    throw error
-  } catch {
-    preconditionFailure("Unexpected error type: \(error)")
+public func awaitCancellation<T>(
+  isolation: (any Actor)? = #isolation,
+  then action: () async -> T
+) async -> CancellationAwaitResult<T> {
+  let mutex: Mutex<CheckedContinuation<Void, Never>?> = .init(nil)
+  await withTaskCancellationHandler {
+    await withCheckedContinuation { continuation in
+      mutex.withLock {
+        if Task.isCancelled {
+          continuation.resume()
+          return
+        }
+        $0 = continuation
+      }
+    }
+  } onCancel: {
+    let continuation = mutex.withLock { $0.take() }
+    continuation?.resume()
+  }
+  return await .cancelled(action())
+}
+
+public func awaitCancellation(
+  isolation: (any Actor)? = #isolation,
+  then action: () async -> Void
+) async throws(CancellationError) {
+  let mutex: Mutex<CheckedContinuation<Void, Never>?> = .init(nil)
+
+  await withTaskCancellationHandler {
+    await withCheckedContinuation { continuation in
+      mutex.withLock {
+        if Task.isCancelled {
+          continuation.resume()
+        } else {
+          $0 = continuation
+        }
+      }
+    }
+  } onCancel: {
+    mutex.withLock { $0.take() }?.resume()
+  }
+
+  await action()
+  throw CancellationError()
+}
+
+public func withCancellationSideEffect<T>(
+  isolation: (any Actor)? = #isolation,
+  _ operation: () async throws -> T,
+  onCancel action: @Sendable () -> Void
+) async rethrows -> T {
+  try await withTaskCancellationHandler {
+    try await operation()
+  } onCancel: {
+    action()
   }
 }
