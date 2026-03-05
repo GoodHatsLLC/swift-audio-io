@@ -1,5 +1,3 @@
-public import Observation
-
 /// A narrow, injectable interface for error reporting.
 ///
 /// - View layer may access a concrete `ErrorManager` via SwiftUI environment.
@@ -130,7 +128,6 @@ extension ErrorManager: ErrorManaging {}
   /// A lightweight error manager for tests.
   ///
   /// Stores enqueued errors for later inspection without any UI coupling.
-  @Observable
   public final class MockErrorManager: Sendable, ErrorManaging {
     public nonisolated init() {}
 
