@@ -1,15 +1,15 @@
+// © GoodHatsLLC
+
 #if canImport(UIKit)
-  import AVFoundation
   import Atomics
+  import AVFoundation
   import Testing
   import Tools
-
   @testable import AIOEngine
 
-  @Suite
   struct SPSCRingBufferTests {
     @Test
-    func testWriteReadWrap() throws {
+    func `write read wrap`() throws {
       let buffer = SPSCRingBuffer<Int>(capacity: 4)
 
       let firstWrite = [1, 2, 3]
@@ -28,7 +28,7 @@
     }
 
     @Test
-    func testDropWhenFull() throws {
+    func `drop when full`() throws {
       let buffer = SPSCRingBuffer<Int>(capacity: 4)
 
       let write1 = [1, 2, 3, 4]
@@ -44,7 +44,7 @@
     }
 
     @Test
-    func testReceiverLoopDeliversTiming() async throws {
+    func `receiver loop delivers timing`() async throws {
       let buffers = [SPSCRingBuffer<Float>(capacity: 16)]
       let timing = SPSCRingBuffer<TimingPacket>(capacity: 8)
       let control = ReceiverControl()
@@ -54,10 +54,10 @@
       let format = try #require(
         AVAudioFormat(
           commonFormat: .pcmFormatFloat32,
-          sampleRate: 48_000,
+          sampleRate: 48000,
           channels: 1,
-          interleaved: false
-        )
+          interleaved: false,
+        ),
       )
 
       let samples: [Float] = [0, 1, 2, 3]
@@ -67,7 +67,7 @@
         frameCount: samples.count,
         hostTime: nil,
         sourceSampleTime: nil,
-        sourceSampleRate: nil
+        sourceSampleRate: nil,
       )
       unsafe withUnsafePointer(to: &packet) { pointer in
         _ = unsafe timing.write(UnsafeBufferPointer(start: pointer, count: 1))
@@ -84,12 +84,12 @@
           onUnderrun: nil,
           onDrop: nil,
           tapErrorPoll: nil,
-          onTapError: nil
+          onTapError: nil,
         )
       }
 
       let start = ContinuousClock.now
-      while receiver.isEmpty && (ContinuousClock.now - start) < .seconds(1) {
+      while receiver.isEmpty, (ContinuousClock.now - start) < .seconds(1) {
         try? await Task.sleep(for: .milliseconds(10))
       }
 
@@ -135,7 +135,7 @@
     }
 
     nonisolated func processBuffer(_ data: UnsafeBufferPointer<Float>) {
-      unsafe processBuffer(data, timing: BufferTiming(sampleTime: 0, sampleRate: 48_000))
+      unsafe processBuffer(data, timing: BufferTiming(sampleTime: 0, sampleRate: 48000))
     }
 
     nonisolated func processBuffer(_ data: UnsafeBufferPointer<Float>, timing: BufferTiming) {

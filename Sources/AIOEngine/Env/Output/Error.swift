@@ -1,3 +1,5 @@
+// © GoodHatsLLC
+
 import AVFAudio
 import Foundation
 public import Tools
@@ -17,7 +19,6 @@ public enum AIOError: AudioError, Hashable {
 }
 
 extension AIOError {
-
   /// `AVAudioSession.ErrorCode`
   public enum AudioSessionError: Int, AudioError {
     case none = 0

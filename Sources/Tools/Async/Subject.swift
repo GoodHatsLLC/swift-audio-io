@@ -1,9 +1,11 @@
+// © GoodHatsLLC
+
 public final class Subject<T: Sendable>: Sendable {
   let cont: AsyncStream<T>.Continuation
   let _broadcaster: AsyncBroadcaster<T>
   public init() {
     let (stream, cont) = AsyncStream<T>.makeStream()
-    self._broadcaster = stream.broadcast()
+    _broadcaster = stream.broadcast()
     self.cont = cont
   }
 

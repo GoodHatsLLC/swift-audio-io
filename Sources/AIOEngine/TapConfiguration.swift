@@ -1,11 +1,12 @@
+// © GoodHatsLLC
+
 #if canImport(AVFoundation)
   import AVFoundation
 
-  struct TapConfiguration: Hashable, Sendable {
-
+  struct TapConfiguration: Hashable {
     private static func normalizedBufferSize(
       sampleRate: Double,
-      tapReadSeconds: Double
+      tapReadSeconds: Double,
     ) -> AVAudioFrameCount {
       let minFrames = 256
       let maxFrames = 8192
@@ -28,10 +29,10 @@
 
     init(
       bus: Int,
-      channelCount: Int,
+      channelCount _: Int,
       inputFormat: AVAudioFormat,  // inputNode.outputFormat(forBus: 0)
       outputFormat: AVAudioFormat,
-      tapReadSeconds: Double
+      tapReadSeconds: Double,
     ) {
       self = TapConfiguration(
         bus: bus,
@@ -39,8 +40,8 @@
         outputFormat: outputFormat,
         bufferSize: Self.normalizedBufferSize(
           sampleRate: inputFormat.sampleRate,
-          tapReadSeconds: tapReadSeconds
-        )
+          tapReadSeconds: tapReadSeconds,
+        ),
       )
     }
 
@@ -48,7 +49,7 @@
       bus: Int,
       inputFormat: AVAudioFormat,
       outputFormat: AVAudioFormat,
-      bufferSize: AVAudioFrameCount
+      bufferSize: AVAudioFrameCount,
     ) {
       self.bus = bus
       // convert the inputFormat to a sendable representation

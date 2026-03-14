@@ -3,24 +3,22 @@
 /// - View layer may access a concrete `ErrorManager` via SwiftUI environment.
 /// - Business logic should depend on `any ErrorManaging` (injected), not `ErrorManager` directly.
 public protocol ErrorManaging: Sendable {
-
   nonisolated func enqueue(
     _ error: any Error,
     visibility: ErrorManager.ErrorEvent.Visibility,
     userMessage: String?,
     context: String?,
-    source: SourceLocation
+    source: SourceLocation,
   )
 
   func reporter(
     visibility: ErrorManager.ErrorEvent.Visibility,
     userMessage: String?,
-    context: String?
+    context: String?,
   ) -> Reporter<any Error>
 }
 
 extension ErrorManaging {
-
   public nonisolated func enqueue(
     _ error: any Error,
     visibility: ErrorManager.ErrorEvent.Visibility = .userInterrupting,
@@ -29,7 +27,7 @@ extension ErrorManaging {
     file: String = #file,
     function: String = #function,
     line: Int = #line,
-    column: Int = #column
+    column: Int = #column,
   ) {
     let source = SourceLocation(file: file, function: function, line: line, column: column)
     enqueue(
@@ -37,14 +35,14 @@ extension ErrorManaging {
       visibility: visibility,
       userMessage: userMessage,
       context: context,
-      source: source
+      source: source,
     )
   }
 
   public func reporter(
     visibility: ErrorManager.ErrorEvent.Visibility,
     userMessage: String? = nil,
-    context: String? = nil
+    context: String? = nil,
   ) -> Reporter<any Error> {
     .init { err, sl in
       Task { @MainActor in
@@ -53,7 +51,7 @@ extension ErrorManaging {
           visibility: visibility,
           userMessage: userMessage,
           context: context,
-          source: sl
+          source: sl,
         )
       }
     }
@@ -81,21 +79,21 @@ public struct AnyErrorManager: ErrorManaging {
     visibility: ErrorManager.ErrorEvent.Visibility,
     userMessage: String?,
     context: String?,
-    source: SourceLocation
+    source: SourceLocation,
   ) {
     base.enqueue(
       error,
       visibility: visibility,
       userMessage: userMessage,
       context: context,
-      source: source
+      source: source,
     )
   }
 
   public func reporter(
     visibility: ErrorManager.ErrorEvent.Visibility,
     userMessage: String?,
-    context: String?
+    context: String?,
   ) -> Reporter<any Error> {
     base.reporter(visibility: visibility, userMessage: userMessage, context: context)
   }
@@ -107,7 +105,7 @@ extension ErrorManager {
     visibility: ErrorEvent.Visibility,
     userMessage: String?,
     context: String?,
-    source: SourceLocation
+    source: SourceLocation,
   ) {
     enqueue(
       error,
@@ -117,7 +115,7 @@ extension ErrorManager {
       file: source.file,
       function: source.function,
       line: source.line,
-      column: source.column
+      column: source.column,
     )
   }
 }
@@ -139,7 +137,7 @@ extension ErrorManager: ErrorManaging {}
       visibility: ErrorManager.ErrorEvent.Visibility,
       userMessage: String?,
       context: String?,
-      source: SourceLocation
+      source: SourceLocation,
     ) {
       Task { @MainActor in
         events.append(
@@ -148,8 +146,8 @@ extension ErrorManager: ErrorManaging {}
             visibility: visibility,
             userMessage: userMessage,
             context: context,
-            source: source
-          )
+            source: source,
+          ),
         )
       }
     }

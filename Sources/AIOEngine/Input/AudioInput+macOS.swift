@@ -1,3 +1,5 @@
+// © GoodHatsLLC
+
 #if os(macOS)
   public import Foundation
   public import Tools
@@ -16,14 +18,14 @@
       name: String,
       type: InputType = .unknown,
       channelCount: ChannelCount = .mono,
-      availableSources: [AudioSource] = []
+      availableSources: [AudioSource] = [],
     ) {
       self.id = id
       self.name = name
       self.type = type
       self.channelCount = channelCount
       self.availableSources = availableSources
-      self.selectedSource = availableSources.first
+      selectedSource = availableSources.first
     }
 
     public let id: String

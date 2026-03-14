@@ -1,3 +1,5 @@
+// © GoodHatsLLC
+
 public import Foundation
 import Synchronization
 
@@ -99,7 +101,9 @@ public final class AsyncContinuation<Value: Sendable>: Sendable {
 }
 
 extension AsyncContinuation where Value == Void {
-  public func yield() throws(AlreadyYielded) { try yield(()) }
+  public func yield() throws(AlreadyYielded) {
+    try yield(())
+  }
 }
 
 extension AsyncContinuation {

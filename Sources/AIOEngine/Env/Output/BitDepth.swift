@@ -1,3 +1,5 @@
+// © GoodHatsLLC
+
 public enum BitDepth: Int, CaseIterable, Sendable, Hashable, Identifiable, CustomStringConvertible,
   TypeDescribable, Comparable
 {
@@ -5,7 +7,9 @@ public enum BitDepth: Int, CaseIterable, Sendable, Hashable, Identifiable, Custo
   case pcmInt24 = 24
   case pcmFloat32 = 32
 
-  public var id: Self { self }
+  public var id: Self {
+    self
+  }
 
   public static func < (lhs: BitDepth, rhs: BitDepth) -> Bool {
     lhs.rawValue < rhs.rawValue
@@ -13,10 +17,11 @@ public enum BitDepth: Int, CaseIterable, Sendable, Hashable, Identifiable, Custo
 
   public var description: String {
     switch self {
-    case .pcmInt16: return "16-bit"
-    case .pcmInt24: return "24-bit"
-    case .pcmFloat32: return "32-bit"
+    case .pcmInt16: "16-bit"
+    case .pcmInt24: "24-bit"
+    case .pcmFloat32: "32-bit"
     }
   }
+
   public static let typeDescription: String = "Bit Depth"
 }

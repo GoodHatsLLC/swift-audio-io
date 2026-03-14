@@ -1,12 +1,14 @@
+// © GoodHatsLLC
+
 public final class Synchronized<Value>: Sendable {
   public init(_ value: consuming sending Value) {
-    self.mut = .init(value)
+    mut = .init(value)
   }
 
   private let mut: Mut<Value>
 
   public nonisolated borrowing func withLock<Result, E>(
-    _ body: (inout Value) throws(E) -> sending Result
+    _ body: (inout Value) throws(E) -> sending Result,
   ) throws(E) -> sending Result {
     try mut.withLock(body)
   }
@@ -17,7 +19,7 @@ public final class Synchronized<Value>: Sendable {
   /// This is useful on latency-sensitive threads (e.g. audio tap callbacks)
   /// where blocking on a contended lock could cause jitter.
   public nonisolated borrowing func withLockIfAvailable<Result, E>(
-    _ body: (inout Value) throws(E) -> sending Result
+    _ body: (inout Value) throws(E) -> sending Result,
   ) throws(E) -> sending Result? {
     try mut.withLockIfAvailable(body)
   }
@@ -31,12 +33,14 @@ public final class Synchronized<Value>: Sendable {
       return it
     }
   }
+
   private nonisolated func place<T: Sendable>(_ path: consuming WritableKeyPath<Value, T>, value: T)
   {
     self { [value] s in
       s[keyPath: path] = value
     }
   }
+
   private nonisolated func pick<T: Sendable>(_ path: consuming KeyPath<Value, T>) -> T {
     withLock(\.self)[keyPath: path]
   }
@@ -46,7 +50,7 @@ public final class Synchronized<Value>: Sendable {
     set { place(keyPath, value: newValue) }
   }
 
-  consuming public func consume<T: Sendable>(_ path: consuming WritableKeyPath<Value, T?>) -> T? {
+  public consuming func consume<T: Sendable>(_ path: consuming WritableKeyPath<Value, T?>) -> T? {
     self { state in
       defer { state[keyPath: path] = nil }
       return state[keyPath: path]

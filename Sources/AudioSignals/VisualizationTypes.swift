@@ -1,3 +1,5 @@
+// © GoodHatsLLC
+
 #if canImport(AVFAudio)
   public import Foundation
 
@@ -66,7 +68,7 @@
       rawSpectrum: [Float] = [],
       frequencies: [Float] = [],
       peakFrequency: Float = 0,
-      spectralCentroid: Float = 0
+      spectralCentroid: Float = 0,
     ) {
       self.buckets = buckets
       self.rawSpectrum = rawSpectrum
@@ -103,14 +105,14 @@
         let formatted = k.formatted(
           .number
             .precision(.fractionLength(0...1))
-            .grouping(.never)
+            .grouping(.never),
         )
         return "\(formatted)k"
       } else {
         return cf.formatted(
           .number
             .precision(.fractionLength(0...0))
-            .grouping(.never)
+            .grouping(.never),
         )
       }
     }
@@ -127,7 +129,7 @@
       lowFrequency: Float,
       highFrequency: Float,
       magnitude: Float = 0,
-      peakHold: Float = 0
+      peakHold: Float = 0,
     ) {
       self.id = id
       self.lowFrequency = lowFrequency
@@ -160,7 +162,7 @@
       beatDetected: Bool = false,
       energy: Float = 0,
       timeSinceLastBeat: TimeInterval = .infinity,
-      estimatedTempo: Double = 0
+      estimatedTempo: Double = 0,
     ) {
       self.beatDetected = beatDetected
       self.energy = energy
@@ -195,9 +197,9 @@
     public var bucketCount: Int {
       switch self {
       case .mel(let count), .logarithmic(let count), .linear(let count):
-        return count
+        count
       case .bands(let bands):
-        return bands.ranges.count
+        bands.ranges.count
       }
     }
 
@@ -270,11 +272,11 @@
       public var description: String {
         switch self {
         case .sensitivityOutOfRange(let actual, let valid):
-          return "sensitivity must be in \(valid), got \(actual)"
+          "sensitivity must be in \(valid), got \(actual)"
         case .minimumBeatIntervalMustBeNonNegative(let actual):
-          return "minimumBeatInterval must be >= 0, got \(actual)"
+          "minimumBeatInterval must be >= 0, got \(actual)"
         case .historySizeMustBePositive(let actual):
-          return "historySize must be > 0, got \(actual)"
+          "historySize must be > 0, got \(actual)"
         }
       }
     }
@@ -305,19 +307,19 @@
       sensitivity: Float = 0.5,
       minimumBeatInterval: TimeInterval = 0.1,
       bassFocused: Bool = true,
-      historySize: Int = 43
+      historySize: Int = 43,
     ) {
       precondition(
         Self.validSensitivityRange.contains(sensitivity),
-        "BeatDetectionConfiguration.sensitivity must be in \(Self.validSensitivityRange), got \(sensitivity)"
+        "BeatDetectionConfiguration.sensitivity must be in \(Self.validSensitivityRange), got \(sensitivity)",
       )
       precondition(
         minimumBeatInterval >= 0,
-        "BeatDetectionConfiguration.minimumBeatInterval must be >= 0, got \(minimumBeatInterval)"
+        "BeatDetectionConfiguration.minimumBeatInterval must be >= 0, got \(minimumBeatInterval)",
       )
       precondition(
         historySize > 0,
-        "BeatDetectionConfiguration.historySize must be > 0, got \(historySize)"
+        "BeatDetectionConfiguration.historySize must be > 0, got \(historySize)",
       )
       self.sensitivity = sensitivity
       self.minimumBeatInterval = minimumBeatInterval
@@ -330,7 +332,7 @@
       validatingSensitivity sensitivity: Float,
       minimumBeatInterval: TimeInterval = 0.1,
       bassFocused: Bool = true,
-      historySize: Int = 43
+      historySize: Int = 43,
     ) throws(ValidationError) {
       guard Self.validSensitivityRange.contains(sensitivity) else {
         throw .sensitivityOutOfRange(actual: sensitivity, valid: Self.validSensitivityRange)
@@ -345,7 +347,7 @@
         sensitivity: sensitivity,
         minimumBeatInterval: minimumBeatInterval,
         bassFocused: bassFocused,
-        historySize: historySize
+        historySize: historySize,
       )
     }
 
@@ -354,15 +356,16 @@
       clampingSensitivity sensitivity: Float,
       minimumBeatInterval: TimeInterval = 0.1,
       bassFocused: Bool = true,
-      historySize: Int = 43
+      historySize: Int = 43,
     ) {
       self.init(
         sensitivity: min(
           max(sensitivity, Self.validSensitivityRange.lowerBound),
-          Self.validSensitivityRange.upperBound),
+          Self.validSensitivityRange.upperBound,
+        ),
         minimumBeatInterval: max(0, minimumBeatInterval),
         bassFocused: bassFocused,
-        historySize: max(1, historySize)
+        historySize: max(1, historySize),
       )
     }
 
@@ -372,13 +375,13 @@
     /// High sensitivity configuration for detecting subtle beats.
     public static let highSensitivity = BeatDetectionConfiguration(
       sensitivity: 0.3,
-      minimumBeatInterval: 0.08
+      minimumBeatInterval: 0.08,
     )
 
     /// Low sensitivity configuration for strong, clear beats only.
     public static let lowSensitivity = BeatDetectionConfiguration(
       sensitivity: 0.7,
-      minimumBeatInterval: 0.15
+      minimumBeatInterval: 0.15,
     )
   }
 
@@ -405,7 +408,7 @@
       public var description: String {
         switch self {
         case .publishRateMustBePositive(let actual):
-          return "publishRateHz must be > 0, got \(actual)"
+          "publishRateHz must be > 0, got \(actual)"
         }
       }
     }
@@ -415,11 +418,11 @@
 
     public init(
       configuration: MultiBandLODConfiguration = .default,
-      publishRateHz: Double = VisualizationRateDefaults.lodPublishRateHz
+      publishRateHz: Double = VisualizationRateDefaults.lodPublishRateHz,
     ) {
       precondition(
         publishRateHz > 0,
-        "LODWork.publishRateHz must be > 0, got \(publishRateHz)"
+        "LODWork.publishRateHz must be > 0, got \(publishRateHz)",
       )
       self.configuration = configuration
       self.publishRateHz = publishRateHz
@@ -427,7 +430,7 @@
 
     public init(
       validatingConfiguration configuration: MultiBandLODConfiguration,
-      publishRateHz: Double = VisualizationRateDefaults.lodPublishRateHz
+      publishRateHz: Double = VisualizationRateDefaults.lodPublishRateHz,
     ) throws(ValidationError) {
       guard publishRateHz > 0 else {
         throw .publishRateMustBePositive(actual: publishRateHz)
@@ -437,11 +440,11 @@
 
     public init(
       clampingConfiguration configuration: MultiBandLODConfiguration,
-      publishRateHz: Double = VisualizationRateDefaults.lodPublishRateHz
+      publishRateHz: Double = VisualizationRateDefaults.lodPublishRateHz,
     ) {
       self.init(
         configuration: configuration,
-        publishRateHz: max(1, publishRateHz)
+        publishRateHz: max(1, publishRateHz),
       )
     }
   }
@@ -454,7 +457,7 @@
       public var description: String {
         switch self {
         case .updateRateMustBePositive(let actual):
-          return "updateRateHz must be > 0, got \(actual)"
+          "updateRateHz must be > 0, got \(actual)"
         }
       }
     }
@@ -468,11 +471,11 @@
       updateRateHz: Double = VisualizationRateDefaults.analysisUpdateRateHz,
       timeDomain: AmplitudeAnalyzer.Configuration? = nil,
       frequencyDomain: FrequencyDomainWork? = nil,
-      beatDetection: BeatDetectionConfiguration? = nil
+      beatDetection: BeatDetectionConfiguration? = nil,
     ) {
       precondition(
         updateRateHz > 0,
-        "AnalysisWork.updateRateHz must be > 0, got \(updateRateHz)"
+        "AnalysisWork.updateRateHz must be > 0, got \(updateRateHz)",
       )
       self.updateRateHz = updateRateHz
       self.timeDomain = timeDomain
@@ -484,7 +487,7 @@
       validatingUpdateRateHz updateRateHz: Double,
       timeDomain: AmplitudeAnalyzer.Configuration? = nil,
       frequencyDomain: FrequencyDomainWork? = nil,
-      beatDetection: BeatDetectionConfiguration? = nil
+      beatDetection: BeatDetectionConfiguration? = nil,
     ) throws(ValidationError) {
       guard updateRateHz > 0 else {
         throw .updateRateMustBePositive(actual: updateRateHz)
@@ -493,7 +496,7 @@
         updateRateHz: updateRateHz,
         timeDomain: timeDomain,
         frequencyDomain: frequencyDomain,
-        beatDetection: beatDetection
+        beatDetection: beatDetection,
       )
     }
 
@@ -501,13 +504,13 @@
       clampingUpdateRateHz updateRateHz: Double,
       timeDomain: AmplitudeAnalyzer.Configuration? = nil,
       frequencyDomain: FrequencyDomainWork? = nil,
-      beatDetection: BeatDetectionConfiguration? = nil
+      beatDetection: BeatDetectionConfiguration? = nil,
     ) {
       self.init(
         updateRateHz: max(1, updateRateHz),
         timeDomain: timeDomain,
         frequencyDomain: frequencyDomain,
-        beatDetection: beatDetection
+        beatDetection: beatDetection,
       )
     }
   }
@@ -520,7 +523,7 @@
       public var description: String {
         switch self {
         case .peakHoldDecayRateMustBeNonNegative(let actual):
-          return "peakHoldDecayRate must be >= 0, got \(actual)"
+          "peakHoldDecayRate must be >= 0, got \(actual)"
         }
       }
     }
@@ -534,11 +537,11 @@
       configuration: FrequencyAnalyzer.Configuration,
       bucketMode: FrequencyBucketMode = .default,
       peakHoldDecayRate: Float = 0.015,
-      weighting: FrequencyWeighting = .none
+      weighting: FrequencyWeighting = .none,
     ) {
       precondition(
         peakHoldDecayRate >= 0,
-        "FrequencyDomainWork.peakHoldDecayRate must be >= 0, got \(peakHoldDecayRate)"
+        "FrequencyDomainWork.peakHoldDecayRate must be >= 0, got \(peakHoldDecayRate)",
       )
       self.configuration = configuration
       self.bucketMode = bucketMode
@@ -550,7 +553,7 @@
       validatingConfiguration configuration: FrequencyAnalyzer.Configuration,
       bucketMode: FrequencyBucketMode = .default,
       peakHoldDecayRate: Float = 0.015,
-      weighting: FrequencyWeighting = .none
+      weighting: FrequencyWeighting = .none,
     ) throws(ValidationError) {
       guard peakHoldDecayRate >= 0 else {
         throw .peakHoldDecayRateMustBeNonNegative(actual: peakHoldDecayRate)
@@ -559,7 +562,7 @@
         configuration: configuration,
         bucketMode: bucketMode,
         peakHoldDecayRate: peakHoldDecayRate,
-        weighting: weighting
+        weighting: weighting,
       )
     }
 
@@ -567,13 +570,13 @@
       clampingConfiguration configuration: FrequencyAnalyzer.Configuration,
       bucketMode: FrequencyBucketMode = .default,
       peakHoldDecayRate: Float = 0.015,
-      weighting: FrequencyWeighting = .none
+      weighting: FrequencyWeighting = .none,
     ) {
       self.init(
         configuration: configuration,
         bucketMode: bucketMode,
         peakHoldDecayRate: max(0, peakHoldDecayRate),
-        weighting: weighting
+        weighting: weighting,
       )
     }
   }

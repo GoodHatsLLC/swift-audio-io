@@ -1,10 +1,12 @@
+// © GoodHatsLLC
+
 #if os(iOS)
-  public import Tools
   public import AVFAudio
   import Combine
   import Foundation
   public import Observation
   import os
+  public import Tools
 
   private let log = SystemLog.make()
 
@@ -17,7 +19,7 @@
   /// - Allowing the user to select the preferred input, source, and sample rate.
   @MainActor
   @Observable
-  public class AudioEnvironmentManager: AudioSessionDelegate {
+  public final class AudioEnvironmentManager: AudioSessionDelegate {
     public enum ManagerError: AudioError {
       public enum AudioSessionOperation: String, Sendable, Equatable, CustomStringConvertible {
         case setCategory
@@ -28,7 +30,9 @@
         case setPreferredInputOrientation
         case setActive
 
-        public var description: String { rawValue }
+        public var description: String {
+          rawValue
+        }
       }
 
       case alreadyRunning
@@ -68,11 +72,11 @@
       do {
         try configureAudioSessionCategory(
           AVAudioSession.sharedInstance(),
-          configuration: .recordingConfiguration
+          configuration: .recordingConfiguration,
         )
       } catch {
         log.error(
-          "Failed to prepare audio session category on launch: \(error.localizedDescription, privacy: .public)"
+          "Failed to prepare audio session category on launch: \(error.localizedDescription, privacy: .public)",
         )
       }
     }
@@ -83,13 +87,13 @@
     /// microphone/audio session until explicitly requested.
     public nonisolated static func configureAudioSessionCategory(
       _ session: AVAudioSession,
-      configuration: AudioSessionConfiguration
+      configuration: AudioSessionConfiguration,
     ) throws(ManagerError) {
       do {
         try session.setCategory(
           configuration.category,
           mode: configuration.mode,
-          options: configuration.options
+          options: configuration.options,
         )
       } catch {
         throw .audioSessionFailed(operation: .setCategory, error: ErrorContext(error))
@@ -97,34 +101,34 @@
 
       do {
         try session.setAllowHapticsAndSystemSoundsDuringRecording(
-          configuration.allowsHapticsAndSystemSoundsDuringRecording
+          configuration.allowsHapticsAndSystemSoundsDuringRecording,
         )
       } catch {
         throw .audioSessionFailed(
           operation: .setAllowHapticsAndSystemSoundsDuringRecording,
-          error: ErrorContext(error)
+          error: ErrorContext(error),
         )
       }
 
       do {
         try session.setPrefersNoInterruptionsFromSystemAlerts(
-          configuration.prefersNoInterruptionsFromSystemAlerts
+          configuration.prefersNoInterruptionsFromSystemAlerts,
         )
       } catch {
         throw .audioSessionFailed(
           operation: .setPrefersNoInterruptionsFromSystemAlerts,
-          error: ErrorContext(error)
+          error: ErrorContext(error),
         )
       }
 
       do {
         try session.setPrefersInterruptionOnRouteDisconnect(
-          configuration.prefersInterruptionOnRouteDisconnect
+          configuration.prefersInterruptionOnRouteDisconnect,
         )
       } catch {
         throw .audioSessionFailed(
           operation: .setPrefersInterruptionOnRouteDisconnect,
-          error: ErrorContext(error)
+          error: ErrorContext(error),
         )
       }
     }
@@ -137,7 +141,7 @@
     public init(
       env: AudioEnvironment,
       errorManager: any ErrorManaging,
-      defaults: UserDefaults = .standard
+      defaults: UserDefaults = .standard,
     ) {
       self.env = env
       self.errorManager = errorManager
@@ -150,17 +154,21 @@
       _orientation = .none
       _selectedNumberOfChannels = (env.input?.channelCount) ?? .mono
       _useMeasurement = defaults.bool(forKey: StorageKey.useMeasurement)
-      self.persistedInputPreferencesById = Self.loadInputPreferences(from: defaults)
+      persistedInputPreferencesById = Self.loadInputPreferences(from: defaults)
     }
+
     private let env: AudioEnvironment
     /// The underlying `AVAudioSession`.
-    public var session: AVAudioSession { env.session }
+    public var session: AVAudioSession {
+      env.session
+    }
+
     /// The preferred category/mode/options for this environment.
     public var sessionConfiguration: AudioSessionConfiguration = .recordingConfiguration
     private let errorManager: any ErrorManaging
     private let defaults: UserDefaults
 
-    private struct PersistedInputPreferences: Codable, Sendable {
+    private struct PersistedInputPreferences: Codable {
       var sampleRateHz: Double?
       var channelCount: Int?
       var sourceId: String?
@@ -171,7 +179,7 @@
     /// round-trips to `mediaserverd`. Computed on MainActor (where cached state is
     /// readable) then executed off MainActor via ``executeInputConfiguration(_:session:)``
     /// to avoid run-loop hangs.
-    private struct InputConfigurationPlan: Sendable {
+    private struct InputConfigurationPlan {
       var channelCount: Int?
       var polarPatternSource: AudioSource?
       var polarPattern: PolarPattern?
@@ -183,7 +191,7 @@
     /// Error wrapper that preserves the origin of failures inside
     /// ``executeInputConfiguration(_:session:)`` so they can be mapped back
     /// to the correct ``ManagerError`` case.
-    private enum _InputConfigError: Error, Sendable {
+    private enum _InputConfigError: Error {
       case channelCount(ErrorContext)
       case polarPattern(AudioSource.PreferenceError)
       case preferredSource(AudioInput.PreferenceError)
@@ -199,9 +207,9 @@
     ///
     /// - Note: `setCategory` and `setActive` intentionally remain on MainActor per Apple
     ///   DTS guidance. Only input-preference calls are moved here.
-    nonisolated private static func executeInputConfiguration(
+    private nonisolated static func executeInputConfiguration(
       _ plan: InputConfigurationPlan,
-      session: AVAudioSession
+      session: AVAudioSession,
     ) async throws(ManagerError) {
       let t = Task.detached {
         if let count = plan.channelCount {
@@ -210,7 +218,9 @@
           } catch {
             return Result<Void, ManagerError>.failure(
               .audioSessionFailed(
-                operation: .setPreferredInputNumberOfChannels, error: ErrorContext(error)))
+                operation: .setPreferredInputNumberOfChannels, error: ErrorContext(error),
+              ),
+            )
           }
         }
 
@@ -235,7 +245,8 @@
             try session.setPreferredInputOrientation(orientation)
           } catch {
             return Result<Void, ManagerError>.failure(
-              .audioSessionFailed(operation: .setPreferredInputOrientation, error: .init(error)))
+              .audioSessionFailed(operation: .setPreferredInputOrientation, error: .init(error)),
+            )
           }
         }
         return .success(())
@@ -281,6 +292,7 @@
         }
       }
     }
+
     private let readinessSignal = AwaitableBox<Void>()
     /// If the `AudioEnvironmentManager` is running, suspends until `isReady` is `true`.
     ///
@@ -321,7 +333,7 @@
               userMessage: newValue
                 ? "Couldn't enable the microphone."
                 : "Couldn't disable the microphone.",
-              context: "Audio session"
+              context: "Audio session",
             )
           }
         }
@@ -343,18 +355,17 @@
     public var onMediaServicesReset: (@Sendable @MainActor () async -> Void)?
 
     private var routeChangeSubscribers:
-      [UUID: (@Sendable @MainActor (AudioRouteChangeEvent) async -> Void)] =
+      [UUID: @Sendable @MainActor (AudioRouteChangeEvent) async -> Void] =
         [:]
     private var interruptionSubscribers:
       [UUID:
-        (
-          @Sendable @MainActor (
-            AVAudioSession.InterruptionType, AVAudioSession.InterruptionOptions?
-          )
-            async -> Void
-        )] = [:]
-    private var mediaServicesLostSubscribers: [UUID: (@Sendable @MainActor () async -> Void)] = [:]
-    private var mediaServicesResetSubscribers: [UUID: (@Sendable @MainActor () async -> Void)] = [:]
+
+        @Sendable @MainActor (
+          AVAudioSession.InterruptionType, AVAudioSession.InterruptionOptions?,
+        )
+        async -> Void] = [:]
+    private var mediaServicesLostSubscribers: [UUID: @Sendable @MainActor () async -> Void] = [:]
+    private var mediaServicesResetSubscribers: [UUID: @Sendable @MainActor () async -> Void] = [:]
 
     /// A Boolean value that indicates whether the manager is currently running.
     public private(set) var isRunning: Bool = false
@@ -371,7 +382,7 @@
 
     @discardableResult
     public func addRouteChangeSubscriber(
-      _ handler: @escaping @Sendable @MainActor (AudioRouteChangeEvent) async -> Void
+      _ handler: @escaping @Sendable @MainActor (AudioRouteChangeEvent) async -> Void,
     ) -> UUID {
       let id = UUID()
       routeChangeSubscribers[id] = handler
@@ -382,8 +393,8 @@
     public func addInterruptionSubscriber(
       _ handler:
         @escaping @Sendable @MainActor (
-          AVAudioSession.InterruptionType, AVAudioSession.InterruptionOptions?
-        ) async -> Void
+          AVAudioSession.InterruptionType, AVAudioSession.InterruptionOptions?,
+        ) async -> Void,
     ) -> UUID {
       let id = UUID()
       interruptionSubscribers[id] = handler
@@ -392,7 +403,7 @@
 
     @discardableResult
     public func addMediaServicesLostSubscriber(
-      _ handler: @escaping @Sendable @MainActor () async -> Void
+      _ handler: @escaping @Sendable @MainActor () async -> Void,
     ) -> UUID {
       let id = UUID()
       mediaServicesLostSubscribers[id] = handler
@@ -401,7 +412,7 @@
 
     @discardableResult
     public func addMediaServicesResetSubscriber(
-      _ handler: @escaping @Sendable @MainActor () async -> Void
+      _ handler: @escaping @Sendable @MainActor () async -> Void,
     ) -> UUID {
       let id = UUID()
       mediaServicesResetSubscribers[id] = handler
@@ -419,14 +430,17 @@
     public var orientation: AVAudioSession.StereoOrientation {
       _orientation
     }
+
     /// The number of channels for the current input.
     public var channels: ChannelCount {
       _selectedNumberOfChannels
     }
+
     /// The available audio sources for the current input.
     public var availableSources: [AudioSource] {
       _availableSources
     }
+
     /// The available audio inputs.
     public var availableInputs: [AudioInput] {
       _availableInputs
@@ -442,11 +456,11 @@
     /// This list starts from common rates and removes rates previously rejected by
     /// the active route. The currently active sample rate is always included.
     public var likelySupportedSampleRates: [SampleRate] {
-      return [
+      [
         commonSampleRates
           + [env.sampleRate]
           + [_selectedSampleRate]
-      ].flatMap { $0 }
+      ].flatMap(\.self)
         .removingDuplicates()
         .sorted()
     }
@@ -476,7 +490,7 @@
                 """
                 􁐚 Sample rate \(newValue, privacy: .public) rejected. \
                 Set to \(actual, privacy: .public)
-                """
+                """,
               )
             if persistPreference {
               persistInputPreferencesIfNeeded { prefs in
@@ -502,7 +516,7 @@
             """
             􁐚 Sample rate \(newValue, privacy: .public) failed with: \(error, privacy: .public) \
             Rate is \(actual, privacy: .public).
-            """
+            """,
           )
         if persistPreference {
           // Persist the actual device rate on failure so we don't repeatedly retry
@@ -610,17 +624,16 @@
       }
 
       let sessionChannels = session.inputNumberOfChannels
-      let resolvedChannels: ChannelCount
-
-      if sessionChannels > 0 {
-        resolvedChannels = .init(platform: AVAudioChannelCount(sessionChannels))
-      } else {
-        resolvedChannels = _selectedNumberOfChannels
-      }
+      let resolvedChannels: ChannelCount =
+        if sessionChannels > 0 {
+          .init(platform: AVAudioChannelCount(sessionChannels))
+        } else {
+          _selectedNumberOfChannels
+        }
 
       return .init(
         sampleRate: .init(rawValue: sampleRate),
-        channels: resolvedChannels
+        channels: resolvedChannels,
       )
     }
 
@@ -778,7 +791,7 @@
           }
 
           let candidates = preferredStereoCandidates(from: stereoCapableSources)
-          let session = self.session
+          let session = session
           let currentOrientation = orientation
 
           // Run XPC-blocking calls off MainActor.
@@ -849,7 +862,8 @@
       }
       isAudioSessionActive = active
       log.info(
-        "🔊 Audio session manually set to \(active ? "active" : "inactive", privacy: .public)")
+        "🔊 Audio session manually set to \(active ? "active" : "inactive", privacy: .public)",
+      )
       if active {
         // Schedule restoration asynchronously. The XPC-blocking preference
         // calls (setPreferredPolarPattern, setPreferredDataSource, etc.) now
@@ -857,18 +871,17 @@
         // promptly while preferences are restored in the background.
         Task { @MainActor [weak self] in
           await self?.restorePreferredInputAndConfigurationIfPossible(
-            reason: "audio session activated"
+            reason: "audio session activated",
           )
         }
       }
     }
-
   }
 
   extension AudioEnvironmentManager {
     @MainActor
     private func subscribeToOrientation(
-      _ onChange: @MainActor (AVAudioSession.StereoOrientation) -> Void
+      _ onChange: @MainActor (AVAudioSession.StereoOrientation) -> Void,
     ) async {
       let deviceInfo = PlatformDevice.create()
 
@@ -897,24 +910,24 @@
       isRunning = true
       defer { isRunning = false }
 
-      /// Within this task group:
-      /// - teardown symmetric with setup must always happen
-      /// - it should be applied at the same level of nesting as its setup
-      /// - the end effect once returning should be that `run()` is ready to be called
+      // Within this task group:
+      // - teardown symmetric with setup must always happen
+      // - it should be applied at the same level of nesting as its setup
+      // - the end effect once returning should be that `run()` is ready to be called
       await withThrowingTaskGroup(of: Void.self) { group in
-        // Configure audio session category/options on MainActor, per Apple DTS
-        // recommendation that AVAudioSession configuration should occur on the
-        // main thread. The category call is fast (< 1ms) and happens during
-        // app startup; remaining setup (input request, preference restoration)
-        // runs in a child task.
+        /// Configure audio session category/options on MainActor, per Apple DTS
+        /// recommendation that AVAudioSession configuration should occur on the
+        /// main thread. The category call is fast (< 1ms) and happens during
+        /// app startup; remaining setup (input request, preference restoration)
+        /// runs in a child task.
         func configureAudioSession(
           env: AudioEnvironment,
-          configuration: AudioSessionConfiguration
+          configuration: AudioSessionConfiguration,
         ) throws(ManagerError) {
           // Category configuration on MainActor (we are @MainActor here).
           try Self.configureAudioSessionCategory(
             env.session,
-            configuration: configuration
+            configuration: configuration,
           )
 
           // Remaining setup in a child task for input request + preference restoration.
@@ -923,8 +936,7 @@
               do {
                 try env.request(
                   input: env.input
-                    ?? env.availableInputs.first(where: { $0.platform.portType == .builtInMic }
-                    )
+                    ?? env.availableInputs.first(where: { $0.platform.portType == .builtInMic }),
                 )
               } catch let error as AudioEnvironment.RequestError {
                 throw ManagerError.audioEnvironment(error)
@@ -940,7 +952,7 @@
                 allowHapticsAndSystemSoundsDuringRecording: \(env.session.allowHapticsAndSystemSoundsDuringRecording, privacy: .public)
                 prefersNoInterruptionsFromSystemAlerts: \(env.session.prefersNoInterruptionsFromSystemAlerts, privacy: .public)
                 prefersInterruptionOnRouteDisconnect: \(env.session.prefersInterruptionOnRouteDisconnect, privacy: .public)
-                """
+                """,
               )
             } catch let error as ManagerError {
               log.error(
@@ -952,7 +964,7 @@
                 prefersNoInterruptionsFromSystemAlerts: \(env.session.prefersNoInterruptionsFromSystemAlerts, privacy: .public)
                 prefersInterruptionOnRouteDisconnect: \(env.session.prefersInterruptionOnRouteDisconnect, privacy: .public)
                 error: \(error, privacy: .public)
-                """
+                """,
               )
               throw error
             } catch {
@@ -966,7 +978,7 @@
                 prefersNoInterruptionsFromSystemAlerts: \(env.session.prefersNoInterruptionsFromSystemAlerts, privacy: .public)
                 prefersInterruptionOnRouteDisconnect: \(env.session.prefersInterruptionOnRouteDisconnect, privacy: .public)
                 error: \(mapped, privacy: .public)
-                """
+                """,
               )
               throw mapped
             }
@@ -994,7 +1006,7 @@
                 Engine failed to configure audio session (attempt \(configureAttempt, privacy: .public)):
                 \(String(describing: error), privacy: .public)
                 Retrying in \(configureRetryDelay, privacy: .public)
-                """
+                """,
               )
               try? await Task.sleep(for: configureRetryDelay)
               let nextRetryDelay = configureRetryDelay + configureRetryDelay
@@ -1006,7 +1018,7 @@
 
         group.addTask { [weak self] in
           guard let self else { return }
-          await self.subscribe()
+          await subscribe()
         }
       }
 
@@ -1017,7 +1029,8 @@
             try self.env.session.setActive(false, options: .notifyOthersOnDeactivation)
           } catch {
             log.error(
-              "Failed to deactivate AudioSession on cancellation: \(error, privacy: .public)")
+              "Failed to deactivate AudioSession on cancellation: \(error, privacy: .public)",
+            )
           }
           await MainActor.run { self.isAudioSessionActive = false }
         }
@@ -1025,13 +1038,12 @@
 
       let deactivationSuffix = wasActive ? ", deactivating AudioSession" : ""
       log.info(
-        "🔇AudioEnvironmentManager.run() finished\(deactivationSuffix, privacy: .public)"
+        "🔇AudioEnvironmentManager.run() finished\(deactivationSuffix, privacy: .public)",
       )
     }
   }
 
   extension AudioEnvironmentManager {
-
     @discardableResult
     @MainActor
     private func updateAudioInputs(reason: String) -> AudioDeviceChangeSummary? {
@@ -1065,14 +1077,14 @@
         previousInputs: previousInputs,
         currentInputs: updatedInputs,
         previousSources: previousSources,
-        currentSources: filteredSources
+        currentSources: filteredSources,
       )
       let changeMsg = summary.description
       log.info("\(reason, privacy: .public): \(changeMsg, privacy: .public)")
       return summary
     }
 
-    struct AudioDeviceChangeSummary: Equatable, Sendable, CustomStringConvertible {
+    struct AudioDeviceChangeSummary: Equatable, CustomStringConvertible {
       let addedInputs: [AudioInput]
       let removedInputs: [AudioInput]
       let addedSources: [AudioSource]
@@ -1082,7 +1094,7 @@
         previousInputs: [AudioInput],
         currentInputs: [AudioInput],
         previousSources: [AudioSource],
-        currentSources: [AudioSource]
+        currentSources: [AudioSource],
       ) {
         let previousInputSet = Set(previousInputs)
         let currentInputSet = Set(currentInputs)
@@ -1108,7 +1120,7 @@
 
     private func filterSources(
       _ sources: [AudioSource],
-      for channelCount: ChannelCount
+      for channelCount: ChannelCount,
     ) -> [AudioSource] {
       guard channelCount.count > 1 else {
         return sources.filter { source in
@@ -1134,7 +1146,7 @@
     @MainActor
     private func dispatchInterruption(
       type: AVAudioSession.InterruptionType,
-      options: AVAudioSession.InterruptionOptions?
+      options: AVAudioSession.InterruptionOptions?,
     ) async {
       await onInterruption?(type, options)
       for subscriber in interruptionSubscribers.values {
@@ -1187,12 +1199,12 @@
             case .began:
               await self?.dispatchInterruption(
                 type: notification.type,
-                options: notification.options
+                options: notification.options,
               )
             case .ended:
               await self?.dispatchInterruption(
                 type: notification.type,
-                options: notification.options
+                options: notification.options,
               )
             @unknown default:
               continue
@@ -1214,13 +1226,14 @@
         group.addTask { [weak self] in
           for await _ in env.notifications.availableInputsChanged {
             guard let self else { return }
-            await self.updateAudioInputs(reason: "availableInputsChanged notification")
+            await updateAudioInputs(reason: "availableInputsChanged notification")
           }
         }
         group.addTask { [weak self] in
           for await notification in env.notifications.routeChange {
             log.info(
-              "Route change notification: \(String(describing: notification), privacy: .public)")
+              "Route change notification: \(String(describing: notification), privacy: .public)",
+            )
             if Task.isCancelled { return }
             guard let self else { return }
             let reasonMsg =
@@ -1235,13 +1248,13 @@
               case .unknown: "unknown"
               @unknown default: "unknowndefault"
               }
-            await self.updateAudioInputs(reason: "routeChange notification: .\(reasonMsg)")
-            if await !self.isAudioSessionActive
-              && (notification.reason == .newDeviceAvailable
-                || notification.reason == .oldDeviceUnavailable)
+            await updateAudioInputs(reason: "routeChange notification: .\(reasonMsg)")
+            if await !isAudioSessionActive,
+              notification.reason == .newDeviceAvailable
+                || notification.reason == .oldDeviceUnavailable
             {
-              await self.restorePreferredInputAndConfigurationIfPossible(
-                reason: "routeChange notification: .\(reasonMsg)"
+              await restorePreferredInputAndConfigurationIfPossible(
+                reason: "routeChange notification: .\(reasonMsg)",
               )
             }
 
@@ -1249,23 +1262,23 @@
             let event = AudioRouteChangeEvent(
               reason: notification.reason,
               previousRoute: notification.previous,
-              session: env.session
+              session: env.session,
             )
-            await self.dispatchRouteChange(event)
+            await dispatchRouteChange(event)
           }
         }
         group.addTask { [weak self] in
           await self?.subscribeToOrientation { @MainActor [weak self] orientation in
             guard let self else { return }
-            self._orientation = orientation
+            _orientation = orientation
             log.info("orientation changed to: \(orientation.rawValue, privacy: .public)")
             guard orientation != .none else { return }
             do {
-              if self.isConfiguredForStereo {
-                try self.session.setPreferredInputOrientation(orientation)
+              if isConfiguredForStereo {
+                try session.setPreferredInputOrientation(orientation)
               }
             } catch {
-              self.errorManager.enqueue(error)
+              errorManager.enqueue(error)
             }
           }
         }
@@ -1274,8 +1287,8 @@
           while !Task.isCancelled {
             guard let self else { return }
             let pollInterval: Duration
-            if self.isAudioSessionActive {
-              if let changes = self.updateAudioInputs(reason: "periodic poll") {
+            if isAudioSessionActive {
+              if let changes = updateAudioInputs(reason: "periodic poll") {
                 log.info("􂡸 poll, device changes: \(changes, privacy: .public)")
               }
               pollInterval = .seconds(15)
@@ -1302,7 +1315,6 @@
         await group.waitForAll()
       }
     }
-
   }
 
   extension AudioEnvironmentManager {
@@ -1320,13 +1332,13 @@
       do {
         try Self.configureAudioSessionCategory(
           env.session,
-          configuration: sessionConfiguration
+          configuration: sessionConfiguration,
         )
       } catch {
         errorManager.enqueue(error)
       }
       await restorePreferredInputAndConfigurationIfPossible(
-        reason: "mediaServicesReset notification"
+        reason: "mediaServicesReset notification",
       )
       await dispatchMediaServicesReset()
     }
@@ -1367,7 +1379,7 @@
       if let prefs = persistedInputPreferencesById[inputId] {
         if canApplyPreferences {
           if let sampleRateHz = prefs.sampleRateHz {
-            self.sampleRate = SampleRate(rawValue: sampleRateHz)
+            sampleRate = SampleRate(rawValue: sampleRateHz)
           }
 
           if let channelCount = prefs.channelCount {
@@ -1398,7 +1410,7 @@
           }
         } else {
           log.info(
-            "Skipping input preference restore; audio session inactive (\(reason, privacy: .public))"
+            "Skipping input preference restore; audio session inactive (\(reason, privacy: .public))",
           )
         }
       } else if canApplyPreferences {
@@ -1412,17 +1424,17 @@
         }
       } else {
         log.info(
-          "Skipping input preference defaults; audio session inactive (\(reason, privacy: .public))"
+          "Skipping input preference defaults; audio session inactive (\(reason, privacy: .public))",
         )
       }
 
       log.info(
-        "Restored audio environment preferences (\(reason, privacy: .public); \(modeStatus, privacy: .public))"
+        "Restored audio environment preferences (\(reason, privacy: .public); \(modeStatus, privacy: .public))",
       )
     }
 
     private func persistInputPreferencesIfNeeded(
-      _ update: (inout PersistedInputPreferences) -> Void
+      _ update: (inout PersistedInputPreferences) -> Void,
     ) {
       guard !isRestoringFromDefaults else { return }
 
@@ -1434,7 +1446,7 @@
         ?? PersistedInputPreferences(
           sampleRateHz: env.sampleRate.rawValue,
           channelCount: isConfiguredForStereo ? 2 : 1,
-          sourceId: env.source?.id
+          sourceId: env.source?.id,
         )
       update(&prefs)
 
@@ -1444,7 +1456,7 @@
     }
 
     private static func loadInputPreferences(
-      from defaults: UserDefaults
+      from defaults: UserDefaults,
     ) -> [String: PersistedInputPreferences] {
       guard let data = defaults.data(forKey: StorageKey.inputPrefsById) else { return [:] }
       return (try? JSONDecoder().decode([String: PersistedInputPreferences].self, from: data))
@@ -1501,7 +1513,7 @@
   extension Array where Element: Hashable {
     func removingDuplicates() -> Self {
       var set = Set<Element>()
-      return self.filter {
+      return filter {
         set.insert($0).inserted
       }
     }

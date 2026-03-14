@@ -1,3 +1,5 @@
+// © GoodHatsLLC
+
 #if os(macOS)
   public import Foundation
   public import Observation
@@ -7,7 +9,7 @@
   public final class OutputConfigurationManager {
     private let defaults: UserDefaults
 
-    private struct PersistedOutputConfiguration: Codable, Sendable {
+    private struct PersistedOutputConfiguration: Codable {
       var outputFormatRawValue: String
       var bitDepthRawValue: Int
       var encodingQualityRawValue: Int
@@ -20,7 +22,7 @@
     public init(
       env: AudioEnvironment,
       errorManager: any ErrorManaging,
-      defaults: UserDefaults = .standard
+      defaults: UserDefaults = .standard,
     ) {
       _ = env
       _ = errorManager
@@ -38,6 +40,7 @@
         persistToDefaultsIfNeeded()
       }
     }
+
     public var availableOutputFormats: [FileFormat] {
       FileFormat.allCases
     }
@@ -47,6 +50,7 @@
         persistToDefaultsIfNeeded()
       }
     }
+
     public var availableBitDepths: [BitDepth] {
       (outputFormat?.supportedBitDepths ?? BitDepth.allCases).sorted()
     }
@@ -56,6 +60,7 @@
         persistToDefaultsIfNeeded()
       }
     }
+
     public var availableEncodingQualities: [EncodingQuality] {
       if outputFormat?.requiresQuality == true {
         EncodingQuality.allCases
@@ -65,8 +70,7 @@
     }
 
     public var outputConfiguration: OutputConfiguration? {
-      guard
-        let format = outputFormat ?? availableOutputFormats.first,
+      guard let format = outputFormat ?? availableOutputFormats.first,
         let depth = resolvedBitDepth(for: format) ?? format.supportedBitDepths.first,
         let quality = encodingQuality ?? availableEncodingQualities.first
       else {
@@ -89,7 +93,7 @@
       if let bitDepth, !format.supportedBitDepths.contains(bitDepth) {
         self.bitDepth = format.supportedBitDepths.first
       } else if bitDepth == nil {
-        self.bitDepth = format.supportedBitDepths.first
+        bitDepth = format.supportedBitDepths.first
       }
 
       if format.requiresQuality == false {
@@ -122,7 +126,7 @@
       let persisted = PersistedOutputConfiguration(
         outputFormatRawValue: config.fileFormat.rawValue,
         bitDepthRawValue: config.bitDepth.rawValue,
-        encodingQualityRawValue: config.quality.rawValue
+        encodingQualityRawValue: config.quality.rawValue,
       )
 
       guard let data = try? JSONEncoder().encode(persisted) else { return }

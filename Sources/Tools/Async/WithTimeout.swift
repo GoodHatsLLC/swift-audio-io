@@ -1,3 +1,5 @@
+// © GoodHatsLLC
+
 import Foundation
 import os
 
@@ -5,7 +7,6 @@ import os
 
 /// A function that executes an asynchronous operation with a timeout.
 public struct Timeout: AudioError, Hashable {
-
   let fromLocation: SourceLocation
   let afterDuration: Duration
   let type: String
@@ -50,9 +51,9 @@ public func withTimeout<Return: Sendable>(
   of duration: Duration,
   file: StaticString = #file,
   line: UInt = #line,
-  column: UInt = #column,
+  column _: UInt = #column,
   function: StaticString = #function,
-  _ operation: @Sendable @escaping @isolated(any) () async -> Return
+  _ operation: @Sendable @escaping @isolated(any) () async -> Return,
 ) async throws(TimeoutOnlyError) -> Return {
   let location = SourceLocation(file: file, fun: function, line: line)
   let result = await withTaskGroup(of: Either<Return, TimeoutOnlyError>.self) { group in
@@ -61,7 +62,8 @@ public func withTimeout<Return: Sendable>(
         try await Task.sleep(for: duration)
         return .rhs(
           .timedOut(
-            Timeout(fromLocation: location, afterDuration: duration, type: "\(Return.self)"))
+            Timeout(fromLocation: location, afterDuration: duration, type: "\(Return.self)"),
+          ),
         )
       } catch {
         return .rhs(.cancelled)
@@ -69,7 +71,7 @@ public func withTimeout<Return: Sendable>(
     }
 
     group.addTask {
-      .lhs(await operation())
+      await .lhs(operation())
     }
 
     let initial = await group.next()
@@ -100,19 +102,19 @@ public func withTimeout<Return: Sendable, Failure: AudioError>(
   line: UInt = #line,
   column _: UInt = #column,
   function: StaticString = #function,
-  _ operation: @Sendable @escaping @isolated(any) () async throws(Failure) -> Return
+  _ operation: @Sendable @escaping @isolated(any) () async throws(Failure) -> Return,
 ) async throws(WithTimeoutError<Failure>)
   -> Return
 {
   let location = SourceLocation(file: file, fun: function, line: line)
   let result = await withTaskGroup(
-    of: Either<Result<Return, WithTimeoutError<Failure>>, Timeout>.self
+    of: Either<Result<Return, WithTimeoutError<Failure>>, Timeout>.self,
   ) { group in
     group.addTask {
       do {
         try await Task.sleep(for: duration)
         return .rhs(
-          Timeout(fromLocation: location, afterDuration: duration, type: "\(Return.self)")
+          Timeout(fromLocation: location, afterDuration: duration, type: "\(Return.self)"),
         )
       } catch {
         return .lhs(.failure(.cancelled))
@@ -124,7 +126,6 @@ public func withTimeout<Return: Sendable, Failure: AudioError>(
     }
 
     group.addTask {
-
       do {
         let ret = try await run()
         return .lhs(Result<Return, WithTimeoutError<Failure>>.success(ret))
@@ -171,7 +172,7 @@ public struct SourceLocation: Sendable, Hashable, Codable, CustomStringConvertib
     fun: StaticString = #function,
     line: UInt = #line,
     col: UInt = #column,
-    _ comment: Any = ""
+    _ comment: Any = "",
   ) {
     self.file = file.description
     self.fun = fun.description
@@ -199,4 +200,5 @@ private enum Either<LHS, RHS> {
   case lhs(LHS)
   case rhs(RHS)
 }
+
 extension Either: Sendable where LHS: Sendable, RHS: Sendable {}

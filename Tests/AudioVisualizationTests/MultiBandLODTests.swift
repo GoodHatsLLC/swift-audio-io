@@ -1,3 +1,5 @@
+// © GoodHatsLLC
+
 #if canImport(AVFoundation)
   import AIOEngine
   import AudioSignals
@@ -5,13 +7,11 @@
   import Foundation
   import Testing
 
-  @Suite("MultiBandLOD Triple-Buffer Tests")
   struct MultiBandLODTests {
-
     // MARK: - Configuration Tests
 
-    @Test("Configuration includes snapshotSwapInterval")
-    func testConfigurationSnapshotSwapInterval() {
+    @Test
+    func `Configuration includes snapshotSwapInterval`() {
       let defaultConfig = MultiBandLODConfiguration.default
       #expect(defaultConfig.snapshotSwapInterval == 6)
 
@@ -23,21 +23,21 @@
       #expect(tooLow.snapshotSwapInterval == 1)
     }
 
-    @Test("Configuration validating initializer rejects invalid values")
-    func testConfigurationValidatingInitializer() throws {
+    @Test
+    func `Configuration validating initializer rejects invalid values`() throws {
       do {
         _ = try MultiBandLODConfiguration(validatingBandCount: 0)
         #expect(Bool(false), "Expected validating initializer to throw for invalid band count")
-      } catch let error {
+      } catch {
         #expect(
           error
-            == .bandCountOutOfRange(actual: 0, valid: MultiBandLODConfiguration.validBandCountRange)
+            == .bandCountOutOfRange(actual: 0, valid: MultiBandLODConfiguration.validBandCountRange),
         )
       }
     }
 
-    @Test("Configuration default presets")
-    func testConfigurationPresets() {
+    @Test
+    func `Configuration default presets`() {
       let shortRecording = MultiBandLODConfiguration.shortRecording
       #expect(shortRecording.bufferSeconds == 60)
       #expect(shortRecording.bandCount == 5)
@@ -49,10 +49,11 @@
 
     // MARK: - Processor Basic Tests
 
-    @Test(
-      "Offline extractor uses exact frame count (plus one LOD pad) and monotonic writeIndex")
-    func testOfflineExtractorSizingAndWriteIndex() async throws {
-      let sampleRate: Double = 44_100
+    @Test
+    func `Offline extractor uses exact frame count (plus one LOD pad) and monotonic writeIndex`()
+      async throws
+    {
+      let sampleRate: Double = 44100
       let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1)
       #expect(format != nil)
       guard let format else { return }
@@ -80,7 +81,8 @@
       try file.write(from: buffer)
 
       let config = MultiBandLODConfiguration(
-        bandCount: 5, lodRatio: 128, bufferSeconds: 1, sampleRate: Int(sampleRate))
+        bandCount: 5, lodRatio: 128, bufferSeconds: 1, sampleRate: Int(sampleRate),
+      )
       let snapshot = try await OfflineLODExtractor(configuration: config).extract(from: url)
         .snapshot
 
@@ -92,13 +94,13 @@
       #expect(snapshot.writeIndex < snapshot.lodBufferLength)
     }
 
-    @Test("Processor creates valid snapshot")
-    func testProcessorCreatesValidSnapshot() {
+    @Test
+    func `Processor creates valid snapshot`() {
       let config = MultiBandLODConfiguration(
         bandCount: 3,
         lodRatio: 64,
         bufferSeconds: 10,
-        sampleRate: 44100
+        sampleRate: 44100,
       )
       let processor = unsafe MultiBandLODProcessor(configuration: config)
 
@@ -112,8 +114,8 @@
       #expect(snapshot.lodRatio == 64)
     }
 
-    @Test("Processor snapshotRef returns valid reference")
-    func testProcessorSnapshotRef() {
+    @Test
+    func `Processor snapshotRef returns valid reference`() {
       let config = MultiBandLODConfiguration(bandCount: 5, lodRatio: 128, bufferSeconds: 10)
       let processor = unsafe MultiBandLODProcessor(configuration: config)
 
@@ -126,14 +128,14 @@
       unsafe #expect(ref.lodBufferLength > 0)
     }
 
-    @Test("Processor exposes frame-scoped snapshot accessor")
-    func testProcessorFrameScopedSnapshotAccessor() {
+    @Test
+    func `Processor exposes frame-scoped snapshot accessor`() {
       let config = MultiBandLODConfiguration(
         bandCount: 3,
         lodRatio: 1,
         bufferSeconds: 10,
         sampleRate: 100,
-        snapshotSwapInterval: 1
+        snapshotSwapInterval: 1,
       )
       let processor = unsafe MultiBandLODProcessor(configuration: config)
 
@@ -148,8 +150,8 @@
       #expect(nextWriteIndex != scopedWriteIndex)
     }
 
-    @Test("LODSnapshotRef provides buffer access")
-    func testSnapshotRefBufferAccess() {
+    @Test
+    func `LODSnapshotRef provides buffer access`() {
       let config = MultiBandLODConfiguration(bandCount: 3, lodRatio: 64, bufferSeconds: 5)
       let processor = unsafe MultiBandLODProcessor(configuration: config)
 
@@ -175,8 +177,8 @@
       }
     }
 
-    @Test("LODSnapshotRef checked band access returns nil out-of-range")
-    func testSnapshotRefCheckedBandAccess() {
+    @Test
+    func `LODSnapshotRef checked band access returns nil out-of-range`() {
       let config = MultiBandLODConfiguration(bandCount: 2, lodRatio: 32, bufferSeconds: 5)
       let processor = unsafe MultiBandLODProcessor(configuration: config)
       unsafe processor.process(generateSineWave(frequency: 440, sampleRate: 44100, samples: 256))
@@ -188,7 +190,7 @@
       }
       let invalidUpper = unsafe ref.withContiguousLODChannelIfValid(
         band: ref.bandCount,
-        channel: .min
+        channel: .min,
       ) { $0.count }
 
       #expect(valid == ref.lodBufferLength)
@@ -198,13 +200,13 @@
 
     // MARK: - Lock-Free Behavior Tests
 
-    @Test("Snapshot is lock-free under concurrent access")
-    func testLockFreeSnapshotAccess() async throws {
+    @Test
+    func `Snapshot is lock-free under concurrent access`() async {
       let config = MultiBandLODConfiguration(
         bandCount: 5,
         lodRatio: 128,
         bufferSeconds: 60,
-        snapshotSwapInterval: 3  // Fast swaps for testing
+        snapshotSwapInterval: 3,  // Fast swaps for testing
       )
       let processor = unsafe MultiBandLODProcessor(configuration: config)
 
@@ -220,14 +222,14 @@
             let samples = generateSineWave(
               frequency: Double(220 + i % 440),
               sampleRate: 44100,
-              samples: 512
+              samples: 512,
             )
             unsafe processor.process(samples)
             unsafe writeIndices.append(processor.currentWriteIndex)
 
             // Small delay to simulate real audio timing
             if i % 100 == 0 {
-              try? await Task.sleep(nanoseconds: 1_000)
+              try? await Task.sleep(nanoseconds: 1000)
             }
           }
           return writeIndices
@@ -261,13 +263,13 @@
       }
     }
 
-    @Test("Snapshot data is consistent during reads")
-    func testSnapshotDataConsistency() async throws {
+    @Test
+    func `Snapshot data is consistent during reads`() async {
       let config = MultiBandLODConfiguration(
         bandCount: 3,
         lodRatio: 64,
         bufferSeconds: 30,
-        snapshotSwapInterval: 2
+        snapshotSwapInterval: 2,
       )
       let processor = unsafe MultiBandLODProcessor(configuration: config)
 
@@ -313,14 +315,14 @@
       }
     }
 
-    @Test("Snapshot swap interval affects update frequency")
-    func testSnapshotSwapIntervalEffect() {
+    @Test
+    func `Snapshot swap interval affects update frequency`() {
       // With interval=1, snapshot swaps every LOD commit
       let fastConfig = MultiBandLODConfiguration(
         bandCount: 3,
         lodRatio: 64,
         bufferSeconds: 10,
-        snapshotSwapInterval: 1
+        snapshotSwapInterval: 1,
       )
       let fastProcessor = unsafe MultiBandLODProcessor(configuration: fastConfig)
 
@@ -329,7 +331,7 @@
         bandCount: 3,
         lodRatio: 64,
         bufferSeconds: 10,
-        snapshotSwapInterval: 10
+        snapshotSwapInterval: 10,
       )
       let slowProcessor = unsafe MultiBandLODProcessor(configuration: slowConfig)
 
@@ -351,18 +353,18 @@
       // (more frequent slot swaps)
       #expect(
         fastWriteIndices.count >= slowWriteIndices.count,
-        "Fast swap interval should produce more unique indices"
+        "Fast swap interval should produce more unique indices",
       )
     }
 
     // MARK: - Performance Tests
 
-    @Test("Lock-free snapshot access is fast")
-    func testSnapshotAccessPerformance() {
+    @Test
+    func `Lock-free snapshot access is fast`() {
       let config = MultiBandLODConfiguration(
         bandCount: 5,
         lodRatio: 128,
-        bufferSeconds: 300
+        bufferSeconds: 300,
       )
       let processor = unsafe MultiBandLODProcessor(configuration: config)
 
@@ -386,8 +388,8 @@
 
       // Should be able to get at least 60,000 snapshots per second (1000x real-time)
       #expect(
-        snapshotsPerSecond > 60_000,
-        "Snapshot access too slow: \(Int(snapshotsPerSecond)) snapshots/sec"
+        snapshotsPerSecond > 60000,
+        "Snapshot access too slow: \(Int(snapshotsPerSecond)) snapshots/sec",
       )
 
       print("Lock-free snapshot performance:")
@@ -395,12 +397,12 @@
       print("  Snapshots per second: \(Int(snapshotsPerSecond))")
     }
 
-    @Test("Buffer access via snapshotRef has no allocation")
-    func testBufferAccessPerformance() {
+    @Test
+    func `Buffer access via snapshotRef has no allocation`() {
       let config = MultiBandLODConfiguration(
         bandCount: 5,
         lodRatio: 128,
-        bufferSeconds: 60
+        bufferSeconds: 60,
       )
       let processor = unsafe MultiBandLODProcessor(configuration: config)
 
@@ -430,8 +432,8 @@
 
       // Should handle 10,000+ full buffer accesses per second
       #expect(
-        accessesPerSecond > 10_000,
-        "Buffer access too slow: \(Int(accessesPerSecond)) accesses/sec"
+        accessesPerSecond > 10000,
+        "Buffer access too slow: \(Int(accessesPerSecond)) accesses/sec",
       )
 
       print("Buffer access performance:")
@@ -441,8 +443,8 @@
 
     // MARK: - Reset Tests
 
-    @Test("Reset clears all slots")
-    func testResetClearsAllSlots() {
+    @Test
+    func `Reset clears all slots`() {
       let config = MultiBandLODConfiguration(bandCount: 3, lodRatio: 64, bufferSeconds: 10)
       let processor = unsafe MultiBandLODProcessor(configuration: config)
 
@@ -470,19 +472,19 @@
 
     // MARK: - Helper Functions
 
-    @Test("Band split: 200 Hz dominates low band")
-    func testBandSplitLowTone() {
+    @Test
+    func `Band split: 200 Hz dominates low band`() {
       let config = MultiBandLODConfiguration(
         bandCount: 5,
         lodRatio: 64,
         bufferSeconds: 10,
-        sampleRate: 44_100,
-        crossoverMode: .mel(minFreq: 40, maxFreq: 15_000),
-        snapshotSwapInterval: 1
+        sampleRate: 44100,
+        crossoverMode: .mel(minFreq: 40, maxFreq: 15000),
+        snapshotSwapInterval: 1,
       )
       let processor = unsafe MultiBandLODProcessor(configuration: config)
 
-      let samples = generateSineWave(frequency: 200, sampleRate: 44_100, samples: 44_100 / 2)
+      let samples = generateSineWave(frequency: 200, sampleRate: 44100, samples: 44100 / 2)
       unsafe processor.process(samples)
 
       let snapshot = unsafe processor.snapshotLocking()
@@ -492,19 +494,19 @@
       #expect(maxBand == 0)
     }
 
-    @Test("Band split: 2 kHz shifts energy upward")
-    func testBandSplitMidTone() {
+    @Test
+    func `Band split: 2 kHz shifts energy upward`() {
       let config = MultiBandLODConfiguration(
         bandCount: 5,
         lodRatio: 64,
         bufferSeconds: 10,
-        sampleRate: 44_100,
-        crossoverMode: .mel(minFreq: 40, maxFreq: 15_000),
-        snapshotSwapInterval: 1
+        sampleRate: 44100,
+        crossoverMode: .mel(minFreq: 40, maxFreq: 15000),
+        snapshotSwapInterval: 1,
       )
       let processor = unsafe MultiBandLODProcessor(configuration: config)
 
-      let samples = generateSineWave(frequency: 2000, sampleRate: 44_100, samples: 44_100 / 2)
+      let samples = generateSineWave(frequency: 2000, sampleRate: 44100, samples: 44100 / 2)
       unsafe processor.process(samples)
 
       let snapshot = unsafe processor.snapshotLocking()
@@ -515,19 +517,19 @@
       #expect(averages[maxBand ?? 0] > averages[0])
     }
 
-    @Test("Band split: 10 kHz shows meaningful top-band energy")
-    func testBandSplitHighTone() {
+    @Test
+    func `Band split: 10 kHz shows meaningful top-band energy`() {
       let config = MultiBandLODConfiguration(
         bandCount: 5,
         lodRatio: 64,
         bufferSeconds: 10,
-        sampleRate: 44_100,
-        crossoverMode: .mel(minFreq: 40, maxFreq: 15_000),
-        snapshotSwapInterval: 1
+        sampleRate: 44100,
+        crossoverMode: .mel(minFreq: 40, maxFreq: 15000),
+        snapshotSwapInterval: 1,
       )
       let processor = unsafe MultiBandLODProcessor(configuration: config)
 
-      let samples = generateSineWave(frequency: 10_000, sampleRate: 44_100, samples: 44_100 / 2)
+      let samples = generateSineWave(frequency: 10000, sampleRate: 44100, samples: 44100 / 2)
       unsafe processor.process(samples)
 
       let snapshot = unsafe processor.snapshotLocking()

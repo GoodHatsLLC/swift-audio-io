@@ -24,7 +24,7 @@ public protocol BufferReceiver<T>: AnyObject, Sendable {
 }
 
 extension BufferReceiver {
-  public nonisolated func processBuffer(_ data: UnsafeBufferPointer<T>, timing: BufferTiming) {
+  public nonisolated func processBuffer(_ data: UnsafeBufferPointer<T>, timing _: BufferTiming) {
     unsafe processBuffer(data)
   }
 }
@@ -54,7 +54,7 @@ public struct BufferTiming: Sendable, Equatable {
     sampleRate: Double,
     hostTime: UInt64? = nil,
     sourceSampleTime: Int64? = nil,
-    sourceSampleRate: Double? = nil
+    sourceSampleRate: Double? = nil,
   ) {
     self.sampleTime = sampleTime
     self.sampleRate = sampleRate

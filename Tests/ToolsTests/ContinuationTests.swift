@@ -1,11 +1,12 @@
+// © GoodHatsLLC
+
 import Testing
 
 @testable import Tools
 
-@Suite
 struct ContinuationTests {
   @Test
-  func yieldsToAwaitersRegisteredBeforeYield() async throws {
+  func `yields to awaiters registered before yield`() async throws {
     let continuation = AsyncContinuation<Int>()
 
     async let first: Int = continuation()
@@ -20,7 +21,7 @@ struct ContinuationTests {
   }
 
   @Test
-  func returnsYieldedValueForFutureWaiters() async throws {
+  func `returns yielded value for future waiters`() async throws {
     let continuation = AsyncContinuation<Int>()
     try continuation.yield(7)
 
@@ -29,14 +30,14 @@ struct ContinuationTests {
   }
 
   @Test
-  func throwsAlreadyYieldedWithOriginalValueMetadata() throws {
+  func `throws already yielded with original value metadata`() throws {
     let continuation = AsyncContinuation<Int>()
     try continuation.yield(1)
 
     do {
       try continuation.yield(2)
       Issue.record("Expected the second yield to throw.")
-    } catch let error {
+    } catch {
       #expect(error.id == continuation.id)
       #expect(error.yieldedValueDescription == "1")
       #expect(error.description.contains("already yielded"))
@@ -44,7 +45,7 @@ struct ContinuationTests {
   }
 
   @Test
-  func resultWrapsValueInSuccess() async throws {
+  func `result wraps value in success`() async throws {
     let continuation = AsyncContinuation<String>()
     try continuation.yield("ok")
 
@@ -52,7 +53,7 @@ struct ContinuationTests {
   }
 
   @Test
-  func voidConvenienceYieldResumesWaiters() async throws {
+  func `void convenience yield resumes waiters`() async throws {
     let continuation = AsyncContinuation<Void>()
 
     async let waiter: Void = continuation()

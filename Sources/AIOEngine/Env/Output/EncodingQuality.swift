@@ -1,3 +1,5 @@
+// © GoodHatsLLC
+
 public import AVFAudio
 
 public enum EncodingQuality: Int, CaseIterable, Hashable, CustomStringConvertible, TypeDescribable,
@@ -8,16 +10,19 @@ public enum EncodingQuality: Int, CaseIterable, Hashable, CustomStringConvertibl
   case medium = 2
   case high = 3
   case maximum = 4
-  public var id: Self { self }
+  public var id: Self {
+    self
+  }
+
   public static let typeDescription: String = "Encoding Quality"
 
   public var description: String {
     switch self {
-    case .minimum: return "Minimum"
-    case .low: return "Low"
-    case .medium: return "Medium"
-    case .high: return "High"
-    case .maximum: return "Maximum"
+    case .minimum: "Minimum"
+    case .low: "Low"
+    case .medium: "Medium"
+    case .high: "High"
+    case .maximum: "Maximum"
     }
   }
 

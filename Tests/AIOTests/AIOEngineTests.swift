@@ -1,28 +1,28 @@
+// © GoodHatsLLC
+
 #if canImport(UIKit)
   import AVFoundation
   import Testing
   import UIKit
   import XCTest
-
   @testable import AIOEngine
 
-  @Suite
   struct AIOEngineTests {
     @Test
-    func testConfigurationCreatesFormat() throws {
+    func `configuration creates format`() throws {
       let config = RecordingConfiguration(
         inputConfiguration: InputConfiguration(sampleRate: .common(.sr48000), channels: .stereo),
-        outputConfiguration: .init(fileFormat: .aac, bitDepth: .pcmFloat32, quality: .high)
+        outputConfiguration: .init(fileFormat: .aac, bitDepth: .pcmFloat32, quality: .high),
       )
-      #expect(config.fileFormat?.sampleRate == 48_000)
+      #expect(config.fileFormat?.sampleRate == 48000)
       try #require(config.fileFormat?.channelCount == 2)
     }
 
     @Test
-    func testAACRejectsUnsupportedEncoderSampleRate() throws {
+    func `AAC rejects unsupported encoder sample rate`() throws {
       let config = RecordingConfiguration(
         inputConfiguration: InputConfiguration(sampleRate: .common(.sr96000), channels: .mono),
-        outputConfiguration: .init(fileFormat: .aac, bitDepth: .pcmFloat32, quality: .high)
+        outputConfiguration: .init(fileFormat: .aac, bitDepth: .pcmFloat32, quality: .high),
       )
 
       #expect(config.fileFormat == nil)
@@ -30,10 +30,10 @@
     }
 
     @Test
-    func testADTSRejectsUnsupportedEncoderSampleRate() throws {
+    func `ADTS rejects unsupported encoder sample rate`() throws {
       let config = RecordingConfiguration(
         inputConfiguration: InputConfiguration(sampleRate: .common(.sr96000), channels: .mono),
-        outputConfiguration: .init(fileFormat: .adts, bitDepth: .pcmFloat32, quality: .high)
+        outputConfiguration: .init(fileFormat: .adts, bitDepth: .pcmFloat32, quality: .high),
       )
 
       #expect(config.fileFormat == nil)
@@ -41,7 +41,7 @@
     }
 
     @Test
-    func testAACCompatibleCommonSampleRateMatrix() {
+    func `AAC compatible common sample rate matrix`() {
       let expectedAACRates: [SampleRate] = [
         .common(.sr16000),
         .common(.sr22050),
@@ -54,7 +54,7 @@
     }
 
     @Test
-    func testPCMAndFLACSupportAllCommonSampleRates() {
+    func `PCM and FLAC support all common sample rates`() {
       let allCommonRates = SampleRate.commonCases
       #expect(FileFormat.wav.compatibleCommonSampleRates == allCommonRates)
       #expect(FileFormat.caf.compatibleCommonSampleRates == allCommonRates)
@@ -63,42 +63,48 @@
     }
 
     @Test
-    func testTapConfigurationPreservesBus() throws {
+    func `tap configuration preserves bus`() throws {
       let configuration = RecordingConfiguration(
         inputConfiguration: .init(
           sampleRate: .common(.sr48000),
-          channels: .stereo
+          channels: .stereo,
         ),
         outputConfiguration: .init(
           fileFormat: .caf,
           bitDepth: .pcmFloat32,
-          quality: .maximum
-        )
+          quality: .maximum,
+        ),
       )
 
       let inputFormat = try #require(
         AVAudioFormat(
           commonFormat: .pcmFormatFloat32,
-          sampleRate: 48_000,
+          sampleRate: 48000,
           channels: 2,
-          interleaved: false
-        )
+          interleaved: false,
+        ),
       )
 
       let tapConfiguration = configuration.tapConfiguration(
         bus: 1,
-        input: inputFormat
+        input: inputFormat,
       )
 
       try #require(tapConfiguration?.bus == 1)
     }
 
     @Test
-    func testSourceChangeDetectionLogic() throws {
+    func `source change detection logic`() throws {
       final class TestManager {
         var _availableSources: [Int]
-        init(initial: [Int]) { self._availableSources = initial }
-        var availableSources: [Int] { _availableSources }
+        init(initial: [Int]) {
+          _availableSources = initial
+        }
+
+        var availableSources: [Int] {
+          _availableSources
+        }
+
         func updateSources(to new: [Int]) -> (added: [Int], removed: [Int]) {
           let previous = Set(availableSources)
           _availableSources = new

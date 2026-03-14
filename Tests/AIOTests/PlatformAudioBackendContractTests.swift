@@ -1,10 +1,10 @@
+// © GoodHatsLLC
+
 #if os(macOS)
   import Foundation
   import Testing
-
   @testable import AIOEngine
 
-  @Suite
   struct PlatformAudioBackendContractTests {
     actor StubState {
       private var inputs: [PlatformAudioInputDescriptor]
@@ -63,10 +63,10 @@
 
     @MainActor
     private func waitUntil(
-      timeoutMillis: Int = 2_000,
-      _ predicate: @escaping @MainActor () async -> Bool
+      timeoutMillis: Int = 2000,
+      _ predicate: @escaping @MainActor () async -> Bool,
     ) async -> Bool {
-      let deadline = Date().addingTimeInterval(Double(timeoutMillis) / 1_000.0)
+      let deadline = Date().addingTimeInterval(Double(timeoutMillis) / 1000.0)
       while Date() < deadline {
         if await predicate() { return true }
         try? await Task.sleep(for: .milliseconds(20))
@@ -76,28 +76,28 @@
 
     @Test
     @MainActor
-    func runLoadsAvailableInputsAndSelectsDefaultInput() async throws {
+    func `run loads available inputs and selects default input`() async throws {
       let initialInputs = [
         PlatformAudioInputDescriptor(
           id: "mic-a",
           name: "Built-in Microphone",
           channelCount: 1,
-          isDefault: false
+          isDefault: false,
         ),
         PlatformAudioInputDescriptor(
           id: "mic-b",
           name: "USB Mic",
           channelCount: 2,
-          isDefault: true
+          isDefault: true,
         ),
       ]
       let state = StubState(inputs: initialInputs)
       let backend = StubPlatformAudioBackend(state: state)
-      let manager = AudioEnvironmentManager(
+      let manager = try AudioEnvironmentManager(
         env: AudioEnvironment(),
         errorManager: MockErrorManager(),
-        defaults: try makeIsolatedDefaults(),
-        platformAudioBackend: backend
+        defaults: makeIsolatedDefaults(),
+        platformAudioBackend: backend,
       )
 
       let runTask = Task { @MainActor in
@@ -119,22 +119,23 @@
 
     @Test
     @MainActor
-    func routeChangesRefreshAvailableInputs() async throws {
+    func `route changes refresh available inputs`() async throws {
       let state = StubState(
         inputs: [
           PlatformAudioInputDescriptor(
             id: "mic-a",
             name: "Built-in Microphone",
             channelCount: 1,
-            isDefault: true
+            isDefault: true,
           )
-        ])
+        ],
+      )
       let backend = StubPlatformAudioBackend(state: state)
-      let manager = AudioEnvironmentManager(
+      let manager = try AudioEnvironmentManager(
         env: AudioEnvironment(),
         errorManager: MockErrorManager(),
-        defaults: try makeIsolatedDefaults(),
-        platformAudioBackend: backend
+        defaults: makeIsolatedDefaults(),
+        platformAudioBackend: backend,
       )
 
       let runTask = Task { @MainActor in
@@ -157,9 +158,10 @@
             id: "mic-b",
             name: "USB Mic",
             channelCount: 2,
-            isDefault: true
+            isDefault: true,
           )
-        ])
+        ],
+      )
       await state.emitRouteChange()
 
       let refreshed = await waitUntil {

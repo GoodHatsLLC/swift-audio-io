@@ -1,3 +1,5 @@
+// © GoodHatsLLC
+
 extension AnyHashable {
   init<each T: Hashable>(of many: repeat each T) {
     var group: [AnyHashable] = []

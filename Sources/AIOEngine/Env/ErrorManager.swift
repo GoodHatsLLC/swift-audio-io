@@ -1,3 +1,5 @@
+// © GoodHatsLLC
+
 public import Foundation
 public import Observation
 public import SwiftUI
@@ -22,15 +24,15 @@ public final class ErrorManager: Sendable {
       visibility: Visibility,
       userMessage: String? = nil,
       context: String? = nil,
-      source: SourceLocation
+      source: SourceLocation,
     ) {
       self.visibility = visibility
       self.userMessage = userMessage
       self.context = context
       self.source = source
-      self.localizedDescription = error.localizedDescription
-      self.debugDump = String(dump: error)
-      self.typeName = String(reflecting: type(of: error))
+      localizedDescription = error.localizedDescription
+      debugDump = String(dump: error)
+      typeName = String(reflecting: type(of: error))
     }
 
     public let id: UUID = .init()
@@ -72,7 +74,7 @@ public final class ErrorManager: Sendable {
     file: String = #file,
     function: String = #function,
     line: Int = #line,
-    column: Int = #column
+    column: Int = #column,
   ) {
     let source = SourceLocation(file: file, function: function, line: line, column: column)
     log.error(
@@ -80,7 +82,7 @@ public final class ErrorManager: Sendable {
       error enqueued: \(String(dump: error), privacy: .public)\
       (\(error.localizedDescription, privacy: .public))\
       \("[\(source.file):\(source.function):\(source.line)]", privacy: .public)
-      """
+      """,
     )
     Task { @MainActor in
       errors.append(
@@ -89,8 +91,8 @@ public final class ErrorManager: Sendable {
           visibility: visibility,
           userMessage: userMessage,
           context: context,
-          source: source
-        )
+          source: source,
+        ),
       )
     }
   }
@@ -98,17 +100,17 @@ public final class ErrorManager: Sendable {
   public func reporter(
     visibility: ErrorEvent.Visibility,
     userMessage: String? = nil,
-    context: String? = nil
+    context: String? = nil,
   ) -> Reporter<any Error> {
     .init(
       receivers: {
         log
           .error(
             """
-            error report: \(String(dump: $0),privacy: .public)\
-            (\($0.localizedDescription,privacy: .public))\
-            \("[\("\($1.file):\($1.function):\($1.line)")]",privacy: .public)
-            """
+            error report: \(String(dump: $0), privacy: .public)\
+            (\($0.localizedDescription, privacy: .public))\
+            \("[\("\($1.file):\($1.function):\($1.line)")]", privacy: .public)
+            """,
           )
       },
       { err, _ in
@@ -117,10 +119,10 @@ public final class ErrorManager: Sendable {
             err,
             visibility: visibility,
             userMessage: userMessage,
-            context: context
+            context: context,
           )
         }
-      }
+      },
     )
   }
 
@@ -132,6 +134,7 @@ public final class ErrorManager: Sendable {
     reporter(visibility: .debug)
   }
 }
+
 extension EnvironmentValues {
   @Entry public var errorManager: ErrorManager = .init()
 }

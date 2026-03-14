@@ -1,3 +1,5 @@
+// © GoodHatsLLC
+
 #if os(macOS)
   import AVFoundation
   import Tools
@@ -20,22 +22,23 @@
         let result = try reinstallTap(
           configuration: config,
           processingFormat: processingFormat,
-          stopEngine: true
+          stopEngine: true,
         )
         applyTapInstallResult(result, processingFormat: processingFormat)
         await onRecordingInterruption?(
-          .routeChangeContinuing(event: event, qualityChange: nil)
+          .routeChangeContinuing(event: event, qualityChange: nil),
         )
       } catch {
         await handleUnrecoverableInterruption(
-          reason: "Route change reconfiguration failed: \(error.localizedDescription)")
+          reason: "Route change reconfiguration failed: \(error.localizedDescription)",
+        )
       }
     }
 
     @MainActor
     public func handleInterruption(
       type: AudioInterruptionType,
-      options: AudioInterruptionOptions?
+      options: AudioInterruptionOptions?,
     ) async {
       _ = options
       guard type == .began else { return }

@@ -1,7 +1,9 @@
+// © GoodHatsLLC
+
 #if os(iOS)
   #if DEBUG
-    public import AVFoundation
     import Atomics
+    public import AVFoundation
     import Tools
 
     @_spi(TESTING)
@@ -24,7 +26,7 @@
           writerStallCount: metrics.writerStallCount.load(ordering: .relaxed),
           receiverUnderruns: metrics.receiverUnderruns.load(ordering: .relaxed),
           writerDrops: metrics.writerDrops.load(ordering: .relaxed),
-          receiverDrops: metrics.receiverDrops.load(ordering: .relaxed)
+          receiverDrops: metrics.receiverDrops.load(ordering: .relaxed),
         )
       }
 
@@ -34,7 +36,7 @@
         }
         return (
           writer: writerBuffers?.map(\.capacity) ?? [],
-          receiver: receiverBuffers?.map(\.capacity) ?? []
+          receiver: receiverBuffers?.map(\.capacity) ?? [],
         )
       }
 
@@ -49,10 +51,10 @@
       }
 
       @MainActor
-      func setReinstallTapOverride(
+      internal func setReinstallTapOverride(
         _ override: (
           @MainActor (RecordingConfiguration, AVAudioFormat) throws(AIOError) -> TapInstallResult
-        )?
+        )?,
       ) {
         testReinstallTapOverride = override
       }
@@ -64,7 +66,7 @@
         configuration: RecordingConfiguration,
         outputURL: URL? = nil,
         bufferSize: AVAudioFrameCount = 1024,
-        enableReceivers: Bool = true
+        enableReceivers: Bool = true,
       ) throws(AIOError) -> URL {
         guard !isRecording else { throw .alreadyRecording }
         guard let processingFormat = configuration.processingFormat else {
@@ -93,7 +95,7 @@
 
         let audioBuffers = makeAudioBuffers(
           sampleRate: sampleRate,
-          channelCount: channelCount
+          channelCount: channelCount,
         )
         let receiverBuffers =
           enableReceivers
@@ -101,7 +103,7 @@
           : nil
         let timingCapacity = max(
           64,
-          Int(ceil(Double(sampleRate) / Double(bufferSize))) * 4
+          Int(ceil(Double(sampleRate) / Double(bufferSize))) * 4,
         )
         let receiverTiming =
           enableReceivers
@@ -125,7 +127,7 @@
           startReceiverLoop(
             buffers: receiverBuffers,
             timing: receiverTiming,
-            processingFormat: processingFormat
+            processingFormat: processingFormat,
           )
         }
 
@@ -139,7 +141,7 @@
         channels: [[Float]],
         hostTime: UInt64? = nil,
         sourceSampleTime: Int64? = nil,
-        sourceSampleRate: Double? = nil
+        sourceSampleRate: Double? = nil,
       ) {
         guard !channels.isEmpty else { return }
         let frameLength = channels.map(\.count).min() ?? 0
@@ -156,22 +158,21 @@
         let writerAvailable = Self.minimumAvailableWriteFrames(
           channelCount: effectiveChannelCount,
           audioBuffers: audioBuffers,
-          limit: frameLength
+          limit: frameLength,
         )
         let writerCanWrite = writerAvailable >= frameLength
 
-        let receiverCanWrite: Bool
-        if let receiverBuffers, let timingBuffer {
-          receiverCanWrite =
+        let receiverCanWrite: Bool =
+          if let receiverBuffers, let timingBuffer {
             timingBuffer.availableToWrite >= 1
-            && Self.minimumAvailableWriteFrames(
-              channelCount: effectiveChannelCount,
-              audioBuffers: receiverBuffers,
-              limit: frameLength
-            ) >= frameLength
-        } else {
-          receiverCanWrite = false
-        }
+              && Self.minimumAvailableWriteFrames(
+                channelCount: effectiveChannelCount,
+                audioBuffers: receiverBuffers,
+                limit: frameLength,
+              ) >= frameLength
+          } else {
+            false
+          }
 
         for i in 0..<effectiveChannelCount {
           unsafe channels[i].withUnsafeBufferPointer { buffer in
@@ -191,7 +192,7 @@
             frameCount: frameLength,
             hostTime: hostTime,
             sourceSampleTime: sourceSampleTime,
-            sourceSampleRate: sourceSampleRate
+            sourceSampleRate: sourceSampleRate,
           )
           _ = unsafe withUnsafePointer(to: &packet) { pointer in
             unsafe timingBuffer.write(UnsafeBufferPointer(start: pointer, count: 1))
@@ -200,17 +201,17 @@
 
         recordingSampleTimeAtomic.wrappingIncrement(
           by: Int64(frameLength),
-          ordering: .relaxed
+          ordering: .relaxed,
         )
       }
 
       /// Returns a closure that wraps ``processAudio(buffer:time:to:)`` for the given format.
       /// Useful for verifying the tap handler can run off the main queue.
       public nonisolated func makeTapHandlerForTesting(
-        processingFormat: AVAudioFormat
+        processingFormat: AVAudioFormat,
       ) -> @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void {
         { [self] buffer, time in
-          self.processAudio(buffer: buffer, time: time, to: processingFormat)
+          processAudio(buffer: buffer, time: time, to: processingFormat)
         }
       }
 
@@ -224,32 +225,33 @@
         newFormat: AVAudioFormat,
         processingFormat: AVAudioFormat,
         isInputAvailable: Bool,
-        reason: AVAudioSession.RouteChangeReason = .routeConfigurationChange
+        reason: AVAudioSession.RouteChangeReason = .routeConfigurationChange,
       ) async -> Bool {
         guard isRecording || wantsRecording else { return false }
 
         let canContinue = isFormatViable(
           newFormat,
           processingFormat: processingFormat,
-          isInputAvailable: isInputAvailable
+          isInputAvailable: isInputAvailable,
         )
 
         if canContinue {
           let qualityChange = createQualityChange(
             from: oldFormat,
             to: newFormat,
-            reason: describeRouteChangeReason(reason)
+            reason: describeRouteChangeReason(reason),
           )
           let event = AudioRouteChangeEvent(
             reason: reason,
             previousRoute: nil,
-            session: AVAudioSession.sharedInstance()
+            session: AVAudioSession.sharedInstance(),
           )
           await onRecordingInterruption?(
             .routeChangeContinuing(
               event: event,
-              qualityChange: qualityChange
-            ))
+              qualityChange: qualityChange,
+            ),
+          )
           return true
         }
 

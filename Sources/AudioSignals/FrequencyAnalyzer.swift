@@ -1,3 +1,5 @@
+// © GoodHatsLLC
+
 #if canImport(Accelerate)
   import Accelerate
   public import Foundation
@@ -25,7 +27,7 @@
         sampleRate: Double,
         smoothingFactor: Float,
         noiseFloor: Float,
-        windowType: WindowType
+        windowType: WindowType,
       ) {
         self.fftSize = fftSize
         self.spectrumSize = min(spectrumSize, fftSize / 2)
@@ -62,7 +64,7 @@
     private var tempSpectrum: [Float]
     private var workBuffer: [Float]
 
-    // Frequency mapping
+    /// Frequency mapping
     private var frequencyBins: [Float]
 
     // MARK: - Initialization
@@ -71,7 +73,7 @@
       self.configuration = configuration
 
       // Validate FFT size (must be power of 2)
-      guard configuration.fftSize > 0 && (configuration.fftSize & (configuration.fftSize - 1)) == 0
+      guard configuration.fftSize > 0, (configuration.fftSize & (configuration.fftSize - 1)) == 0
       else {
         throw FrequencyAnalyzerError.invalidFFTSize
       }
@@ -83,7 +85,8 @@
         let setup = unsafe vDSP.FFT(
           log2n: log2n,
           radix: .radix2,
-          ofType: DSPSplitComplex.self)
+          ofType: DSPSplitComplex.self,
+        )
       else {
         throw FrequencyAnalyzerError.allocationFailed
       }
@@ -105,14 +108,14 @@
       // Create window function
       window = Self.createWindow(
         type: configuration.windowType,
-        size: configuration.fftSize
+        size: configuration.fftSize,
       )
 
       // Calculate frequency bins
       frequencyBins = Self.calculateFrequencyBins(
         fftSize: configuration.fftSize,
         sampleRate: configuration.sampleRate,
-        spectrumSize: configuration.spectrumSize
+        spectrumSize: configuration.spectrumSize,
       )
     }
 
@@ -134,7 +137,7 @@
           spectrum: decayedSpectrum,
           frequencies: frequencyBins,
           peakFrequency: 0.0,
-          spectralCentroid: 0.0
+          spectralCentroid: 0.0,
         )
       }
 
@@ -149,7 +152,7 @@
         spectrum: spectrum,
         frequencies: frequencyBins,
         peakFrequency: peakFreq,
-        spectralCentroid: centroid
+        spectralCentroid: centroid,
       )
     }
 
@@ -196,7 +199,8 @@
             unsafe memcpy(
               destinationBase.advanced(by: shiftCount),
               sourceBase,
-              dataCount * MemoryLayout<Float>.size)
+              dataCount * MemoryLayout<Float>.size,
+            )
           }
         }
       }
@@ -238,7 +242,8 @@
           &scale,
           magnitudesBase,
           1,
-          vDSP_Length(magCount))
+          vDSP_Length(magCount),
+        )
       }
     }
 
@@ -334,9 +339,9 @@
     /// Format frequency for display labels
     private func formatFrequency(_ frequency: Float) -> String {
       if frequency >= 1000 {
-        return "\((frequency / 1000).formatted(.number.precision(.fractionLength(1))))k"
+        "\((frequency / 1000).formatted(.number.precision(.fractionLength(1))))k"
       } else {
-        return frequency.formatted(.number.precision(.fractionLength(0)))
+        frequency.formatted(.number.precision(.fractionLength(0)))
       }
     }
 
@@ -365,9 +370,9 @@
 
     /// Calculate frequency bins for spectrum mapping
     private static func calculateFrequencyBins(
-      fftSize: Int,
+      fftSize _: Int,
       sampleRate: Double,
-      spectrumSize: Int
+      spectrumSize: Int,
     ) -> [Float] {
       guard spectrumSize > 0 else { return [] }
 
@@ -433,9 +438,9 @@ public enum FrequencyAnalyzerError: AudioError, LocalizedError {
   public var errorDescription: String? {
     switch self {
     case .invalidFFTSize:
-      return "FFT size must be a power of 2"
+      "FFT size must be a power of 2"
     case .allocationFailed:
-      return "Failed to allocate memory for FFT buffers"
+      "Failed to allocate memory for FFT buffers"
     }
   }
 
@@ -454,7 +459,7 @@ extension FrequencyAnalyzer.Configuration {
     sampleRate: 44100.0,
     smoothingFactor: 0.4,
     noiseFloor: -60.0,
-    windowType: .hann
+    windowType: .hann,
   )
 
   /// High-quality analysis for detailed spectrum visualization
@@ -464,7 +469,7 @@ extension FrequencyAnalyzer.Configuration {
     sampleRate: 44100.0,
     smoothingFactor: 0.2,
     noiseFloor: -80.0,
-    windowType: .blackman
+    windowType: .blackman,
   )
 
   /// Low-power mode for battery conservation
@@ -474,6 +479,6 @@ extension FrequencyAnalyzer.Configuration {
     sampleRate: 44100.0,
     smoothingFactor: 0.6,
     noiseFloor: -50.0,
-    windowType: .hann
+    windowType: .hann,
   )
 }

@@ -1,12 +1,13 @@
+// © GoodHatsLLC
+
 #if canImport(AVFoundation)
   import AIOEngine
   import AudioSignals
   import Foundation
   import Testing
 
-  @Suite("Frequency Bucketer Tests")
   struct FrequencyBucketerTests {
-    private func linearFrequencies(count: Int, min: Float = 20, max: Float = 20_000) -> [Float] {
+    private func linearFrequencies(count: Int, min: Float = 20, max: Float = 20000) -> [Float] {
       guard count > 1 else { return [min] }
       let span = max - min
       return (0..<count).map { index in
@@ -16,22 +17,22 @@
 
     // MARK: - Initialization Tests
 
-    @Test("FrequencyBucketer initializes with default configuration")
-    func testFrequencyBucketerDefaultInit() {
+    @Test
+    func `FrequencyBucketer initializes with default configuration`() {
       let bucketer = FrequencyBucketer()
       #expect(bucketer.currentMode == .mel(bucketCount: 24))
     }
 
-    @Test("FrequencyBucketer initializes with custom configuration")
-    func testFrequencyBucketerCustomInit() {
+    @Test
+    func `FrequencyBucketer initializes with custom configuration`() {
       let bucketer = FrequencyBucketer(mode: .linear(bucketCount: 32), sampleRate: 48000)
       #expect(bucketer.currentMode == .linear(bucketCount: 32))
     }
 
     // MARK: - MEL Bucketing Tests
 
-    @Test("MEL bucketing produces correct number of buckets")
-    func testMELBucketingCount() {
+    @Test
+    func `MEL bucketing produces correct number of buckets`() {
       let bucketer = FrequencyBucketer(mode: .mel(bucketCount: 24))
       let spectrum = Array(repeating: Float(0.5), count: 256)
       let frequencies = (0..<256).map { Float($0) * (22050.0 / 256.0) }
@@ -40,8 +41,8 @@
       #expect(buckets.count == 24)
     }
 
-    @Test("MEL bucketing assigns correct IDs")
-    func testMELBucketingIDs() {
+    @Test
+    func `MEL bucketing assigns correct IDs`() {
       let bucketer = FrequencyBucketer(mode: .mel(bucketCount: 16))
       let spectrum = Array(repeating: Float(0.5), count: 128)
       let frequencies = (0..<128).map { Float($0) * (22050.0 / 128.0) }
@@ -54,8 +55,8 @@
 
     // MARK: - Logarithmic Bucketing Tests
 
-    @Test("Logarithmic bucketing produces correct number of buckets")
-    func testLogarithmicBucketingCount() {
+    @Test
+    func `Logarithmic bucketing produces correct number of buckets`() {
       let bucketer = FrequencyBucketer(mode: .logarithmic(bucketCount: 10))
       let spectrum = Array(repeating: Float(0.5), count: 256)
       let frequencies = (0..<256).map { Float($0) * (22050.0 / 256.0) }
@@ -66,8 +67,8 @@
 
     // MARK: - Linear Bucketing Tests
 
-    @Test("Linear bucketing produces correct number of buckets")
-    func testLinearBucketingCount() {
+    @Test
+    func `Linear bucketing produces correct number of buckets`() {
       let bucketer = FrequencyBucketer(mode: .linear(bucketCount: 8))
       let spectrum = Array(repeating: Float(0.5), count: 256)
       let frequencies = (0..<256).map { Float($0) * (22050.0 / 256.0) }
@@ -78,8 +79,8 @@
 
     // MARK: - Standard Bands Tests
 
-    @Test("Standard bands bucketing produces correct number of buckets")
-    func testStandardBandsBucketing() {
+    @Test
+    func `Standard bands bucketing produces correct number of buckets`() {
       let bucketer = FrequencyBucketer(mode: .bands(.musicProduction))
       let spectrum = Array(repeating: Float(0.5), count: 256)
       let frequencies = (0..<256).map { Float($0) * (22050.0 / 256.0) }
@@ -90,13 +91,13 @@
 
     // MARK: - Weighting Tests
 
-    @Test("A-weighting emphasizes midrange frequencies")
-    func testAWeightingEmphasis() {
+    @Test
+    func `A-weighting emphasizes midrange frequencies`() {
       let bucketer = FrequencyBucketer(
         mode: .bands(.threeBand),
-        sampleRate: 44_100,
+        sampleRate: 44100,
         peakHoldDecayRate: 0,
-        weighting: .aWeighting
+        weighting: .aWeighting,
       )
       let spectrum = Array(repeating: Float(1.0), count: 512)
       let frequencies = linearFrequencies(count: spectrum.count)
@@ -112,13 +113,13 @@
       #expect(mid > high)
     }
 
-    @Test("No weighting keeps magnitudes uniform for flat spectrum")
-    func testNoWeightingUniform() {
+    @Test
+    func `No weighting keeps magnitudes uniform for flat spectrum`() {
       let bucketer = FrequencyBucketer(
         mode: .bands(.threeBand),
-        sampleRate: 44_100,
+        sampleRate: 44100,
         peakHoldDecayRate: 0,
-        weighting: .none
+        weighting: .none,
       )
       let spectrum = Array(repeating: Float(1.0), count: 512)
       let frequencies = linearFrequencies(count: spectrum.count)
@@ -130,13 +131,13 @@
       #expect(abs(maxValue - minValue) < 0.001)
     }
 
-    @Test("Updating weighting recomputes bucket magnitudes")
-    func testWeightingUpdate() {
+    @Test
+    func `Updating weighting recomputes bucket magnitudes`() {
       let bucketer = FrequencyBucketer(
         mode: .bands(.threeBand),
-        sampleRate: 44_100,
+        sampleRate: 44100,
         peakHoldDecayRate: 0,
-        weighting: .none
+        weighting: .none,
       )
       let spectrum = Array(repeating: Float(1.0), count: 512)
       let frequencies = linearFrequencies(count: spectrum.count)
@@ -150,8 +151,8 @@
 
     // MARK: - Empty Input Tests
 
-    @Test("Empty spectrum returns empty buckets with decay")
-    func testEmptySpectrum() {
+    @Test
+    func `Empty spectrum returns empty buckets with decay`() {
       let bucketer = FrequencyBucketer(mode: .mel(bucketCount: 8))
 
       // First call with non-empty data
@@ -166,8 +167,8 @@
 
     // MARK: - Peak Hold Tests
 
-    @Test("Peak hold values decay over time")
-    func testPeakHoldDecay() {
+    @Test
+    func `Peak hold values decay over time`() {
       let bucketer = FrequencyBucketer(mode: .mel(bucketCount: 8))
       let frequencies = (0..<64).map { Float($0) * (22050.0 / 64.0) }
 
@@ -186,8 +187,8 @@
       #expect(initialPeak >= decayedPeak)
     }
 
-    @Test("Reset peak hold clears all values")
-    func testResetPeakHold() {
+    @Test
+    func `Reset peak hold clears all values`() {
       let bucketer = FrequencyBucketer(mode: .mel(bucketCount: 8))
       let frequencies = (0..<64).map { Float($0) * (22050.0 / 64.0) }
 
@@ -211,8 +212,8 @@
 
     // MARK: - Mode Update Tests
 
-    @Test("Mode can be updated")
-    func testModeUpdate() {
+    @Test
+    func `Mode can be updated`() {
       let bucketer = FrequencyBucketer(mode: .mel(bucketCount: 24))
       #expect(bucketer.currentMode == .mel(bucketCount: 24))
 
@@ -225,8 +226,8 @@
       #expect(buckets.count == 16)
     }
 
-    @Test("Same mode update is no-op")
-    func testSameModeUpdate() {
+    @Test
+    func `Same mode update is no-op`() {
       let bucketer = FrequencyBucketer(mode: .mel(bucketCount: 24))
       let frequencies = (0..<64).map { Float($0) * (22050.0 / 64.0) }
 
@@ -249,8 +250,8 @@
 
     // MARK: - Frequency Range Tests
 
-    @Test("Bucket frequency ranges are ordered")
-    func testBucketFrequencyRangesOrdered() {
+    @Test
+    func `Bucket frequency ranges are ordered`() {
       let bucketer = FrequencyBucketer(mode: .mel(bucketCount: 16))
       let spectrum = Array(repeating: Float(0.5), count: 128)
       let frequencies = (0..<128).map { Float($0) * (22050.0 / 128.0) }
@@ -262,8 +263,8 @@
       }
     }
 
-    @Test("Bucket frequency ranges are non-negative")
-    func testBucketFrequencyRangesNonNegative() {
+    @Test
+    func `Bucket frequency ranges are non-negative`() {
       let bucketer = FrequencyBucketer(mode: .logarithmic(bucketCount: 10))
       let spectrum = Array(repeating: Float(0.5), count: 128)
       let frequencies = (0..<128).map { Float($0) * (22050.0 / 128.0) }

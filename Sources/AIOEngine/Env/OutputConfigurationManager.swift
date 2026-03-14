@@ -1,3 +1,5 @@
+// © GoodHatsLLC
+
 #if os(iOS)
   import AVFAudio
   public import Foundation
@@ -7,12 +9,11 @@
   @MainActor
   @Observable
   public final class OutputConfigurationManager {
-
     let env: AudioEnvironment
     let errorManager: any ErrorManaging
     private let defaults: UserDefaults
 
-    private struct PersistedOutputConfiguration: Codable, Sendable {
+    private struct PersistedOutputConfiguration: Codable {
       var outputFormatRawValue: String
       var bitDepthRawValue: Int
       var encodingQualityRawValue: Int
@@ -39,7 +40,7 @@
     public init(
       env: AudioEnvironment,
       errorManager: any ErrorManaging,
-      defaults: UserDefaults = .standard
+      defaults: UserDefaults = .standard,
     ) {
       self.env = env
       self.errorManager = errorManager
@@ -67,11 +68,13 @@
         persistToDefaultsIfNeeded()
       }
     }
+
     private var _outputFormat: FileFormat? = .adts
     /// The available output file formats.
     public var availableOutputFormats: [FileFormat] {
       FileFormat.allCases
     }
+
     /// The bit depth for the recording.
     public var bitDepth: BitDepth? {
       get {
@@ -84,11 +87,13 @@
         persistToDefaultsIfNeeded()
       }
     }
+
     private var _bitDepth: BitDepth? = .pcmFloat32
     /// The available bit depths for the selected file format.
     public var availableBitDepths: [BitDepth] {
       (outputFormat?.supportedBitDepths ?? BitDepth.allCases).sorted()
     }
+
     private var _encodingQuality: EncodingQuality? = .high
 
     /// The encoding quality for the recording.
@@ -118,8 +123,7 @@
     /// The current output configuration.
     public var outputConfiguration: OutputConfiguration? {
       restoreFromDefaultsForCurrentInputIfNeeded()
-      guard
-        let of = outputFormat ?? availableOutputFormats.first,
+      guard let of = outputFormat ?? availableOutputFormats.first,
         let bd = resolveBitDepth(for: of) ?? of.supportedBitDepths.first,
         let eq = encodingQuality ?? availableEncodingQualities.first
       else {
@@ -142,7 +146,7 @@
       if let bitDepth, !format.supportedBitDepths.contains(bitDepth) {
         self.bitDepth = format.supportedBitDepths.first
       } else if bitDepth == nil {
-        self.bitDepth = format.supportedBitDepths.first
+        bitDepth = format.supportedBitDepths.first
       }
 
       if format.requiresQuality == false {
@@ -183,7 +187,7 @@
       let persisted = PersistedOutputConfiguration(
         outputFormatRawValue: config.fileFormat.rawValue,
         bitDepthRawValue: config.bitDepth.rawValue,
-        encodingQualityRawValue: config.quality.rawValue
+        encodingQualityRawValue: config.quality.rawValue,
       )
 
       writeLastConfig(persisted)
@@ -204,7 +208,8 @@
       guard let data = defaults.data(forKey: StorageKey.configByInputId) else { return nil }
       guard
         let dict = try? JSONDecoder().decode(
-          [String: PersistedOutputConfiguration].self, from: data)
+          [String: PersistedOutputConfiguration].self, from: data,
+        )
       else { return nil }
       return dict[inputId]
     }
@@ -222,6 +227,5 @@
       guard let data = try? JSONEncoder().encode(dict) else { return }
       defaults.set(data, forKey: StorageKey.configByInputId)
     }
-
   }
 #endif

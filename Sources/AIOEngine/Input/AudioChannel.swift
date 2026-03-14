@@ -1,3 +1,5 @@
+// © GoodHatsLLC
+
 #if canImport(AVFoundation)
   public import AVFoundation
 
@@ -8,12 +10,15 @@
       public static func == (lhs: PlatformChannel, rhs: PlatformChannel) -> Bool {
         lhs.mChannelLabel == rhs.mChannelLabel
       }
+
       public func hash(into hasher: inout Hasher) {
         hasher.combine(mChannelLabel)
       }
+
       public var name: String {
         mChannelLabel.description
       }
+
       /// Description of the physical location of this channel.
       public var channelLabel: AudioChannelLabel {
         mChannelLabel
@@ -25,7 +30,6 @@
       public var name: String {
         channelName
       }
-
     }
   #endif
 
@@ -39,6 +43,7 @@
     public var name: String {
       platform.name
     }
+
     /// Description of the physical location of this channel.
     public var channelLabel: AudioChannelLabel {
       platform.channelLabel
@@ -51,11 +56,11 @@
       public var owningInputID: String {
         platform.owningPortUID
       }
+
       /// The index of this channel in its owning port's array of channels.
       public var channelNumber: Int {
         platform.channelNumber
       }
     #endif
-
   }
 #endif

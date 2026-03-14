@@ -1,3 +1,5 @@
+// © GoodHatsLLC
+
 import Synchronization
 
 public enum CancellationAwaitResult<T> {
@@ -5,8 +7,8 @@ public enum CancellationAwaitResult<T> {
 }
 
 public func awaitCancellation<T>(
-  isolation: (any Actor)? = #isolation,
-  then action: () async -> T
+  isolation _: (any Actor)? = #isolation,
+  then action: () async -> T,
 ) async -> CancellationAwaitResult<T> {
   let mutex: Mutex<CheckedContinuation<Void, Never>?> = .init(nil)
   await withTaskCancellationHandler {
@@ -27,8 +29,8 @@ public func awaitCancellation<T>(
 }
 
 public func awaitCancellation(
-  isolation: (any Actor)? = #isolation,
-  then action: () async -> Void
+  isolation _: (any Actor)? = #isolation,
+  then action: () async -> Void,
 ) async throws(CancellationError) {
   let mutex: Mutex<CheckedContinuation<Void, Never>?> = .init(nil)
 
@@ -51,9 +53,9 @@ public func awaitCancellation(
 }
 
 public func withCancellationSideEffect<T>(
-  isolation: (any Actor)? = #isolation,
+  isolation _: (any Actor)? = #isolation,
   _ operation: () async throws -> T,
-  onCancel action: @Sendable () -> Void
+  onCancel action: @Sendable () -> Void,
 ) async rethrows -> T {
   try await withTaskCancellationHandler {
     try await operation()

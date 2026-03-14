@@ -1,10 +1,12 @@
+// © GoodHatsLLC
+
 #if canImport(UIKit) && !os(macOS)
 
   public import AVFAudio
   import Combine
   public import Observation
-  import Tools
   import SwiftUI
+  import Tools
   public import UIKit
 
   @MainActor
@@ -33,12 +35,12 @@
     }
 
     init() {
-      self.orientation = UIDevice.current.orientation
+      orientation = UIDevice.current.orientation
     }
 
     public func run() async {
       for await o in Self.stream() {
-        self.orientation = o
+        orientation = o
       }
     }
 

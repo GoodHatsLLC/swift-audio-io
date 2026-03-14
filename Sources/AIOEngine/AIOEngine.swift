@@ -1,7 +1,9 @@
+// © GoodHatsLLC
+
 #if canImport(AVFoundation)
-  import AVFoundation
   import AsyncAlgorithms
   import Atomics
+  import AVFoundation
   import Dispatch
   public import Foundation
   public import Observation
@@ -10,9 +12,7 @@
 
   private let log = SystemLog.make()
   #if DEBUG
-    let rtLoggingEnabled: Bool = {
-      ProcessInfo.processInfo.environment["AIO_RT_LOGS"] == "1"
-    }()
+    let rtLoggingEnabled: Bool = ProcessInfo.processInfo.environment["AIO_RT_LOGS"] == "1"
   #else
     let rtLoggingEnabled = false
   #endif
@@ -87,7 +87,9 @@
         case setPreferredInput
         case overrideOutputAudioPort
 
-        public var description: String { rawValue }
+        public var description: String {
+          rawValue
+        }
       }
 
       public enum AudioFileOperation: String, Sendable, Equatable, CustomStringConvertible {
@@ -95,7 +97,9 @@
         case openForWriting
         case write
 
-        public var description: String { rawValue }
+        public var description: String {
+          rawValue
+        }
       }
 
       /// The operation could not be completed because the engine is not currently recording.
@@ -120,7 +124,7 @@
       case unsupportedEncodedSampleRate(
         fileFormat: FileFormat,
         sampleRate: Double,
-        supportedSampleRates: [Double]
+        supportedSampleRates: [Double],
       )
       /// The scrub time is invalid.
       case invalidScrubTime(details: Double)
@@ -181,9 +185,9 @@
       public var isTransient: Bool {
         switch self {
         case .audioSessionNotReady:
-          return true
+          true
         default:
-          return false
+          false
         }
       }
     }
@@ -219,14 +223,14 @@
         switch self {
         case .routeChangeContinuing(let event, let qualityChange):
           if let change = qualityChange {
-            return "\(event.userMessage), continuing with: \(change.description)"
+            "\(event.userMessage), continuing with: \(change.description)"
           } else {
-            return "\(event.userMessage), continuing with same quality"
+            "\(event.userMessage), continuing with same quality"
           }
         case .stoppedGracefully(let reason):
-          return "Recording stopped gracefully: \(reason)"
+          "Recording stopped gracefully: \(reason)"
         case .stoppedByInterruption(let reason):
-          return "Recording interrupted: \(reason)"
+          "Recording interrupted: \(reason)"
         }
       }
     }
@@ -234,7 +238,7 @@
     /// A struct representing the current playback state.
     public struct Playback: Sendable, Hashable, Identifiable, Codable {
       public init(
-        id: UUID, file: URL, isPlaying: Bool, time: TimeInterval? = nil, duration: TimeInterval
+        id: UUID, file: URL, isPlaying: Bool, time: TimeInterval? = nil, duration: TimeInterval,
       ) {
         self.id = id
         self.file = file
@@ -288,6 +292,7 @@
     @MainActor public var onPlaybackUpdated: (@Sendable @MainActor (Playback?) -> Void)?
 
     // MARK: - Thread Domains
+
     //
     // AIOEngine uses five distinct thread domains. Each property and method
     // belongs to exactly one domain. Cross-domain communication uses only
@@ -386,6 +391,7 @@
       get { recordingSessionConfiguration }
       set { recordingSessionConfiguration = newValue }
     }
+
     /// Backend used for audio file writing.
     @MainActor var writerBackend: WriterBackend = .extAudioFile
     /// Whether the engine should deactivate the audio session when it becomes idle.
@@ -405,6 +411,7 @@
         }
       }
     }
+
     /// The current playback state, or `nil` if no audio is playing.
     @MainActor public internal(set) var playback: Playback?
     /// The default interval used to refresh `playback.time` while playback is active.
@@ -421,6 +428,7 @@
     @MainActor public var isPlayback: Bool {
       playback != nil
     }
+
     /// A Boolean value that indicates whether the player is currently playing.
     @MainActor public var isPlaying: Bool {
       playback?.isPlaying == true
@@ -446,6 +454,7 @@
         }
       }
     }
+
     @MainActor var scrubTask: Task<Void, Never>? {
       willSet {
         if scrubTask != newValue {
@@ -493,15 +502,15 @@
 
     // MARK: - Engine Control Queue Helpers
 
-    // Thread Domain: engineControl
-    // All AVAudioEngine graph mutations must go through these helpers.
-    //
+    /// Thread Domain: engineControl
+    /// All AVAudioEngine graph mutations must go through these helpers.
+    ///
     nonisolated func runOnEngineControlQueue<T>(_ work: () -> T) -> T {
       engineControlQueue.sync(execute: work)
     }
 
     nonisolated func runOnEngineControlQueueResult<T>(
-      _ work: () throws -> T
+      _ work: () throws -> T,
     ) -> Result<T, any Error> {
       engineControlQueue.sync {
         Result { try work() }
@@ -509,7 +518,7 @@
     }
 
     nonisolated func withEngineControlQueue<T>(
-      _ work: @escaping @Sendable () -> T
+      _ work: @escaping @Sendable () -> T,
     ) async -> T {
       await withCheckedContinuation { continuation in
         engineControlQueue.async {
@@ -520,7 +529,7 @@
     }
 
     nonisolated func withEngineControlQueueResult<T>(
-      _ work: @escaping @Sendable () throws -> T
+      _ work: @escaping @Sendable () throws -> T,
     ) async -> Result<T, any Error> {
       await withCheckedContinuation { continuation in
         engineControlQueue.async {
@@ -547,7 +556,7 @@
         let result = tapResizeRequestedFrames.compareExchange(
           expected: current,
           desired: frames,
-          ordering: .acquiringAndReleasing
+          ordering: .acquiringAndReleasing,
         )
         if result.exchanged { break }
         current = result.original
@@ -576,10 +585,11 @@
       -> WriterDrainOutcome
     {
       log.info(
-        "🧹 awaitWriterDrain start for \(session.fileURL.lastPathComponent, privacy: .public)")
+        "🧹 awaitWriterDrain start for \(session.fileURL.lastPathComponent, privacy: .public)",
+      )
       if Task.isCancelled {
         log.warning(
-          "🧹 awaitWriterDrain cancelled for \(session.fileURL.lastPathComponent, privacy: .public)"
+          "🧹 awaitWriterDrain cancelled for \(session.fileURL.lastPathComponent, privacy: .public)",
         )
         return .timedOut
       }
@@ -612,7 +622,7 @@
       }
       if outcome == .signaled {
         log.info(
-          "🧹 awaitWriterDrain completed for \(session.fileURL.lastPathComponent, privacy: .public)"
+          "🧹 awaitWriterDrain completed for \(session.fileURL.lastPathComponent, privacy: .public)",
         )
       }
       return outcome
@@ -620,15 +630,15 @@
 
     // MARK: - Playback State Helpers
 
-    struct PlaybackStateSignature: Sendable, Equatable {
+    struct PlaybackStateSignature: Equatable {
       let id: UUID?
       let file: URL?
       let isPlaying: Bool
 
       init(playback: Playback?) {
-        self.id = playback?.id
-        self.file = playback?.file
-        self.isPlaying = playback?.isPlaying ?? false
+        id = playback?.id
+        file = playback?.file
+        isPlaying = playback?.isPlaying ?? false
       }
     }
 
@@ -636,15 +646,16 @@
     func setPlayback(_ new: Playback?) {
       let previousSignature = PlaybackStateSignature(playback: playback)
 
-      let updated: Playback?
-      if let playbackInstance = state[locked: \.playbackInstance], new?.id == playbackInstance.id {
-        updated = new
-      } else if new == nil {
-        updated = nil
-      } else {
-        // Ignore stale updates for a previous playback instance.
-        updated = playback
-      }
+      let updated: Playback? =
+        if let playbackInstance = state[locked: \.playbackInstance], new?.id == playbackInstance.id
+        {
+          new
+        } else if new == nil {
+          nil
+        } else {
+          // Ignore stale updates for a previous playback instance.
+          playback
+        }
 
       playback = updated
 
@@ -673,7 +684,7 @@
           file: instance.file.url,
           isPlaying: player.isPlaying,
           time: startOffset,
-          duration: Double(instance.file.length) / instance.file.processingFormat.sampleRate
+          duration: Double(instance.file.length) / instance.file.processingFormat.sampleRate,
         )
       }
 
@@ -688,7 +699,7 @@
         file: instance.file.url,
         isPlaying: player.isPlaying,
         time: currentTime,
-        duration: duration
+        duration: duration,
       )
     }
 
@@ -697,28 +708,27 @@
     /// Creates a matched pair of tap-error poll/handler closures for writer and receiver loops.
     func makeTapErrorHandlers() -> (
       poll: @Sendable () -> TapErrorCode?,
-      handler: @Sendable (TapErrorCode) -> Void
+      handler: @Sendable (TapErrorCode) -> Void,
     ) {
       let poll: @Sendable () -> TapErrorCode? = { [weak self] in
         self?.consumeTapError()
       }
       let handler: @Sendable (TapErrorCode) -> Void = { [weak self] code in
         guard let self else { return }
-        let error: AIOError
-        switch code {
-        case .converterMissing, .bufferTooSmall, .conversionFailed:
-          error = .formatConversionFailed
-        }
-        self.resizeTapConvertedBufferIfNeeded()
-        let description: String = {
+        let error: AIOError =
           switch code {
-          case .converterMissing: return "converterMissing"
-          case .bufferTooSmall: return "bufferTooSmall"
-          case .conversionFailed: return "conversionFailed"
+          case .converterMissing, .bufferTooSmall, .conversionFailed:
+            .formatConversionFailed
           }
-        }()
+        resizeTapConvertedBufferIfNeeded()
+        let description =
+          switch code {
+          case .converterMissing: "converterMissing"
+          case .bufferTooSmall: "bufferTooSmall"
+          case .conversionFailed: "conversionFailed"
+          }
         log.error("Tap error: \(description, privacy: .public)")
-        self.errorSubject.send(error)
+        errorSubject.send(error)
       }
       return (poll, handler)
     }

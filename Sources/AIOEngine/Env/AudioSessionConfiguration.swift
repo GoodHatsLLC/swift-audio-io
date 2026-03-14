@@ -1,3 +1,5 @@
+// © GoodHatsLLC
+
 #if os(iOS)
   public import AVFoundation
 
@@ -15,7 +17,7 @@
       options: AVAudioSession.CategoryOptions,
       allowsHapticsAndSystemSoundsDuringRecording: Bool = true,
       prefersNoInterruptionsFromSystemAlerts: Bool = true,
-      prefersInterruptionOnRouteDisconnect: Bool = false
+      prefersInterruptionOnRouteDisconnect: Bool = false,
     ) {
       self.category = category
       self.mode = mode
@@ -59,7 +61,7 @@
         options: options,
         allowsHapticsAndSystemSoundsDuringRecording: true,
         prefersNoInterruptionsFromSystemAlerts: true,
-        prefersInterruptionOnRouteDisconnect: false
+        prefersInterruptionOnRouteDisconnect: false,
       )
     }
 
@@ -75,7 +77,7 @@
         options: options,
         allowsHapticsAndSystemSoundsDuringRecording: false,
         prefersNoInterruptionsFromSystemAlerts: false,
-        prefersInterruptionOnRouteDisconnect: false
+        prefersInterruptionOnRouteDisconnect: false,
       )
     }
   }
@@ -83,7 +85,7 @@
   extension AudioSessionConfiguration {
     public static func == (
       lhs: AudioSessionConfiguration,
-      rhs: AudioSessionConfiguration
+      rhs: AudioSessionConfiguration,
     ) -> Bool {
       lhs.category == rhs.category
         && lhs.mode == rhs.mode
@@ -113,14 +115,20 @@
   public struct AudioSessionConfiguration: Sendable, Hashable {
     public struct Category: RawRepresentable, Sendable, Hashable {
       public var rawValue: String
-      public init(rawValue: String) { self.rawValue = rawValue }
+      public init(rawValue: String) {
+        self.rawValue = rawValue
+      }
+
       public static let playAndRecord = Category(rawValue: "playAndRecord")
       public static let playback = Category(rawValue: "playback")
     }
 
     public struct Mode: RawRepresentable, Sendable, Hashable {
       public var rawValue: String
-      public init(rawValue: String) { self.rawValue = rawValue }
+      public init(rawValue: String) {
+        self.rawValue = rawValue
+      }
+
       public static let `default` = Mode(rawValue: "default")
       public static let measurement = Mode(rawValue: "measurement")
     }
@@ -145,7 +153,7 @@
       options: CategoryOptions,
       allowsHapticsAndSystemSoundsDuringRecording: Bool = true,
       prefersNoInterruptionsFromSystemAlerts: Bool = true,
-      prefersInterruptionOnRouteDisconnect: Bool = false
+      prefersInterruptionOnRouteDisconnect: Bool = false,
     ) {
       self.category = category
       self.mode = mode
@@ -172,7 +180,7 @@
       AudioSessionConfiguration(
         category: .playAndRecord,
         mode: useMeasurement ? .measurement : .default,
-        options: []
+        options: [],
       )
     }
 
@@ -180,7 +188,7 @@
       AudioSessionConfiguration(
         category: .playback,
         mode: .default,
-        options: []
+        options: [],
       )
     }
   }

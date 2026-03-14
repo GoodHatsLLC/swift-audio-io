@@ -1,3 +1,5 @@
+// © GoodHatsLLC
+
 #if os(iOS)
   public import AVFoundation
   import Foundation
@@ -7,7 +9,6 @@
   private let log = SystemLog.make()
 
   extension AIOEngine {
-
     // MARK: - Route Change & Interruption Handling
 
     /// Handles an audio route change during recording by reinstalling the tap.
@@ -41,7 +42,7 @@
 
       // Snapshot format before reinstall for quality-change detection
       let formatBefore =
-        state.withLock({ $0.tapConverterInputFormat })
+        state.withLock { $0.tapConverterInputFormat }
         ?? runOnEngineControlQueue { [engine = unsafe engine] in
           engine.inputNode.inputFormat(forBus: 0)
         }
@@ -50,7 +51,7 @@
         let result = try reinstallTap(
           configuration: config,
           processingFormat: processingFormat,
-          stopEngine: true
+          stopEngine: true,
         )
 
         applyTapInstallResult(result, processingFormat: processingFormat)
@@ -58,13 +59,14 @@
         let qualityChange = createQualityChange(
           from: formatBefore,
           to: result.tapFormat,
-          reason: describeRouteChangeReason(event.reason)
+          reason: describeRouteChangeReason(event.reason),
         )
         await onRecordingInterruption?(
           .routeChangeContinuing(
             event: event,
-            qualityChange: qualityChange
-          ))
+            qualityChange: qualityChange,
+          ),
+        )
 
         log.info("Continued recording after route change")
       } catch {
@@ -82,17 +84,17 @@
 
       let (engineIsRunning, playerIsPlaying) = await withEngineControlQueue { [weak self] in
         guard let self else { return (false, false) }
-        return unsafe (self.engine.isRunning, self.player.isPlaying)
+        return unsafe (engine.isRunning, player.isPlaying)
       }
 
       if resume.wasPlaying {
-        if engineIsRunning && playerIsPlaying { return }
+        if engineIsRunning, playerIsPlaying { return }
       } else {
         if engineIsRunning { return }
       }
 
       log.info(
-        "Playback route change recovery triggered: \(String(describing: event.reason), privacy: .public)"
+        "Playback route change recovery triggered: \(String(describing: event.reason), privacy: .public)",
       )
       await stopPlayback()
       await restartPlayback(from: resume)
@@ -101,7 +103,7 @@
     /// Handles an audio session interruption.
     @MainActor
     public func handleInterruption(
-      type: AVAudioSession.InterruptionType, options: AVAudioSession.InterruptionOptions?
+      type: AVAudioSession.InterruptionType, options _: AVAudioSession.InterruptionOptions?,
     ) async {
       switch type {
       case .began:
@@ -175,7 +177,7 @@
     func isFormatViable(
       _ format: AVAudioFormat,
       processingFormat: AVAudioFormat,
-      isInputAvailable: Bool
+      isInputAvailable: Bool,
     ) -> Bool {
       guard isInputAvailable else { return false }
       guard format.channelCount > 0 else { return false }
@@ -200,7 +202,7 @@
     func createQualityChange(
       from oldFormat: AVAudioFormat,
       to newFormat: AVAudioFormat,
-      reason: String
+      reason: String,
     ) -> AudioQualityChange? {
       let channelsChanged = oldFormat.channelCount != newFormat.channelCount
       let sampleRateChanged = abs(oldFormat.sampleRate - newFormat.sampleRate) > 1
@@ -211,7 +213,7 @@
           previousChannels: oldFormat.channelCount,
           currentChannels: newFormat.channelCount,
           previousSampleRate: oldFormat.sampleRate,
-          currentSampleRate: newFormat.sampleRate
+          currentSampleRate: newFormat.sampleRate,
         )
       }
 

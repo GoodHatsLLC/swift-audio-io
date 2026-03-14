@@ -1,7 +1,10 @@
+// © GoodHatsLLC
+
 #if canImport(AVFoundation)
   import AVFoundation
-  import Tools
   import os
+  import Tools
+
   private let tapSetupLog = SystemLog.make()
 
   extension AIOEngine {
@@ -20,7 +23,7 @@
     func makeTapConversionArtifacts(
       inputFormat: AVAudioFormat,
       processingFormat: AVAudioFormat,
-      tapBufferSize: AVAudioFrameCount
+      tapBufferSize: AVAudioFrameCount,
     ) throws(AIOError) -> TapConversionArtifacts {
       guard let converter = AVAudioConverter(from: inputFormat, to: processingFormat) else {
         throw AIOError.formatConversionFailed
@@ -28,12 +31,12 @@
       let tapFrameRatio = processingFormat.sampleRate / inputFormat.sampleRate
       let maxTapFrames = max(
         AVAudioFrameCount(ceil(Double(tapBufferSize) * tapFrameRatio)),
-        1
+        1,
       )
       guard
         let convertedBuffer = AVAudioPCMBuffer(
           pcmFormat: processingFormat,
-          frameCapacity: maxTapFrames
+          frameCapacity: maxTapFrames,
         )
       else {
         throw AIOError.formatConversionFailed
@@ -41,7 +44,7 @@
       return TapConversionArtifacts(
         converter: converter,
         inputFormat: inputFormat,
-        convertedBuffer: convertedBuffer
+        convertedBuffer: convertedBuffer,
       )
     }
 
@@ -54,7 +57,7 @@
     func reinstallTap(
       configuration: RecordingConfiguration,
       processingFormat: AVAudioFormat,
-      stopEngine: Bool
+      stopEngine: Bool,
     ) throws(AIOError) -> TapInstallResult {
       #if DEBUG
         if let override = testReinstallTapOverride {
@@ -90,11 +93,13 @@
         let inputFormat = unsafe self.engine.inputNode.inputFormat(forBus: 0)
         guard inputFormat.channelCount > 0 else {
           throw AIOError.audioSessionNotReady(
-            details: "Input node has no channels (channelCount: 0)")
+            details: "Input node has no channels (channelCount: 0)",
+          )
         }
         guard inputFormat.sampleRate > 0 else {
           throw AIOError.audioSessionNotReady(
-            details: "Input node has invalid sample rate (sampleRate: 0)")
+            details: "Input node has invalid sample rate (sampleRate: 0)",
+          )
         }
 
         // 5. Create tap configuration
@@ -114,9 +119,9 @@
             self.processAudio(
               buffer: buffer,
               time: time,
-              to: processingFormat
+              to: processingFormat,
             )
-          }
+          },
         )
 
         // 7. Prepare post-install, read actual format
@@ -125,13 +130,13 @@
         guard postInstallFormat.channelCount > 0, postInstallFormat.sampleRate > 0 else {
           throw AIOError.invalidRecordingConfiguration(
             details:
-              "Format invalid after tap install (channels: \(postInstallFormat.channelCount), sampleRate: \(postInstallFormat.sampleRate))"
+              "Format invalid after tap install (channels: \(postInstallFormat.channelCount), sampleRate: \(postInstallFormat.sampleRate))",
           )
         }
         guard postInstallFormat.isEqual(inputFormat) else {
           throw AIOError.invalidRecordingConfiguration(
             details:
-              "Format changed after tap install (channels: \(inputFormat.channelCount), sampleRate: \(inputFormat.sampleRate)) -> (channels: \(postInstallFormat.channelCount), sampleRate: \(postInstallFormat.sampleRate))"
+              "Format changed after tap install (channels: \(inputFormat.channelCount), sampleRate: \(inputFormat.sampleRate)) -> (channels: \(postInstallFormat.channelCount), sampleRate: \(postInstallFormat.sampleRate))",
           )
         }
 
@@ -139,13 +144,13 @@
         let artifacts = try self.makeTapConversionArtifacts(
           inputFormat: postInstallFormat,
           processingFormat: processingFormat,
-          tapBufferSize: tapConfig.bufferSize
+          tapBufferSize: tapConfig.bufferSize,
         )
 
         let result = TapInstallResult(
           tapFormat: postInstallFormat,
           artifacts: artifacts,
-          tapConfiguration: tapConfig
+          tapConfiguration: tapConfig,
         )
 
         // 9. Apply converter state before starting the engine so that
@@ -189,8 +194,9 @@
             converter: state.tapConverter,
             converterInputFormat: state.tapConverterInputFormat,
             converterOutputFormat: state.tapConverterOutputFormat,
-            convertedBuffer: state.tapConvertedBuffer
-          ))
+            convertedBuffer: state.tapConvertedBuffer,
+          ),
+        )
       }
       tapSnapshotLock.withLock { $0 = wrapped.value }
     }

@@ -1,3 +1,5 @@
+// © GoodHatsLLC
+
 #if canImport(Accelerate)
   import Accelerate
   import Foundation
@@ -19,7 +21,7 @@
         windowSize: Int,
         smoothingFactor: Float,
         peakDecayRate: Float,
-        noiseFloor: Float
+        noiseFloor: Float,
       ) {
         self.windowSize = windowSize
         self.smoothingFactor = smoothingFactor
@@ -66,7 +68,7 @@
           amplitudes: smoothedAmplitudes,
           peaks: peaks,
           rms: 0.0,
-          overallLevel: 0.0
+          overallLevel: 0.0,
         )
       }
 
@@ -80,7 +82,7 @@
         amplitudes: amplitudes,
         peaks: peaks,
         rms: rms,
-        overallLevel: overallLevel
+        overallLevel: overallLevel,
       )
     }
 
@@ -111,7 +113,8 @@
 
                 if count > 0 {
                   unsafe vDSP_meamgv(
-                    source.advanced(by: startIndex), 1, destination.advanced(by: i), count)
+                    source.advanced(by: startIndex), 1, destination.advanced(by: i), count,
+                  )
                 } else {
                   unsafe destination[i] = 0.0
                 }
@@ -195,7 +198,7 @@
 
     /// Get RMS trend for advanced visualizations
     public func getRMSTrend() -> [Float] {
-      return rmsHistory
+      rmsHistory
     }
 
     /// Reset all internal state
@@ -232,7 +235,7 @@ extension AmplitudeAnalyzer.Configuration {
     windowSize: 128,
     smoothingFactor: 0.4,
     peakDecayRate: 0.92,
-    noiseFloor: 0.001
+    noiseFloor: 0.001,
   )
 
   /// High-quality analysis for detailed visualization
@@ -240,7 +243,7 @@ extension AmplitudeAnalyzer.Configuration {
     windowSize: 512,
     smoothingFactor: 0.2,
     peakDecayRate: 0.98,
-    noiseFloor: 0.0005
+    noiseFloor: 0.0005,
   )
 
   /// Low-power mode for battery conservation
@@ -248,6 +251,6 @@ extension AmplitudeAnalyzer.Configuration {
     windowSize: 64,
     smoothingFactor: 0.6,
     peakDecayRate: 0.90,
-    noiseFloor: 0.002
+    noiseFloor: 0.002,
   )
 }

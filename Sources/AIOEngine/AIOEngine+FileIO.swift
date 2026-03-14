@@ -1,6 +1,8 @@
+// © GoodHatsLLC
+
 #if canImport(AVFoundation)
-  import AVFoundation
   import AudioToolbox
+  import AVFoundation
   import Foundation
   import os
   import Tools
@@ -8,7 +10,6 @@
   private let log = SystemLog.make()
 
   extension AIOEngine: BufferEmitter {
-
     public typealias T = Float
 
     /// Attaches a buffer receiver to the engine.
@@ -19,12 +20,12 @@
     public nonisolated func attachBufferReceiver(_ receiver: consuming some BufferReceiver<Float>)
       async
     {
-      self.bufferReceivers({ $0.append(receiver) })
+      bufferReceivers { $0.append(receiver) }
     }
 
     /// Detaches all buffer receivers from the engine.
     public nonisolated func detachBufferReceivers() async {
-      for receiver in self.bufferReceivers({ b in
+      for receiver in bufferReceivers({ b in
         defer { b = [] }
         return b
       }) {
@@ -35,7 +36,7 @@
     @MainActor
     func resolveOutputURL(
       for configuration: RecordingConfiguration,
-      allowExplicitFile: Bool
+      allowExplicitFile: Bool,
     ) throws(AIOError) -> (url: URL, protection: OutputFileProtection?) {
       let filename = Self.generateRecordingFilename(extension: configuration.fileExtension)
       #if os(iOS)
@@ -43,8 +44,9 @@
         case .temporary:
           let resolved: (url: URL, protection: OutputFileProtection?) = (
             FileManager.default.temporaryDirectory.appendingPathComponent(
-              filename, isDirectory: false),
-            nil
+              filename, isDirectory: false,
+            ),
+            nil,
           )
           logOutputDestination(configuration.outputDestination, url: resolved.0)
           return resolved
@@ -52,35 +54,35 @@
           do {
             try FileManager.default.createDirectory(
               at: directory,
-              withIntermediateDirectories: true
+              withIntermediateDirectories: true,
             )
           } catch {
             throw AIOError.audioFileFailed(
-              operation: .openForWriting, url: directory, error: ErrorContext(error)
+              operation: .openForWriting, url: directory, error: ErrorContext(error),
             )
           }
           applyFileProtectionIfNeeded(protection, to: directory)
           let resolved = (
             directory.appendingPathComponent(filename, isDirectory: false),
-            protection
+            protection,
           )
           logOutputDestination(configuration.outputDestination, url: resolved.0)
           return resolved
         case .fileURL(let fileURL, let protection):
           guard allowExplicitFile else {
             throw AIOError.invalidRecordingConfiguration(
-              details: "Output destination does not support rotation"
+              details: "Output destination does not support rotation",
             )
           }
           let parent = fileURL.deletingLastPathComponent()
           do {
             try FileManager.default.createDirectory(
               at: parent,
-              withIntermediateDirectories: true
+              withIntermediateDirectories: true,
             )
           } catch {
             throw AIOError.audioFileFailed(
-              operation: .openForWriting, url: parent, error: ErrorContext(error)
+              operation: .openForWriting, url: parent, error: ErrorContext(error),
             )
           }
           applyFileProtectionIfNeeded(protection, to: parent)
@@ -93,8 +95,9 @@
         case .temporary:
           let resolved: (url: URL, protection: OutputFileProtection?) = (
             FileManager.default.temporaryDirectory.appendingPathComponent(
-              filename, isDirectory: false),
-            nil
+              filename, isDirectory: false,
+            ),
+            nil,
           )
           logOutputDestination(configuration.outputDestination, url: resolved.0)
           return resolved
@@ -102,34 +105,34 @@
           do {
             try FileManager.default.createDirectory(
               at: directory,
-              withIntermediateDirectories: true
+              withIntermediateDirectories: true,
             )
           } catch {
             throw AIOError.audioFileFailed(
-              operation: .openForWriting, url: directory, error: ErrorContext(error)
+              operation: .openForWriting, url: directory, error: ErrorContext(error),
             )
           }
           let resolved: (url: URL, protection: OutputFileProtection?) = (
             directory.appendingPathComponent(filename, isDirectory: false),
-            nil
+            nil,
           )
           logOutputDestination(configuration.outputDestination, url: resolved.0)
           return resolved
         case .fileURL(let fileURL):
           guard allowExplicitFile else {
             throw AIOError.invalidRecordingConfiguration(
-              details: "Output destination does not support rotation"
+              details: "Output destination does not support rotation",
             )
           }
           let parent = fileURL.deletingLastPathComponent()
           do {
             try FileManager.default.createDirectory(
               at: parent,
-              withIntermediateDirectories: true
+              withIntermediateDirectories: true,
             )
           } catch {
             throw AIOError.audioFileFailed(
-              operation: .openForWriting, url: parent, error: ErrorContext(error)
+              operation: .openForWriting, url: parent, error: ErrorContext(error),
             )
           }
           let resolved: (url: URL, protection: OutputFileProtection?) = (fileURL, nil)
@@ -141,19 +144,19 @@
 
     nonisolated func audioFileTypeID(for format: FileFormat) -> AudioFileTypeID {
       switch format {
-      case .aac: return kAudioFileM4AType
-      case .adts: return kAudioFileAAC_ADTSType
-      case .wav: return kAudioFileWAVEType
-      case .aiff: return kAudioFileAIFFType
-      case .caf: return kAudioFileCAFType
-      case .flac: return kAudioFileFLACType
+      case .aac: kAudioFileM4AType
+      case .adts: kAudioFileAAC_ADTSType
+      case .wav: kAudioFileWAVEType
+      case .aiff: kAudioFileAIFFType
+      case .caf: kAudioFileCAFType
+      case .flac: kAudioFileFLACType
       }
     }
 
     @MainActor
     func makeRecordingWriter(
       url: URL,
-      configuration: RecordingConfiguration
+      configuration: RecordingConfiguration,
     ) throws(AIOError) -> any RecordingFileWriter {
       guard let fileSettings = configuration.fileSettings else {
         throw AIOError.invalidRecordingConfiguration(details: "(file format settings)")
@@ -168,7 +171,7 @@
           return AVAudioFileWriter(file: file)
         } catch {
           throw AIOError.audioFileFailed(
-            operation: .openForWriting, url: url, error: ErrorContext(error)
+            operation: .openForWriting, url: url, error: ErrorContext(error),
           )
         }
       case .extAudioFile:
@@ -184,11 +187,12 @@
               commonFormat: outputFormat.commonFormat,
               sampleRate: outputFormat.sampleRate,
               channels: outputFormat.channelCount,
-              interleaved: true
+              interleaved: true,
             )
           else {
             throw AIOError.invalidRecordingConfiguration(
-              details: "interleaved file format settings")
+              details: "interleaved file format settings",
+            )
           }
           diskFormat = interleaved
         } else {
@@ -199,11 +203,11 @@
             url: url,
             fileType: audioFileTypeID(for: configuration.outputConfiguration.fileFormat),
             outputFormat: diskFormat,
-            clientFormat: processingFormat
+            clientFormat: processingFormat,
           )
         } catch {
           throw AIOError.audioFileFailed(
-            operation: .openForWriting, url: url, error: ErrorContext(error)
+            operation: .openForWriting, url: url, error: ErrorContext(error),
           )
         }
       }
@@ -212,18 +216,18 @@
     @MainActor
     func applyFileProtectionIfNeeded(
       _ protection: OutputFileProtection?,
-      to url: URL
+      to url: URL,
     ) {
       #if os(iOS)
         guard let protection else { return }
         do {
           try FileManager.default.setAttributes(
             [.protectionKey: protection],
-            ofItemAtPath: url.path
+            ofItemAtPath: url.path,
           )
         } catch {
           log.error(
-            "🔒 Failed to apply file protection to \(url.path, privacy: .public): \(error, privacy: .public)"
+            "🔒 Failed to apply file protection to \(url.path, privacy: .public): \(error, privacy: .public)",
           )
         }
       #else
@@ -245,10 +249,10 @@
 
     nonisolated func logOutputDestination(
       _ destination: RecordingConfiguration.OutputDestination,
-      url: URL
+      url: URL,
     ) {
       log.info(
-        "🎯 Recording output: destination=\(destination, privacy: .public) url=\(url.lastPathComponent, privacy: .public)"
+        "🎯 Recording output: destination=\(destination, privacy: .public) url=\(url.lastPathComponent, privacy: .public)",
       )
     }
 

@@ -1,9 +1,11 @@
+// © GoodHatsLLC
+
 #if canImport(AVFoundation)
-  import AVFoundation
   import Atomics
+  import AVFoundation
   import Tools
 
-  struct EmptyAudioFileError: LocalizedError, Equatable, Sendable {
+  struct EmptyAudioFileError: LocalizedError, Equatable {
     let url: URL
 
     var errorDescription: String? {
@@ -11,7 +13,7 @@
     }
   }
 
-  struct MissingAudioFileError: LocalizedError, Equatable, Sendable {
+  struct MissingAudioFileError: LocalizedError, Equatable {
     let url: URL
 
     var errorDescription: String? {
@@ -19,7 +21,7 @@
     }
   }
 
-  enum WriterBackend: Equatable, Sendable {
+  enum WriterBackend: Equatable {
     case avAudioFile
     case extAudioFile
   }
@@ -37,7 +39,7 @@
 
     init(file: AVAudioFile) {
       self.file = file
-      self.fileURL = file.url
+      fileURL = file.url
     }
 
     func write(_ buffer: AVAudioPCMBuffer) throws {
@@ -58,9 +60,9 @@
       url: URL,
       fileType: AudioFileTypeID,
       outputFormat: AVAudioFormat,
-      clientFormat: AVAudioFormat
+      clientFormat: AVAudioFormat,
     ) throws {
-      self.fileURL = url
+      fileURL = url
       var asbd = unsafe outputFormat.streamDescription.pointee
       var newFile: ExtAudioFileRef?
       let status = unsafe ExtAudioFileCreateWithURL(
@@ -69,7 +71,7 @@
         &asbd,
         nil,
         AudioFileFlags.eraseFile.rawValue,
-        &newFile
+        &newFile,
       )
       guard status == noErr, let created = unsafe newFile else {
         throw NSError(domain: NSOSStatusErrorDomain, code: Int(status), userInfo: nil)
@@ -81,7 +83,7 @@
         created,
         kExtAudioFileProperty_ClientDataFormat,
         propertySize,
-        &clientASBD
+        &clientASBD,
       )
       guard setStatus == noErr else {
         throw NSError(domain: NSOSStatusErrorDomain, code: Int(setStatus), userInfo: nil)
@@ -105,7 +107,7 @@
     }
   }
 
-  struct WriterDrainTimeoutError: LocalizedError, Equatable, Sendable {
+  struct WriterDrainTimeoutError: LocalizedError, Equatable {
     let url: URL?
     let timeout: Duration
 
@@ -137,7 +139,8 @@
         },
         onCancel: {
           Task { await self.cancelWaiter(waiterID) }
-        })
+        },
+      )
     }
 
     private func cancelWaiter(_ waiterID: UUID) {
@@ -166,7 +169,7 @@
     let targetSampleTime = ManagedAtomic<Int64>(0)
   }
 
-  struct WriterSession: Sendable {
+  struct WriterSession {
     let id: UUID
     let control: WriterControl
     let writer: any RecordingFileWriter
@@ -178,7 +181,7 @@
     let cancelRequested = ManagedAtomic<Bool>(false)
   }
 
-  struct ReceiverSession: Sendable {
+  struct ReceiverSession {
     let id: UUID
     let control: ReceiverControl
     let buffers: [SPSCRingBuffer<Float>]
@@ -186,7 +189,7 @@
     let processingFormat: AVAudioFormat
   }
 
-  struct TimingPacket: Equatable, Sendable {
+  struct TimingPacket: Equatable {
     let startSampleTime: Int64
     let frameCount: Int
     let hostTime: UInt64?
@@ -233,12 +236,12 @@
         converter: nil,
         converterInputFormat: nil,
         converterOutputFormat: nil,
-        convertedBuffer: nil
+        convertedBuffer: nil,
       )
     }
   }
 
-  struct EngineMetrics: Sendable {
+  struct EngineMetrics {
     #if DEBUG
       let tapCallbackCount = ManagedAtomic<Int64>(0)
       let tapCallbackMaxNanos = ManagedAtomic<UInt64>(0)
@@ -250,13 +253,13 @@
     #endif
   }
 
-  enum WriterDrainOutcome: Equatable, Sendable {
+  enum WriterDrainOutcome: Equatable {
     case signaled
     case targetSatisfied
     case timedOut
   }
 
-  enum TapErrorCode: Int, Equatable, Sendable {
+  enum TapErrorCode: Int, Equatable {
     case converterMissing = 1
     case bufferTooSmall = 2
     case conversionFailed = 3
@@ -269,7 +272,7 @@
     let pollingInterval: Duration
   }
 
-  struct PlaybackResume: Equatable, Sendable {
+  struct PlaybackResume: Equatable {
     let fileURL: URL
     let time: TimeInterval
     let duration: TimeInterval
@@ -277,12 +280,12 @@
     let pollingInterval: Duration
   }
 
-  struct WriteFailure: Equatable, Sendable {
+  struct WriteFailure: Equatable {
     let url: URL?
     let error: ErrorContext
   }
 
-  struct WriteResult: Equatable, Sendable {
+  struct WriteResult: Equatable {
     let framesRead: Int
     let writeDuration: Duration?
   }

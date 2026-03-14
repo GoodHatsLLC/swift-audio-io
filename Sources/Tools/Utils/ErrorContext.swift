@@ -1,3 +1,5 @@
+// © GoodHatsLLC
+
 import Foundation
 
 /// A stable, equatable representation of an `Error`.
@@ -14,9 +16,9 @@ public struct ErrorContext: Sendable, Equatable, Hashable, CustomStringConvertib
 
   public init(_ error: any Error) {
     let nsError = error as NSError
-    self.domain = nsError.domain
-    self.code = nsError.code
-    self.message = nsError.localizedDescription
+    domain = nsError.domain
+    code = nsError.code
+    message = nsError.localizedDescription
   }
 
   public let domain: String

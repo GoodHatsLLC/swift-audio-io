@@ -1,3 +1,5 @@
+// © GoodHatsLLC
+
 #if os(iOS)
   public import AVFoundation
   public import Tools
@@ -23,8 +25,14 @@
     }
 
     private let port: AVAudioSessionPortDescription
-    public var avAudio: AVAudioSessionPortDescription { port }
-    public var platform: AVAudioSessionPortDescription { port }
+    public var avAudio: AVAudioSessionPortDescription {
+      port
+    }
+
+    public var platform: AVAudioSessionPortDescription {
+      port
+    }
+
     public var sources: [AudioSource] {
       port.dataSources.orElse([]).map {
         AudioSource(avAudio: $0)
@@ -48,7 +56,7 @@
     }
 
     public var preferredSource: AudioSource? {
-      port.preferredDataSource.map { AudioSource.init(avAudio: $0) }
+      port.preferredDataSource.map { AudioSource(avAudio: $0) }
     }
 
     public var channelCount: ChannelCount {
@@ -56,7 +64,7 @@
     }
 
     public var channels: [AudioChannel] {
-      port.channels.orElse([]).map { AudioChannel.init(platform: $0) }
+      port.channels.orElse([]).map { AudioChannel(platform: $0) }
     }
 
     public var name: String {
@@ -124,6 +132,7 @@
         #endif
         }
       }
+
       init(_ port: AVAudioSession.Port) {
         switch port {
         case .continuityMicrophone:
@@ -156,6 +165,7 @@
           self = .unknown
         }
       }
+
       /// An unknown input type.
       case unknown
       /// Continuity microphone for appletv.

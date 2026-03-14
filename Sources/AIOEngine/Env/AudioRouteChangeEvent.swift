@@ -1,3 +1,5 @@
+// © GoodHatsLLC
+
 #if os(iOS)
   public import AVFoundation
   import Foundation
@@ -6,11 +8,11 @@
     public init(
       reason: AVAudioSession.RouteChangeReason,
       previousRoute: AVAudioSessionRouteDescription?,
-      session: AVAudioSession
+      session: AVAudioSession,
     ) {
       self.reason = reason
       self.previousRoute = previousRoute.map(AudioRouteSnapshot.init(route:))
-      self.currentRoute = AudioRouteSnapshot(route: session.currentRoute)
+      currentRoute = AudioRouteSnapshot(route: session.currentRoute)
       self.session = AudioSessionSnapshot(session: session)
     }
 
@@ -20,7 +22,7 @@
     public let session: AudioSessionSnapshot
 
     public var userMessage: String {
-      var lines: [String] = ["Audio route changed: \(reason.userLabel)"]
+      var lines = ["Audio route changed: \(reason.userLabel)"]
 
       if let previousRoute {
         let inputLine =
@@ -52,24 +54,29 @@
     private var shouldIncludeSessionSummary: Bool {
       switch reason {
       case .categoryChange, .override, .routeConfigurationChange, .noSuitableRouteForCategory:
-        return true
+        true
       default:
-        return false
+        false
       }
     }
   }
 
   public struct AudioRouteSnapshot: Sendable, Hashable {
     public init(route: AVAudioSessionRouteDescription) {
-      self.inputs = route.inputs.map(AudioPortSnapshot.init(port:))
-      self.outputs = route.outputs.map(AudioPortSnapshot.init(port:))
+      inputs = route.inputs.map(AudioPortSnapshot.init(port:))
+      outputs = route.outputs.map(AudioPortSnapshot.init(port:))
     }
 
     public let inputs: [AudioPortSnapshot]
     public let outputs: [AudioPortSnapshot]
 
-    public var inputsDescription: String { describePorts(inputs) }
-    public var outputsDescription: String { describePorts(outputs) }
+    public var inputsDescription: String {
+      describePorts(inputs)
+    }
+
+    public var outputsDescription: String {
+      describePorts(outputs)
+    }
 
     private func describePorts(_ ports: [AudioPortSnapshot]) -> String {
       guard !ports.isEmpty else { return "none" }
@@ -79,10 +86,10 @@
 
   public struct AudioPortSnapshot: Sendable, Hashable {
     public init(port: AVAudioSessionPortDescription) {
-      self.name = port.portName
-      self.uid = port.uid
-      self.type = port.portType.rawValue
-      self.channelCount = port.channels?.count ?? 0
+      name = port.portName
+      uid = port.uid
+      type = port.portType.rawValue
+      channelCount = port.channels?.count ?? 0
     }
 
     public let name: String
@@ -100,13 +107,13 @@
 
   public struct AudioSessionSnapshot: Sendable, Hashable {
     public init(session: AVAudioSession) {
-      self.category = session.category.rawValue
-      self.mode = session.mode.rawValue
-      self.options = AVAudioSession.CategoryOptions.userLabels(for: session.categoryOptions)
-      self.sampleRate = session.sampleRate
-      self.ioBufferDuration = session.ioBufferDuration
-      self.inputNumberOfChannels = session.inputNumberOfChannels
-      self.isInputAvailable = session.isInputAvailable
+      category = session.category.rawValue
+      mode = session.mode.rawValue
+      options = AVAudioSession.CategoryOptions.userLabels(for: session.categoryOptions)
+      sampleRate = session.sampleRate
+      ioBufferDuration = session.ioBufferDuration
+      inputNumberOfChannels = session.inputNumberOfChannels
+      isInputAvailable = session.isInputAvailable
     }
 
     public let category: String

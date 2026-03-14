@@ -1,3 +1,5 @@
+// © GoodHatsLLC
+
 #if canImport(AVFAudio)
   import Foundation
 
@@ -19,17 +21,17 @@
       public var description: String {
         switch self {
         case .bandCountOutOfRange(let actual, let valid):
-          return "bandCount must be in \(valid), got \(actual)"
+          "bandCount must be in \(valid), got \(actual)"
         case .lodRatioMustBePositive(let actual):
-          return "lodRatio must be > 0, got \(actual)"
+          "lodRatio must be > 0, got \(actual)"
         case .bufferSecondsMustBePositive(let actual):
-          return "bufferSeconds must be > 0, got \(actual)"
+          "bufferSeconds must be > 0, got \(actual)"
         case .sampleRateMustBePositive(let actual):
-          return "sampleRate must be > 0, got \(actual)"
+          "sampleRate must be > 0, got \(actual)"
         case .snapshotSwapIntervalMustBePositive(let actual):
-          return "snapshotSwapInterval must be > 0, got \(actual)"
+          "snapshotSwapInterval must be > 0, got \(actual)"
         case .rawBufferLengthOverrideMustBePositive(let actual):
-          return "rawBufferLengthOverride must be > 0, got \(actual)"
+          "rawBufferLengthOverride must be > 0, got \(actual)"
         }
       }
     }
@@ -77,7 +79,7 @@
       let (rawBufferLength, overflow) = sampleRate.multipliedReportingOverflow(by: bufferSeconds)
       precondition(
         !overflow,
-        "MultiBandLODConfiguration.rawBufferLength overflow: sampleRate=\(sampleRate) bufferSeconds=\(bufferSeconds)"
+        "MultiBandLODConfiguration.rawBufferLength overflow: sampleRate=\(sampleRate) bufferSeconds=\(bufferSeconds)",
       )
       return rawBufferLength
     }
@@ -100,35 +102,35 @@
       bandCount: Int = 5,
       lodRatio: Int = 128,
       bufferSeconds: Int = 300,
-      sampleRate: Int = 44_100,
+      sampleRate: Int = 44100,
       crossoverMode: CrossoverMode = .mel(minFreq: 40, maxFreq: 15000),
       snapshotSwapInterval: Int = 6,
-      rawBufferLengthOverride: Int? = nil
+      rawBufferLengthOverride: Int? = nil,
     ) {
       precondition(
         Self.validBandCountRange.contains(bandCount),
-        "MultiBandLODConfiguration.bandCount must be in \(Self.validBandCountRange), got \(bandCount)"
+        "MultiBandLODConfiguration.bandCount must be in \(Self.validBandCountRange), got \(bandCount)",
       )
       precondition(
         lodRatio > 0,
-        "MultiBandLODConfiguration.lodRatio must be > 0, got \(lodRatio)"
+        "MultiBandLODConfiguration.lodRatio must be > 0, got \(lodRatio)",
       )
       precondition(
         bufferSeconds > 0,
-        "MultiBandLODConfiguration.bufferSeconds must be > 0, got \(bufferSeconds)"
+        "MultiBandLODConfiguration.bufferSeconds must be > 0, got \(bufferSeconds)",
       )
       precondition(
         sampleRate > 0,
-        "MultiBandLODConfiguration.sampleRate must be > 0, got \(sampleRate)"
+        "MultiBandLODConfiguration.sampleRate must be > 0, got \(sampleRate)",
       )
       precondition(
         snapshotSwapInterval > 0,
-        "MultiBandLODConfiguration.snapshotSwapInterval must be > 0, got \(snapshotSwapInterval)"
+        "MultiBandLODConfiguration.snapshotSwapInterval must be > 0, got \(snapshotSwapInterval)",
       )
       if let rawBufferLengthOverride {
         precondition(
           rawBufferLengthOverride > 0,
-          "MultiBandLODConfiguration.rawBufferLengthOverride must be > 0, got \(rawBufferLengthOverride)"
+          "MultiBandLODConfiguration.rawBufferLengthOverride must be > 0, got \(rawBufferLengthOverride)",
         )
       }
       self.bandCount = bandCount
@@ -145,10 +147,10 @@
       validatingBandCount bandCount: Int,
       lodRatio: Int = 128,
       bufferSeconds: Int = 300,
-      sampleRate: Int = 44_100,
+      sampleRate: Int = 44100,
       crossoverMode: CrossoverMode = .mel(minFreq: 40, maxFreq: 15000),
       snapshotSwapInterval: Int = 6,
-      rawBufferLengthOverride: Int? = nil
+      rawBufferLengthOverride: Int? = nil,
     ) throws(ValidationError) {
       guard Self.validBandCountRange.contains(bandCount) else {
         throw .bandCountOutOfRange(actual: bandCount, valid: Self.validBandCountRange)
@@ -175,7 +177,7 @@
         sampleRate: sampleRate,
         crossoverMode: crossoverMode,
         snapshotSwapInterval: snapshotSwapInterval,
-        rawBufferLengthOverride: rawBufferLengthOverride
+        rawBufferLengthOverride: rawBufferLengthOverride,
       )
     }
 
@@ -184,20 +186,21 @@
       clamping bandCount: Int,
       lodRatio: Int = 128,
       bufferSeconds: Int = 300,
-      sampleRate: Int = 44_100,
+      sampleRate: Int = 44100,
       crossoverMode: CrossoverMode = .mel(minFreq: 40, maxFreq: 15000),
       snapshotSwapInterval: Int = 6,
-      rawBufferLengthOverride: Int? = nil
+      rawBufferLengthOverride: Int? = nil,
     ) {
       self.init(
         bandCount: min(
-          max(bandCount, Self.validBandCountRange.lowerBound), Self.validBandCountRange.upperBound),
+          max(bandCount, Self.validBandCountRange.lowerBound), Self.validBandCountRange.upperBound,
+        ),
         lodRatio: max(1, lodRatio),
         bufferSeconds: max(1, bufferSeconds),
         sampleRate: max(1, sampleRate),
         crossoverMode: crossoverMode,
         snapshotSwapInterval: max(1, snapshotSwapInterval),
-        rawBufferLengthOverride: rawBufferLengthOverride.map { max(1, $0) }
+        rawBufferLengthOverride: rawBufferLengthOverride.map { max(1, $0) },
       )
     }
 
@@ -208,14 +211,14 @@
     public static let shortRecording = MultiBandLODConfiguration(
       bandCount: 5,
       lodRatio: 128,
-      bufferSeconds: 60
+      bufferSeconds: 60,
     )
 
     /// High-detail configuration with more bands.
     public static let highDetail = MultiBandLODConfiguration(
       bandCount: 8,
       lodRatio: 64,
-      bufferSeconds: 300
+      bufferSeconds: 300,
     )
   }
 
@@ -255,7 +258,7 @@
 
       switch self {
       case .mel(let minFreq, let maxFreq):
-        // Mel scale conversion functions
+        /// Mel scale conversion functions
         func hzToMel(_ hz: Float) -> Float {
           2595 * log10(1 + hz / 700)
         }
@@ -295,7 +298,7 @@
         if cutoffFrequencies.count < desiredCutoffCount {
           #if DEBUG
             assertionFailure(
-              "CrossoverMode.custom expected \(desiredCutoffCount) frequencies, got \(frequencies.count). Padding to fit bandCount."
+              "CrossoverMode.custom expected \(desiredCutoffCount) frequencies, got \(frequencies.count). Padding to fit bandCount.",
             )
           #endif
           let start = cutoffFrequencies.last ?? clampFrequency(40)
@@ -362,7 +365,7 @@
     func withContiguousLODChannel<R>(
       band: Int,
       channel: LODChannel,
-      _ body: (UnsafeBufferPointer<Float>) -> R
+      _ body: (UnsafeBufferPointer<Float>) -> R,
     ) -> R
 
     /// Direct access to a band's min buffer.
@@ -388,7 +391,7 @@
     public func withContiguousLODChannelIfValid<R>(
       band: Int,
       channel: LODChannel,
-      _ body: (UnsafeBufferPointer<Float>) -> R
+      _ body: (UnsafeBufferPointer<Float>) -> R,
     ) -> R? {
       guard isValidBand(band) else { return nil }
       return unsafe withContiguousLODChannel(band: band, channel: channel, body)
@@ -436,7 +439,7 @@
             guard let dstBase = dst.baseAddress else { return }
             unsafe (dstBase + base).update(
               from: srcBase,
-              count: min(src.count, lodBufferLength)
+              count: min(src.count, lodBufferLength),
             )
           }
         }
@@ -444,7 +447,7 @@
       return flat
     }
 
-    public func withRawBuffer<R>(band: Int, _ body: (UnsafeBufferPointer<Float>) -> R) -> R {
+    public func withRawBuffer<R>(band _: Int, _ body: (UnsafeBufferPointer<Float>) -> R) -> R {
       unsafe body(UnsafeBufferPointer(start: nil, count: 0))
     }
   }
@@ -481,10 +484,10 @@
     ///   - capacity: Number of LOD samples to allocate.
     public init(bandIndex: Int, capacity: Int) {
       self.bandIndex = bandIndex
-      self.minBuffer = Array(repeating: 0, count: capacity)
-      self.maxBuffer = Array(repeating: 0, count: capacity)
-      self.rmsBuffer = Array(repeating: 0, count: capacity)
-      self.rawBuffer = nil
+      minBuffer = Array(repeating: 0, count: capacity)
+      maxBuffer = Array(repeating: 0, count: capacity)
+      rmsBuffer = Array(repeating: 0, count: capacity)
+      rawBuffer = nil
     }
   }
 
@@ -506,7 +509,9 @@
     public let rawBufferLength: Int
 
     /// Number of bands.
-    public var bandCount: Int { bands.count }
+    public var bandCount: Int {
+      bands.count
+    }
 
     /// LOD buffer length per band.
     public var lodBufferLength: Int {
@@ -518,7 +523,7 @@
       bands: [BandLODData],
       writeIndex: Int,
       lodRatio: Int,
-      rawBufferLength: Int
+      rawBufferLength: Int,
     ) {
       self.bands = bands
       self.writeIndex = writeIndex
@@ -531,7 +536,7 @@
       bands: [],
       writeIndex: 0,
       lodRatio: 128,
-      rawBufferLength: 0
+      rawBufferLength: 0,
     )
 
     public func toSnapshot() -> MultiBandLODSnapshot? {
@@ -545,11 +550,11 @@
     public func withContiguousLODChannel<R>(
       band: Int,
       channel: LODChannel,
-      _ body: (UnsafeBufferPointer<Float>) -> R
+      _ body: (UnsafeBufferPointer<Float>) -> R,
     ) -> R {
       precondition(
         (0..<bands.count).contains(band),
-        "LODSnapshot band index out of range: \(band), valid range: 0..<\(bands.count)"
+        "LODSnapshot band index out of range: \(band), valid range: 0..<\(bands.count)",
       )
       switch channel {
       case .min:
@@ -565,7 +570,7 @@
     public func withRawBuffer<R>(band: Int, _ body: (UnsafeBufferPointer<Float>) -> R) -> R {
       precondition(
         (0..<bands.count).contains(band),
-        "LODSnapshot band index out of range: \(band), valid range: 0..<\(bands.count)"
+        "LODSnapshot band index out of range: \(band), valid range: 0..<\(bands.count)",
       )
       if let raw = bands[band].rawBuffer {
         return unsafe raw.withUnsafeBufferPointer(body)

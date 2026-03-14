@@ -1,3 +1,5 @@
+// © GoodHatsLLC
+
 public protocol TypeDescribable {
   static var typeDescription: String { get }
 }

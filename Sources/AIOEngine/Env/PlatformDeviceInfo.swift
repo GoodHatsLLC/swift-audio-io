@@ -1,3 +1,5 @@
+// © GoodHatsLLC
+
 import AVFAudio
 import Foundation
 
@@ -63,7 +65,8 @@ public protocol PlatformDeviceInfo: Sendable {
       AsyncStream { continuation in
         let task = Task { @MainActor in
           let notifications = NotificationCenter.default.notifications(
-            named: UIDevice.orientationDidChangeNotification)
+            named: UIDevice.orientationDidChangeNotification,
+          )
 
           for await notification in notifications {
             let device = (notification.object as? UIDevice) ?? UIDevice.current
@@ -85,7 +88,7 @@ public protocol PlatformDeviceInfo: Sendable {
     }
 
     private static func mapOrientation(
-      _ orientation: UIDeviceOrientation
+      _ orientation: UIDeviceOrientation,
     ) -> StereoOrientation? {
       switch orientation {
       case .portrait: .portrait
@@ -125,9 +128,9 @@ public protocol PlatformDeviceInfo: Sendable {
 // MARK: - Factory
 
 enum PlatformDevice {
-  @MainActor
   /// Creates the appropriate device info implementation for the current platform
-  public static func create() -> any PlatformDeviceInfo {
+  @MainActor
+  static func create() -> any PlatformDeviceInfo {
     #if canImport(UIKit) && !os(macOS)
       return IOSDeviceInfo()
     #elseif os(macOS)

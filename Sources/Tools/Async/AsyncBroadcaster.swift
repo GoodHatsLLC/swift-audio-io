@@ -1,3 +1,5 @@
+// © GoodHatsLLC
+
 import Foundation
 import OrderedCollections
 import Synchronization
@@ -5,15 +7,15 @@ import os
 
 @available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, *)
 public final class AsyncBroadcaster<Element: Sendable>: AsyncSequence, Sendable {
-
   public typealias Element = Element
 
   public init<S: AsyncSequence>(replay: AsyncBuffer, sequence: sending S)
   where S.Element == Element {
     let controller = MulticastController<Element>(
-      sequence.map(MulticastController.Event.publish), replay: replay)
+      sequence.map(MulticastController.Event.publish), replay: replay,
+    )
     self.controller = controller
-    self.memory = replay
+    memory = replay
   }
 
   let controller: MulticastController<Element>
@@ -23,7 +25,7 @@ public final class AsyncBroadcaster<Element: Sendable>: AsyncSequence, Sendable 
     let underlying = AsyncStream<Element>
       .makeStream(
         of: Element.self,
-        bufferingPolicy: .unbounded
+        bufferingPolicy: .unbounded,
       )
     controller.handle(.subscribe(underlying.continuation))
     return Iterator(underlying: underlying.stream.makeAsyncIterator())
@@ -33,9 +35,10 @@ public final class AsyncBroadcaster<Element: Sendable>: AsyncSequence, Sendable 
     init(underlying: AsyncStream<Element>.Iterator) {
       self.underlying = underlying
     }
+
     private var underlying: AsyncStream<Element>.Iterator
 
-    public mutating func next(isolation: isolated (any Actor)?) async throws(Never)
+    public mutating func next(isolation: isolated (any Actor)?) async
       -> Element?
     {
       await underlying.next(isolation: isolation)
@@ -50,7 +53,6 @@ extension AsyncSequence where Self: Sendable, Self.Element: Sendable {
 }
 
 final class MulticastController<Element: Sendable>: Sendable {
-
   enum Event {
     case subscribe(_ continuation: AsyncStream<Element>.Continuation)
     case unsubscribe(id: UUID)
@@ -59,15 +61,15 @@ final class MulticastController<Element: Sendable>: Sendable {
   }
 
   init<S: AsyncSequence>(
-    isolation: isolated (any Actor)? = #isolation, _ sequence: S, replay: AsyncBuffer
+    isolation: isolated (any Actor)? = #isolation, _ sequence: S, replay: AsyncBuffer,
   ) where S.Element == Event {
-    self.state = .init(.available(.init(replayCapacity: replay, replay: [], continuations: [:])))
+    state = .init(.available(.init(replayCapacity: replay, replay: [], continuations: [:])))
     Task(priority: .high) { [weak self] in
       _ = isolation
       do {
         for try await event in sequence {
           guard let self else { return }
-          self.handle(event)
+          handle(event)
         }
         self?.handle(.finish)
       } catch {
@@ -84,7 +86,6 @@ final class MulticastController<Element: Sendable>: Sendable {
       case .finish:
         state.finish()
         return {}
-
       case .subscribe(let continuation):
         let id = UUID()
         switch state {
@@ -94,13 +95,12 @@ final class MulticastController<Element: Sendable>: Sendable {
           storage.recite(to: continuation)
           return {
             continuation.onTermination = { [weak self] c in
-              if let self = self {
-
+              if let self {
                 switch c {
                 case .finished:
                   break
                 case .cancelled:
-                  self.handle(.unsubscribe(id: id))
+                  handle(.unsubscribe(id: id))
                 @unknown default:
                   break
                 }
@@ -138,14 +138,16 @@ final class MulticastController<Element: Sendable>: Sendable {
     }
     action()
   }
-
 }
 
 extension MulticastController {
   enum State {
     struct InvalidTransition: AudioError {
-      var description: String { "Invalid transition" }
+      var description: String {
+        "Invalid transition"
+      }
     }
+
     case available(Storage)
     case finished([Element])
 
@@ -172,18 +174,21 @@ extension MulticastController {
         continuation.finish()
       }
     }
+
     mutating func finishAll() {
       replay.removeAll()
-      let continuations = self.continuations
+      let continuations = continuations
       self.continuations.removeAll()
       for (_, continuation) in continuations {
         continuation.finish()
       }
     }
+
     mutating func remember(_ element: Element) {
       replay.append(element)
       replayCapacity.prune(elements: &replay)
     }
+
     func recite(to continuation: AsyncStream<Element>.Continuation) {
       for element in replay {
         continuation.yield(element)
@@ -197,7 +202,7 @@ public enum AsyncBuffer: Sendable {
   case latest(Int)
   case unbounded
 
-  public func prune<T>(elements: inout [T]) {
+  public func prune(elements: inout [some Any]) {
     switch self {
     case .none:
       elements.removeAll()

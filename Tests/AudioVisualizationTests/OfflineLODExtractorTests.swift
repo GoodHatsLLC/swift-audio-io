@@ -1,15 +1,17 @@
+// © GoodHatsLLC
+
 #if canImport(AVFoundation)
   import AudioSignals
   import AVFoundation
   import Testing
 
-  @Suite("OfflineLODExtractor Tests")
   struct OfflineLODExtractorTests {
-    @Test("extract produces result with correct metadata")
-    func extractProducesResult() async throws {
+    @Test
+    func `extract produces result with correct metadata`() async throws {
       let sampleRate: Double = 44100
       let frameCount: AVAudioFrameCount = 44100  // 1 second
-      let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1)!
+      let format = try #require(
+        AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1))
       let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount)
       guard let buffer else { return }
       buffer.frameLength = frameCount
@@ -39,11 +41,12 @@
       #expect(result.snapshot.writeIndex > 0)
     }
 
-    @Test("extract from segments concatenates correctly")
-    func extractFromSegments() async throws {
+    @Test
+    func `extract from segments concatenates correctly`() async throws {
       let sampleRate: Double = 44100
       let frameCount: AVAudioFrameCount = 88200  // 2 seconds
-      let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1)!
+      let format = try #require(
+        AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1))
       let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount)
       guard let buffer else { return }
       buffer.frameLength = frameCount
@@ -71,11 +74,12 @@
       #expect(result.snapshot.writeIndex > 0)
     }
 
-    @Test("channel strategy controls offline channel mixdown")
-    func extractHonorsChannelStrategy() async throws {
+    @Test
+    func `channel strategy controls offline channel mixdown`() async throws {
       let sampleRate: Double = 44100
       let frameCount: AVAudioFrameCount = 44100  // 1 second
-      let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 2)!
+      let format = try #require(
+        AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 2))
       let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount)
       guard let buffer else { return }
       buffer.frameLength = frameCount
@@ -98,7 +102,8 @@
       try file.write(from: buffer)
 
       let config = MultiBandLODConfiguration(
-        bandCount: 5, lodRatio: 64, sampleRate: Int(sampleRate))
+        bandCount: 5, lodRatio: 64, sampleRate: Int(sampleRate),
+      )
       let extractor = OfflineLODExtractor(configuration: config)
 
       let leftSnapshot = try await extractor.extract(from: url, channelStrategy: .left).snapshot
@@ -107,7 +112,7 @@
         .snapshot
       let weightedLeftSnapshot = try await extractor.extract(
         from: url,
-        channelStrategy: .weighted([1, 0])
+        channelStrategy: .weighted([1, 0]),
       ).snapshot
 
       let leftEnergy = rmsPeak(leftSnapshot)
