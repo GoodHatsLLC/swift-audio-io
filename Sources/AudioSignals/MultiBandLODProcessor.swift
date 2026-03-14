@@ -563,7 +563,7 @@
 
       for b in 0..<bandCount {
         let stats = unsafe windowStats[b]
-        guard !stats.isEmpty else { continue }
+        guard stats.count != 0 else { continue }
         let count = Float(stats.count)
 
         // Write directly to pre-allocated buffers (no allocation)
