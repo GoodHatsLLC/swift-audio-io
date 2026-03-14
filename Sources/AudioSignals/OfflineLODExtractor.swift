@@ -1,3 +1,5 @@
+// © GoodHatsLLC
+
 #if canImport(AVFAudio)
   import AVFAudio
   public import Foundation
@@ -9,7 +11,9 @@
     public var snapshot: MultiBandLODSnapshot
 
     /// Number of frequency bands.
-    public var bandCount: Int { snapshot.bandCount }
+    public var bandCount: Int {
+      snapshot.bandCount
+    }
 
     /// Total duration of the extracted audio in seconds.
     public var durationSeconds: Double
@@ -61,15 +65,15 @@
       }
     }
 
-    private static let maxOfflineLODSamplesPerBand = 16_384
-    private static let readBufferSize: AVAudioFrameCount = 4_096
+    private static let maxOfflineLODSamplesPerBand = 16384
+    private static let readBufferSize: AVAudioFrameCount = 4096
 
     public var configuration: MultiBandLODConfiguration
     public var channelStrategy: ChannelStrategy
 
     public init(
       configuration: MultiBandLODConfiguration = .default,
-      channelStrategy: ChannelStrategy = .average
+      channelStrategy: ChannelStrategy = .average,
     ) {
       self.configuration = configuration
       self.channelStrategy = channelStrategy
@@ -77,7 +81,7 @@
 
     /// Extract LOD data from an entire audio file.
     public func extract(
-      from url: URL
+      from url: URL,
     ) async throws(MultiBandLODProcessor.LODGenerationError) -> OfflineLODResult {
       try await extract(from: url, channelStrategy: channelStrategy)
     }
@@ -85,7 +89,7 @@
     /// Extract LOD data from an entire audio file with explicit channel strategy.
     public func extract(
       from url: URL,
-      channelStrategy: ChannelStrategy
+      channelStrategy: ChannelStrategy,
     ) async throws(MultiBandLODProcessor.LODGenerationError) -> OfflineLODResult {
       let file = try openFile(at: url)
       let processingFormat = file.processingFormat
@@ -96,11 +100,11 @@
       let adjustedConfig = Self.adjustedConfiguration(
         base: configuration,
         totalFrames: fileFrameCount,
-        sampleRate: sampleRate
+        sampleRate: sampleRate,
       )
       let processor = unsafe MultiBandLODProcessor(
         configuration: adjustedConfig,
-        allocateRawStorage: false
+        allocateRawStorage: false,
       )
 
       unsafe try processWholeFile(
@@ -108,7 +112,7 @@
         processingFormat: processingFormat,
         processor: processor,
         channelStrategy: channelStrategy,
-        url: url
+        url: url,
       )
       unsafe processor.finalize()
       let snapshot = unsafe processor.snapshotLocking()
@@ -116,14 +120,14 @@
       return OfflineLODResult(
         snapshot: snapshot,
         durationSeconds: durationSeconds,
-        sampleRate: sampleRate
+        sampleRate: sampleRate,
       )
     }
 
     /// Extract LOD data from specific segments of an audio file.
     public func extract(
       from url: URL,
-      segments: [ClosedRange<TimeInterval>]
+      segments: [ClosedRange<TimeInterval>],
     ) async throws(MultiBandLODProcessor.LODGenerationError) -> OfflineLODResult {
       try await extract(from: url, segments: segments, channelStrategy: channelStrategy)
     }
@@ -132,7 +136,7 @@
     public func extract(
       from url: URL,
       segments: [ClosedRange<TimeInterval>],
-      channelStrategy: ChannelStrategy
+      channelStrategy: ChannelStrategy,
     ) async throws(MultiBandLODProcessor.LODGenerationError) -> OfflineLODResult {
       let file = try openFile(at: url)
       let processingFormat = file.processingFormat
@@ -144,7 +148,7 @@
         return OfflineLODResult(
           snapshot: .empty,
           durationSeconds: 0,
-          sampleRate: sampleRate
+          sampleRate: sampleRate,
         )
       }
 
@@ -157,18 +161,18 @@
         return OfflineLODResult(
           snapshot: .empty,
           durationSeconds: 0,
-          sampleRate: sampleRate
+          sampleRate: sampleRate,
         )
       }
 
       let adjustedConfig = Self.adjustedConfiguration(
         base: configuration,
         totalFrames: totalFrames,
-        sampleRate: sampleRate
+        sampleRate: sampleRate,
       )
       let processor = unsafe MultiBandLODProcessor(
         configuration: adjustedConfig,
-        allocateRawStorage: false
+        allocateRawStorage: false,
       )
 
       unsafe try processSegmentRanges(
@@ -177,7 +181,7 @@
         segmentFrames: segmentFrames,
         processor: processor,
         channelStrategy: channelStrategy,
-        url: url
+        url: url,
       )
       unsafe processor.finalize()
       let snapshot = unsafe processor.snapshotLocking()
@@ -189,31 +193,31 @@
       return OfflineLODResult(
         snapshot: snapshot,
         durationSeconds: totalDuration,
-        sampleRate: sampleRate
+        sampleRate: sampleRate,
       )
     }
 
     private static func adjustedConfiguration(
       base: MultiBandLODConfiguration,
       totalFrames: Int,
-      sampleRate: Double
+      sampleRate: Double,
     ) -> MultiBandLODConfiguration {
       let effectiveLodRatio: Int
       let (maxFramesAtBaseRatio, overflow) =
         maxOfflineLODSamplesPerBand.multipliedReportingOverflow(
-          by: base.lodRatio
+          by: base.lodRatio,
         )
       if !overflow && totalFrames > maxFramesAtBaseRatio {
         effectiveLodRatio = max(
           base.lodRatio,
-          Int(ceil(Double(totalFrames) / Double(maxOfflineLODSamplesPerBand)))
+          Int(ceil(Double(totalFrames) / Double(maxOfflineLODSamplesPerBand))),
         )
       } else {
         effectiveLodRatio = base.lodRatio
       }
 
       let (paddedFrameCount, paddedOverflow) = totalFrames.addingReportingOverflow(
-        max(effectiveLodRatio, 1)
+        max(effectiveLodRatio, 1),
       )
       let rawBufferLengthOverride = paddedOverflow ? totalFrames : paddedFrameCount
       let bufferSeconds = max(Int(ceil(Double(totalFrames) / max(sampleRate, 1))), 1)
@@ -225,7 +229,7 @@
         sampleRate: Int(max(sampleRate, 1)),
         crossoverMode: base.crossoverMode,
         snapshotSwapInterval: base.snapshotSwapInterval,
-        rawBufferLengthOverride: rawBufferLengthOverride
+        rawBufferLengthOverride: rawBufferLengthOverride,
       )
     }
 
@@ -234,12 +238,12 @@
       processingFormat: AVAudioFormat,
       processor: MultiBandLODProcessor,
       channelStrategy: ChannelStrategy,
-      url: URL
+      url: URL,
     ) throws(MultiBandLODProcessor.LODGenerationError) {
       guard
         let buffer = AVAudioPCMBuffer(
           pcmFormat: processingFormat,
-          frameCapacity: Self.readBufferSize
+          frameCapacity: Self.readBufferSize,
         )
       else {
         throw .bufferCreationFailed
@@ -263,7 +267,7 @@
           processingFormat: processingFormat,
           processor: processor,
           channelStrategy: channelStrategy,
-          monoScratch: &monoScratch
+          monoScratch: &monoScratch,
         )
         framesRemaining -= buffer.frameLength
       }
@@ -275,12 +279,12 @@
       segmentFrames: [(start: AVAudioFramePosition, end: AVAudioFramePosition)],
       processor: MultiBandLODProcessor,
       channelStrategy: ChannelStrategy,
-      url: URL
+      url: URL,
     ) throws(MultiBandLODProcessor.LODGenerationError) {
       guard
         let buffer = AVAudioPCMBuffer(
           pcmFormat: processingFormat,
-          frameCapacity: Self.readBufferSize
+          frameCapacity: Self.readBufferSize,
         )
       else {
         throw .bufferCreationFailed
@@ -306,7 +310,7 @@
             processingFormat: processingFormat,
             processor: processor,
             channelStrategy: channelStrategy,
-            monoScratch: &monoScratch
+            monoScratch: &monoScratch,
           )
           framesRemaining -= AVAudioFramePosition(buffer.frameLength)
         }
@@ -318,7 +322,7 @@
       processingFormat: AVAudioFormat,
       processor: MultiBandLODProcessor,
       channelStrategy: ChannelStrategy,
-      monoScratch: inout [Float]
+      monoScratch: inout [Float],
     ) throws(MultiBandLODProcessor.LODGenerationError) {
       guard buffer.frameLength > 0 else { return }
       guard let channels = unsafe buffer.floatChannelData else {
@@ -337,7 +341,7 @@
       if let directChannel = channelStrategy.directChannelIndex(channelCount: channelCount) {
         let selected = unsafe UnsafeBufferPointer(
           start: channels[directChannel],
-          count: frameCount
+          count: frameCount,
         )
         unsafe processor.process(selected)
         return
@@ -398,7 +402,7 @@
     }
 
     private func openFile(
-      at url: URL
+      at url: URL,
     ) throws(MultiBandLODProcessor.LODGenerationError) -> AVAudioFile {
       do {
         return try AVAudioFile(forReading: url)
@@ -409,11 +413,12 @@
 
     private static func segmentFrameRanges(
       for segments: [ClosedRange<TimeInterval>],
-      sampleRate: Double
+      sampleRate: Double,
     ) -> [(start: AVAudioFramePosition, end: AVAudioFramePosition)] {
       segments.compactMap { range in
         let start = max(
-          AVAudioFramePosition(0), AVAudioFramePosition(range.lowerBound * sampleRate))
+          AVAudioFramePosition(0), AVAudioFramePosition(range.lowerBound * sampleRate),
+        )
         let end = max(start, AVAudioFramePosition(range.upperBound * sampleRate))
         guard end > start else { return nil }
         return (start: start, end: end)
@@ -422,7 +427,7 @@
 
     private static func normalizeSegments(
       _ segments: [ClosedRange<TimeInterval>],
-      fileDuration: TimeInterval
+      fileDuration: TimeInterval,
     ) -> [ClosedRange<TimeInterval>] {
       segments.compactMap { range in
         let lower = max(0, min(range.lowerBound, range.upperBound))

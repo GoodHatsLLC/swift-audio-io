@@ -1,21 +1,22 @@
+// © GoodHatsLLC
+
 import Atomics
 import Testing
 import Tools
 
 @testable import AIOEngine
 
-@Suite
 struct BufferReceiverLifecycleTests {
   @Test
-  func testDetachCallsEndBufferTaskAndReleasesReceiver() async {
+  func `detach calls end buffer task and releases receiver`() async {
     let engine = AIOEngine()
 
     final class TestReceiver: BufferReceiver, @unchecked Sendable {
       typealias T = Float
       let endCount = ManagedAtomic<Int>(0)
 
-      nonisolated func processBuffer(_ data: UnsafeBufferPointer<Float>) {}
-      nonisolated func processBuffer(_ data: UnsafeBufferPointer<Float>, timing: BufferTiming) {}
+      nonisolated func processBuffer(_: UnsafeBufferPointer<Float>) {}
+      nonisolated func processBuffer(_: UnsafeBufferPointer<Float>, timing _: BufferTiming) {}
 
       nonisolated func endBufferTask() {
         endCount.wrappingIncrement(by: 1, ordering: .relaxed)
@@ -28,10 +29,10 @@ struct BufferReceiverLifecycleTests {
       weakReceiver = receiver
 
       await engine.attachBufferReceiver(receiver)
-      #expect(engine.bufferReceivers({ $0.count }) == 1)
+      #expect(engine.bufferReceivers { $0.count } == 1)
 
       await engine.detachBufferReceivers()
-      #expect(engine.bufferReceivers({ $0.count }) == 0)
+      #expect(engine.bufferReceivers { $0.count } == 0)
       #expect(receiver.endCount.load(ordering: .relaxed) == 1)
     }
 

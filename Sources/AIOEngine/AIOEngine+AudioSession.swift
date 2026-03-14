@@ -1,3 +1,5 @@
+// © GoodHatsLLC
+
 #if canImport(AVFoundation)
   import AVFoundation
   import os
@@ -6,7 +8,6 @@
   private let log = SystemLog.make()
 
   extension AIOEngine {
-
     @MainActor
     func configureAudioSession(for configuration: RecordingConfiguration) throws(AIOError) {
       do {
@@ -29,13 +30,14 @@
 
         // Set preferred buffer duration for optimal performance
         let preferredDuration = calculatePreferredBufferDuration(
-          sampleRate: configuration.inputConfiguration.sampleRate.platform
+          sampleRate: configuration.inputConfiguration.sampleRate.platform,
         )
         do {
           try session.setPreferredIOBufferDuration(preferredDuration)
         } catch {
           throw .audioSessionFailed(
-            operation: .setPreferredIOBufferDuration, error: ErrorContext(error))
+            operation: .setPreferredIOBufferDuration, error: ErrorContext(error),
+          )
         }
 
         // Set preferred input channels if possible
@@ -47,7 +49,8 @@
           try session.setPreferredInputNumberOfChannels(Int(channelCount))
         } catch {
           throw .audioSessionFailed(
-            operation: .setPreferredInputNumberOfChannels, error: ErrorContext(error))
+            operation: .setPreferredInputNumberOfChannels, error: ErrorContext(error),
+          )
         }
 
         do {
@@ -58,7 +61,7 @@
 
         // Verify actual settings
         log.info(
-          "Audio session configured - Sample rate: \(session.sampleRate, privacy: .public), Buffer duration: \(session.ioBufferDuration, privacy: .public), Input channels: \(session.inputNumberOfChannels, privacy: .public)"
+          "Audio session configured - Sample rate: \(session.sampleRate, privacy: .public), Buffer duration: \(session.ioBufferDuration, privacy: .public), Input channels: \(session.inputNumberOfChannels, privacy: .public)",
         )
       #else
         _ = configuration
@@ -78,9 +81,8 @@
       @MainActor
       func applyAudioSessionConfiguration(
         _ session: AVAudioSession,
-        configuration: AudioSessionConfiguration
+        configuration: AudioSessionConfiguration,
       ) throws(AIOError) {
-
         if session.category != configuration.category
           || session.mode != configuration.mode
           || session.categoryOptions != configuration.options
@@ -89,7 +91,7 @@
             try session.setCategory(
               configuration.category,
               mode: configuration.mode,
-              options: configuration.options
+              options: configuration.options,
             )
           } catch {
             throw .audioSessionFailed(operation: .setCategory, error: ErrorContext(error))
@@ -101,12 +103,12 @@
         {
           do {
             try session.setAllowHapticsAndSystemSoundsDuringRecording(
-              configuration.allowsHapticsAndSystemSoundsDuringRecording
+              configuration.allowsHapticsAndSystemSoundsDuringRecording,
             )
           } catch {
             throw .audioSessionFailed(
               operation: .setAllowHapticsAndSystemSoundsDuringRecording,
-              error: ErrorContext(error)
+              error: ErrorContext(error),
             )
           }
         }
@@ -116,12 +118,12 @@
         {
           do {
             try session.setPrefersNoInterruptionsFromSystemAlerts(
-              configuration.prefersNoInterruptionsFromSystemAlerts
+              configuration.prefersNoInterruptionsFromSystemAlerts,
             )
           } catch {
             throw .audioSessionFailed(
               operation: .setPrefersNoInterruptionsFromSystemAlerts,
-              error: ErrorContext(error)
+              error: ErrorContext(error),
             )
           }
         }
@@ -131,12 +133,12 @@
         {
           do {
             try session.setPrefersInterruptionOnRouteDisconnect(
-              configuration.prefersInterruptionOnRouteDisconnect
+              configuration.prefersInterruptionOnRouteDisconnect,
             )
           } catch {
             throw .audioSessionFailed(
               operation: .setPrefersInterruptionOnRouteDisconnect,
-              error: ErrorContext(error)
+              error: ErrorContext(error),
             )
           }
         }
@@ -153,10 +155,10 @@
       } catch {
         let wrapped = AIOError.audioSessionFailed(
           operation: .setActive,
-          error: ErrorContext(error)
+          error: ErrorContext(error),
         )
         log.error(
-          "Failed to delegate audio session deactivation (\(reason, privacy: .public)): \(wrapped, privacy: .public)"
+          "Failed to delegate audio session deactivation (\(reason, privacy: .public)): \(wrapped, privacy: .public)",
         )
         errorSubject.send(wrapped)
       }

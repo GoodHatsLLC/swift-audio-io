@@ -1,3 +1,5 @@
+// © GoodHatsLLC
+
 #if os(macOS)
   public import Foundation
   public import Observation
@@ -29,13 +31,13 @@
     public convenience init(
       env: AudioEnvironment,
       errorManager: any ErrorManaging,
-      defaults: UserDefaults = .standard
+      defaults: UserDefaults = .standard,
     ) {
       self.init(
         env: env,
         errorManager: errorManager,
         defaults: defaults,
-        platformAudioBackend: PlatformAudioBackendFactory.makeDefault()
+        platformAudioBackend: PlatformAudioBackendFactory.makeDefault(),
       )
     }
 
@@ -43,13 +45,13 @@
       env: AudioEnvironment,
       errorManager: any ErrorManaging,
       defaults: UserDefaults,
-      platformAudioBackend: any PlatformAudioBackend
+      platformAudioBackend: any PlatformAudioBackend,
     ) {
       self.env = env
       self.errorManager = errorManager
       self.defaults = defaults
       self.platformAudioBackend = platformAudioBackend
-      self._useMeasurement = defaults.bool(forKey: StorageKey.useMeasurement)
+      _useMeasurement = defaults.bool(forKey: StorageKey.useMeasurement)
       _availableInputs = []
       _selectedInput = nil
       _availableSources = []
@@ -151,7 +153,7 @@
         }
 
         let maxSupportedChannels = newValue?.channelCount ?? .mono
-        if requestedChannelPreference == .stereo && maxSupportedChannels == .stereo {
+        if requestedChannelPreference == .stereo, maxSupportedChannels == .stereo {
           _channels = .stereo
         } else {
           _channels = .mono
@@ -206,19 +208,18 @@
     }
 
     private var routeChangeSubscribers:
-      [UUID: (@Sendable @MainActor (AudioRouteChangeEvent) async -> Void)] =
+      [UUID: @Sendable @MainActor (AudioRouteChangeEvent) async -> Void] =
         [:]
     private var interruptionSubscribers:
-      [UUID: (
-        @Sendable @MainActor (AudioInterruptionType, AudioInterruptionOptions?) async -> Void
-      )] =
+      [UUID:
+        @Sendable @MainActor (AudioInterruptionType, AudioInterruptionOptions?) async -> Void] =
         [:]
-    private var mediaServicesLostSubscribers: [UUID: (@Sendable @MainActor () async -> Void)] = [:]
-    private var mediaServicesResetSubscribers: [UUID: (@Sendable @MainActor () async -> Void)] = [:]
+    private var mediaServicesLostSubscribers: [UUID: @Sendable @MainActor () async -> Void] = [:]
+    private var mediaServicesResetSubscribers: [UUID: @Sendable @MainActor () async -> Void] = [:]
 
     @discardableResult
     public func addRouteChangeSubscriber(
-      _ handler: @escaping @Sendable @MainActor (AudioRouteChangeEvent) async -> Void
+      _ handler: @escaping @Sendable @MainActor (AudioRouteChangeEvent) async -> Void,
     ) -> UUID {
       let id = UUID()
       routeChangeSubscribers[id] = handler
@@ -229,7 +230,7 @@
     public func addInterruptionSubscriber(
       _ handler:
         @escaping @Sendable @MainActor (AudioInterruptionType, AudioInterruptionOptions?)
-        async -> Void
+        async -> Void,
     ) -> UUID {
       let id = UUID()
       interruptionSubscribers[id] = handler
@@ -238,7 +239,7 @@
 
     @discardableResult
     public func addMediaServicesLostSubscriber(
-      _ handler: @escaping @Sendable @MainActor () async -> Void
+      _ handler: @escaping @Sendable @MainActor () async -> Void,
     ) -> UUID {
       let id = UUID()
       mediaServicesLostSubscribers[id] = handler
@@ -247,7 +248,7 @@
 
     @discardableResult
     public func addMediaServicesResetSubscriber(
-      _ handler: @escaping @Sendable @MainActor () async -> Void
+      _ handler: @escaping @Sendable @MainActor () async -> Void,
     ) -> UUID {
       let id = UUID()
       mediaServicesResetSubscribers[id] = handler
@@ -287,8 +288,8 @@
       backendRouteTask = Task { @MainActor [weak self] in
         guard let self else { return }
         for await _ in platformAudioBackend.routeChanges() {
-          await self.refreshInputsFromPlatform()
-          await self.notifyRouteChangeSubscribers()
+          await refreshInputsFromPlatform()
+          await notifyRouteChangeSubscribers()
         }
       }
 
@@ -325,14 +326,14 @@
       let defaultSource = AudioSource(
         id: "\(descriptor.id)-source",
         name: descriptor.name,
-        supportedPolarPatterns: sourcePatterns
+        supportedPolarPatterns: sourcePatterns,
       )
       return AudioInput(
         id: descriptor.id,
         name: descriptor.name,
         type: .unknown,
         channelCount: supportsStereo ? .stereo : .mono,
-        availableSources: [defaultSource]
+        availableSources: [defaultSource],
       )
     }
 

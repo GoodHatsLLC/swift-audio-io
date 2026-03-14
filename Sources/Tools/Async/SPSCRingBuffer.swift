@@ -1,3 +1,5 @@
+// © GoodHatsLLC
+
 import Atomics
 import Foundation
 
@@ -18,13 +20,13 @@ import Foundation
   public init(capacity: Int) {
     let adjustedCapacity = Int.nextPowerOfTwo(max(capacity, 1))
     self.capacity = adjustedCapacity
-    self.capacityMask = adjustedCapacity - 1
+    capacityMask = adjustedCapacity - 1
 
     let pointer = UnsafeMutablePointer<T>.allocate(capacity: self.capacity)
-    unsafe self.buffer = unsafe UnsafeMutableBufferPointer(start: pointer, count: self.capacity)
+    unsafe buffer = unsafe UnsafeMutableBufferPointer(start: pointer, count: self.capacity)
 
-    self.writeIndex = ManagedAtomic<Int>(0)
-    self.readIndex = ManagedAtomic<Int>(0)
+    writeIndex = ManagedAtomic<Int>(0)
+    readIndex = ManagedAtomic<Int>(0)
   }
 
   deinit {

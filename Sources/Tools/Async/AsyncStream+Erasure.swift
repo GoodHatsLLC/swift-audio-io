@@ -1,3 +1,5 @@
+// © GoodHatsLLC
+
 public import AsyncAlgorithms
 public import Foundation
 
@@ -5,7 +7,6 @@ public import Foundation
 ///
 /// - Note: Relies fully on the upstream sequence for buffer control.
 extension AsyncThrowingStream where Failure == any Error, Element: Sendable {
-
   /// Type erasure of a failable async sequence. (iOS 17 compatible)
   ///
   /// - Note: Relies fully on the upstream sequence for buffer control.
@@ -48,6 +49,7 @@ extension AsyncStream {
       it.cancel()
     }
   }
+
   /// Type erasure of imperative bridging async sequence types.
   ///
   /// This method erases any upstream async sequence type which directly uses an `AsyncStream.AsyncIterator`
@@ -55,7 +57,7 @@ extension AsyncStream {
   public init<S: AsyncSequence>(
     isolation: isolated (any Actor)? = #isolation,
     source: S,
-    map transform: @escaping (S.Element) -> Element
+    map transform: @escaping (S.Element) -> Element,
   ) where S.AsyncIterator == AsyncStream<S.Element>.AsyncIterator, Element: Sendable {
     let (stream, cont) = AsyncStream.makeStream()
 
@@ -70,6 +72,7 @@ extension AsyncStream {
       it.cancel()
     }
   }
+
   /// Type erasure of imperative bridging async sequence types.
   ///
   /// This method erases any upstream async sequence type which directly uses an `AsyncStream.AsyncIterator`
@@ -77,7 +80,7 @@ extension AsyncStream {
   public init<S: AsyncSequence>(
     isolation: isolated (any Actor)? = #isolation,
     source: S,
-    compactMap transform: @escaping (S.Element) -> Element?
+    compactMap transform: @escaping (S.Element) -> Element?,
   ) where S.AsyncIterator == AsyncStream<S.Element>.AsyncIterator, Element: Sendable {
     let (stream, cont) = AsyncStream.makeStream()
 
@@ -104,9 +107,8 @@ extension AsyncStream {
   public init<S: AsyncSequence>(
     isolation: isolated (any Actor)? = #isolation,
     source: S,
-    map transform: @escaping (S.Element) -> Element
+    map transform: @escaping (S.Element) -> Element,
   ) where S.AsyncIterator == NotificationCenter.Notifications.AsyncIterator, Element: Sendable {
-
     let (stream, cont) = AsyncStream.makeStream()
 
     self = stream
@@ -129,7 +131,7 @@ extension AsyncStream {
   public init<S: AsyncSequence>(
     isolation: isolated (any Actor)? = #isolation,
     source: S,
-    compactMap transform: @escaping (S.Element) -> Element?
+    compactMap transform: @escaping (S.Element) -> Element?,
   ) where S.AsyncIterator == NotificationCenter.Notifications.AsyncIterator, Element: Sendable {
     let (stream, cont) = AsyncStream.makeStream()
 
@@ -150,20 +152,19 @@ extension AsyncStream {
 
 public typealias AsyncInitiallyNilSequence<Source: AsyncSequence> = AsyncChain2Sequence<
   AsyncSyncSequence<[Source.Element?]>,
-  AsyncMapSequence<Source, Source.Element?>
+  AsyncMapSequence<Source, Source.Element?>,
 >
 public typealias AsyncInitiallyNilOptionalSequence<Source: AsyncSequence> = AsyncChain2Sequence<
   AsyncSyncSequence<[Source.Element]>,
-  AsyncMapSequence<Source, Source.Element>
+  AsyncMapSequence<Source, Source.Element>,
 >
 public typealias InitiallyNilFiringCombineLatest2<Source1: AsyncSequence, Source2: AsyncSequence> =
   AsyncCombineLatest2Sequence<
     AsyncInitiallyNilSequence<Source1>,
-    AsyncInitiallyNilSequence<Source2>
+    AsyncInitiallyNilSequence<Source2>,
   >
 
 extension AsyncSequence {
-
   public func optionalized<Wrapped>(_: Wrapped.Type = Wrapped.self) -> Self
   where Self.Element == Wrapped? {
     self
@@ -181,8 +182,8 @@ extension AsyncSequence {
     AsyncSyncSequence<[Self.Element?]>,
     AsyncMapSequence<
       Self,
-      Self.Element?
-    >
+      Self.Element?,
+    >,
   > where Self.Element: Sendable {
     chain([Self.Element?(nil)].async, map(Optional.init))
   }
@@ -193,11 +194,10 @@ extension AsyncSequence {
       AsyncSyncSequence<[Self.Element]>,
       AsyncMapSequence<
         Self,
-        Self.Element
-      >
+        Self.Element,
+      >,
     > where Self.Element == WrappedElement?
   {
     chain([.none].async, map(\.self))
   }
-
 }

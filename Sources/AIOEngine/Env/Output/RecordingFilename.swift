@@ -1,3 +1,5 @@
+// © GoodHatsLLC
+
 public import Foundation
 
 /// Represents a semantic recording filename with UTC timestamp and identifier.
@@ -10,7 +12,6 @@ public import Foundation
 ///
 /// Example: `20251216T143052_bix.aac`
 public struct RecordingFilename: Sendable, Equatable, Hashable {
-
   /// The UTC timestamp of the recording.
   public let timestamp: Date
 
@@ -27,10 +28,10 @@ public struct RecordingFilename: Sendable, Equatable, Hashable {
   ///   - fileExtension: The file extension (without dot).
   public init(
     timestamp: Date = Date(),
-    fileExtension: String
+    fileExtension: String,
   ) {
     self.timestamp = timestamp
-    self.word = Self.generatePhoneticWord()
+    word = Self.generatePhoneticWord()
     self.fileExtension = fileExtension.lowercased()
   }
 
@@ -43,7 +44,7 @@ public struct RecordingFilename: Sendable, Equatable, Hashable {
   public init(
     timestamp: Date,
     word: String,
-    fileExtension: String
+    fileExtension: String,
   ) {
     self.timestamp = timestamp
     self.word = word.lowercased().filter { $0.isLetter || $0.isNumber }
@@ -73,7 +74,6 @@ public struct RecordingFilename: Sendable, Equatable, Hashable {
 // MARK: - Parsing
 
 extension RecordingFilename {
-
   /// Attempts to parse a filename string into a RecordingFilename.
   ///
   /// - Parameter string: The filename string (with or without extension).
@@ -89,9 +89,9 @@ extension RecordingFilename {
       return nil
     }
 
-    self.timestamp = parsed.timestamp
-    self.word = parsed.word
-    self.fileExtension = ext
+    timestamp = parsed.timestamp
+    word = parsed.word
+    fileExtension = ext
   }
 
   /// Checks if a filename string matches the recording filename pattern.
@@ -142,7 +142,9 @@ extension RecordingFilename {
 // MARK: - CustomStringConvertible
 
 extension RecordingFilename: CustomStringConvertible {
-  public var description: String { filename }
+  public var description: String {
+    filename
+  }
 }
 
 // MARK: - LosslessStringConvertible
@@ -162,7 +164,7 @@ extension RecordingFilename: Codable {
     guard let parsed = RecordingFilename(parsing: string) else {
       throw DecodingError.dataCorruptedError(
         in: container,
-        debugDescription: "Invalid recording filename format: \(string)"
+        debugDescription: "Invalid recording filename format: \(string)",
       )
     }
     self = parsed
@@ -212,7 +214,6 @@ extension RecordingFilename {
 // MARK: - Phonetic Word Generation
 
 extension RecordingFilename {
-
   /// Generates a random pronounceable word using two CVC syllables.
   ///
   /// Examples: "bixtov", "mupzaf", "kedlun"

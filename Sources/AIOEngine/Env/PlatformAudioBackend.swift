@@ -1,14 +1,16 @@
+// © GoodHatsLLC
+
 internal import Foundation
 
 /// Platform-neutral model of a discoverable audio input endpoint.
-struct PlatformAudioInputDescriptor: Sendable, Hashable {
+struct PlatformAudioInputDescriptor: Hashable {
   let id: String
   let name: String
   let channelCount: Int
   let isDefault: Bool
 }
 
-enum PlatformAudioRouteEvent: Sendable, Hashable {
+enum PlatformAudioRouteEvent: Hashable {
   case changed
 }
 
@@ -41,23 +43,25 @@ enum PlatformAudioBackendFactory {
       AsyncStream { continuation in
         let routeTask = Task {
           let routeNotifications = NotificationCenter.default.notifications(
-            named: AVAudioSession.routeChangeNotification)
+            named: AVAudioSession.routeChangeNotification,
+          )
           for await _ in routeNotifications {
             continuation.yield(.changed)
           }
         }
-        let availableInputsTask: Task<Void, Never>?
-        if #available(iOS 26.0, *) {
-          availableInputsTask = Task {
-            let inputNotifications = NotificationCenter.default.notifications(
-              named: AVAudioSession.availableInputsChangeNotification)
-            for await _ in inputNotifications {
-              continuation.yield(.changed)
+        let availableInputsTask: Task<Void, Never>? =
+          if #available(iOS 26.0, *) {
+            Task {
+              let inputNotifications = NotificationCenter.default.notifications(
+                named: AVAudioSession.availableInputsChangeNotification,
+              )
+              for await _ in inputNotifications {
+                continuation.yield(.changed)
+              }
             }
+          } else {
+            nil
           }
-        } else {
-          availableInputsTask = nil
-        }
         continuation.onTermination = { _ in
           routeTask.cancel()
           availableInputsTask?.cancel()
@@ -73,7 +77,7 @@ enum PlatformAudioBackendFactory {
           id: input.uid,
           name: input.portName,
           channelCount: max(input.channels?.count ?? 0, 1),
-          isDefault: input.uid == defaultInputID
+          isDefault: input.uid == defaultInputID,
         )
       }
       .sorted { lhs, rhs in
@@ -81,6 +85,7 @@ enum PlatformAudioBackendFactory {
       }
     }
   }
+
 #elseif os(macOS)
   import CoreAudio
 
@@ -114,7 +119,7 @@ enum PlatformAudioBackendFactory {
           id: input.uid,
           name: input.name,
           channelCount: input.channelCount,
-          isDefault: input.uid == defaultInputID
+          isDefault: input.uid == defaultInputID,
         )
       }
       .sorted { lhs, rhs in
@@ -122,13 +127,13 @@ enum PlatformAudioBackendFactory {
       }
     }
 
-    private struct CoreAudioInput: Sendable {
+    private struct CoreAudioInput {
       let uid: String
       let name: String
       let channelCount: Int
     }
 
-    private struct RouteSignature: Hashable, Sendable {
+    private struct RouteSignature: Hashable {
       let defaultInputID: String?
       let inputIDs: [String]
     }
@@ -137,7 +142,7 @@ enum PlatformAudioBackendFactory {
       let inputs = audioInputDevices().map(\.uid).sorted()
       return RouteSignature(
         defaultInputID: defaultInputDeviceUID(),
-        inputIDs: inputs
+        inputIDs: inputs,
       )
     }
 
@@ -148,7 +153,7 @@ enum PlatformAudioBackendFactory {
         guard
           let uid = stringProperty(
             objectID: deviceID,
-            selector: kAudioDevicePropertyDeviceUID
+            selector: kAudioDevicePropertyDeviceUID,
           )
         else { return nil }
         let name =
@@ -163,7 +168,7 @@ enum PlatformAudioBackendFactory {
       var address = AudioObjectPropertyAddress(
         mSelector: kAudioHardwarePropertyDefaultInputDevice,
         mScope: kAudioObjectPropertyScopeGlobal,
-        mElement: kAudioObjectPropertyElementMain
+        mElement: kAudioObjectPropertyElementMain,
       )
       var deviceID = AudioDeviceID(0)
       var dataSize = UInt32(MemoryLayout<AudioDeviceID>.size)
@@ -173,7 +178,7 @@ enum PlatformAudioBackendFactory {
         0,
         nil,
         &dataSize,
-        &deviceID
+        &deviceID,
       )
       guard status == noErr else { return nil }
       return stringProperty(objectID: deviceID, selector: kAudioDevicePropertyDeviceUID)
@@ -184,7 +189,7 @@ enum PlatformAudioBackendFactory {
       var address = AudioObjectPropertyAddress(
         mSelector: kAudioHardwarePropertyDevices,
         mScope: kAudioObjectPropertyScopeGlobal,
-        mElement: kAudioObjectPropertyElementMain
+        mElement: kAudioObjectPropertyElementMain,
       )
       var dataSize: UInt32 = 0
       let sizeStatus = unsafe AudioObjectGetPropertyDataSize(
@@ -192,7 +197,7 @@ enum PlatformAudioBackendFactory {
         &address,
         0,
         nil,
-        &dataSize
+        &dataSize,
       )
       guard sizeStatus == noErr, dataSize > 0 else { return [] }
 
@@ -205,7 +210,7 @@ enum PlatformAudioBackendFactory {
         0,
         nil,
         &dataSize,
-        &devices
+        &devices,
       )
       guard readStatus == noErr else { return [] }
       return devices
@@ -215,7 +220,7 @@ enum PlatformAudioBackendFactory {
       var address = AudioObjectPropertyAddress(
         mSelector: kAudioDevicePropertyStreamConfiguration,
         mScope: kAudioObjectPropertyScopeInput,
-        mElement: kAudioObjectPropertyElementMain
+        mElement: kAudioObjectPropertyElementMain,
       )
       var dataSize: UInt32 = 0
       let sizeStatus = unsafe AudioObjectGetPropertyDataSize(
@@ -223,13 +228,13 @@ enum PlatformAudioBackendFactory {
         &address,
         0,
         nil,
-        &dataSize
+        &dataSize,
       )
       guard sizeStatus == noErr, dataSize > 0 else { return 0 }
 
       let rawBuffer = UnsafeMutableRawPointer.allocate(
         byteCount: Int(dataSize),
-        alignment: MemoryLayout<AudioBufferList>.alignment
+        alignment: MemoryLayout<AudioBufferList>.alignment,
       )
       defer {
         unsafe rawBuffer.deallocate()
@@ -241,7 +246,7 @@ enum PlatformAudioBackendFactory {
         0,
         nil,
         &dataSize,
-        rawBuffer
+        rawBuffer,
       )
       guard readStatus == noErr else { return 0 }
 
@@ -258,12 +263,12 @@ enum PlatformAudioBackendFactory {
       var address = AudioObjectPropertyAddress(
         mSelector: selector,
         mScope: kAudioObjectPropertyScopeGlobal,
-        mElement: kAudioObjectPropertyElementMain
+        mElement: kAudioObjectPropertyElementMain,
       )
       var dataSize = UInt32(MemoryLayout<CFString?>.size)
       let rawValue = UnsafeMutableRawPointer.allocate(
         byteCount: Int(dataSize),
-        alignment: MemoryLayout<CFString?>.alignment
+        alignment: MemoryLayout<CFString?>.alignment,
       )
       defer {
         unsafe rawValue.deallocate()
@@ -274,7 +279,7 @@ enum PlatformAudioBackendFactory {
         0,
         nil,
         &dataSize,
-        rawValue
+        rawValue,
       )
       guard status == noErr else { return nil }
       let value = unsafe rawValue.assumingMemoryBound(to: CFString?.self).pointee

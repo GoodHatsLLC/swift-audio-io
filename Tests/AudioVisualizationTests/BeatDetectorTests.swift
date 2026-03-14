@@ -1,16 +1,16 @@
+// © GoodHatsLLC
+
 #if canImport(AVFoundation)
   import AIOEngine
   import AudioSignals
   import Foundation
   import Testing
 
-  @Suite("Beat Detector Tests")
   struct BeatDetectorTests {
-
     // MARK: - Initialization Tests
 
-    @Test("BeatDetector initializes with default configuration")
-    func testBeatDetectorDefaultInit() {
+    @Test
+    func `BeatDetector initializes with default configuration`() {
       let detector = BeatDetector()
       // Should not crash and be ready to use
       let result = detector.analyze(spectrum: [], rmsLevel: 0, deltaTime: 1.0 / 60.0)
@@ -18,13 +18,13 @@
       #expect(result.energy == 0)
     }
 
-    @Test("BeatDetector initializes with custom configuration")
-    func testBeatDetectorCustomInit() {
+    @Test
+    func `BeatDetector initializes with custom configuration`() {
       let config = BeatDetectionConfiguration(
         sensitivity: 0.3,
         minimumBeatInterval: 0.2,
         bassFocused: false,
-        historySize: 60
+        historySize: 60,
       )
       let detector = BeatDetector(configuration: config)
       let result = detector.analyze(spectrum: [], rmsLevel: 0, deltaTime: 1.0 / 60.0)
@@ -33,20 +33,21 @@
 
     // MARK: - Beat Detection Tests
 
-    @Test("BeatDetector detects no beat on silent input")
-    func testBeatDetectorSilentInput() {
+    @Test
+    func `BeatDetector detects no beat on silent input`() {
       let detector = BeatDetector()
 
       // Run several frames with silence
       for _ in 0..<60 {
         let result = detector.analyze(
-          spectrum: Array(repeating: 0, count: 64), rmsLevel: 0, deltaTime: 1.0 / 60.0)
+          spectrum: Array(repeating: 0, count: 64), rmsLevel: 0, deltaTime: 1.0 / 60.0,
+        )
         #expect(!result.beatDetected)
       }
     }
 
-    @Test("BeatDetector detects beat on sudden energy increase")
-    func testBeatDetectorDetectsBeat() {
+    @Test
+    func `BeatDetector detects beat on sudden energy increase`() {
       let detector = BeatDetector(configuration: .highSensitivity)
 
       // Build up energy history with low values
@@ -64,18 +65,19 @@
       #expect(result.energy > 0.5)
     }
 
-    @Test("BeatDetector respects minimum beat interval")
-    func testBeatDetectorMinimumInterval() {
+    @Test
+    func `BeatDetector respects minimum beat interval`() {
       let config = BeatDetectionConfiguration(
         sensitivity: 0.3,
-        minimumBeatInterval: 0.5  // 500ms minimum
+        minimumBeatInterval: 0.5,  // 500ms minimum
       )
       let detector = BeatDetector(configuration: config)
 
       // Build history
       for _ in 0..<50 {
         _ = detector.analyze(
-          spectrum: Array(repeating: Float(0.1), count: 64), rmsLevel: 0.1, deltaTime: 1.0 / 60.0)
+          spectrum: Array(repeating: Float(0.1), count: 64), rmsLevel: 0.1, deltaTime: 1.0 / 60.0,
+        )
       }
 
       // First spike
@@ -89,8 +91,8 @@
 
     // MARK: - Configuration Update Tests
 
-    @Test("BeatDetector configuration can be updated")
-    func testBeatDetectorUpdateConfiguration() {
+    @Test
+    func `BeatDetector configuration can be updated`() {
       let detector = BeatDetector()
 
       // Update to high sensitivity
@@ -101,14 +103,15 @@
       #expect(!result.beatDetected)
     }
 
-    @Test("BeatDetector reset clears state")
-    func testBeatDetectorReset() {
+    @Test
+    func `BeatDetector reset clears state`() {
       let detector = BeatDetector()
 
       // Run some frames
       for _ in 0..<50 {
         _ = detector.analyze(
-          spectrum: Array(repeating: Float(0.5), count: 64), rmsLevel: 0.5, deltaTime: 1.0 / 60.0)
+          spectrum: Array(repeating: Float(0.5), count: 64), rmsLevel: 0.5, deltaTime: 1.0 / 60.0,
+        )
       }
 
       // Reset
@@ -122,8 +125,8 @@
 
     // MARK: - Tempo Estimation Tests
 
-    @Test("BeatDetector estimates tempo with regular beats")
-    func testBeatDetectorTempoEstimation() {
+    @Test
+    func `BeatDetector estimates tempo with regular beats`() {
       let detector = BeatDetector(configuration: .default)
 
       // We can't easily test actual tempo estimation without triggering real beats,
@@ -134,8 +137,8 @@
 
     // MARK: - Bass Focus Tests
 
-    @Test("BeatDetector bass focus uses lower frequencies")
-    func testBeatDetectorBassFocus() {
+    @Test
+    func `BeatDetector bass focus uses lower frequencies`() {
       let bassFocusedConfig = BeatDetectionConfiguration(bassFocused: true)
       let bassDetector = BeatDetector(configuration: bassFocusedConfig)
 
@@ -150,9 +153,11 @@
 
       // Both detectors should process the same spectrum differently
       let bassResult = bassDetector.analyze(
-        spectrum: bassHeavySpectrum, rmsLevel: 0.3, deltaTime: 1.0 / 60.0)
+        spectrum: bassHeavySpectrum, rmsLevel: 0.3, deltaTime: 1.0 / 60.0,
+      )
       let fullResult = fullRangeDetector.analyze(
-        spectrum: bassHeavySpectrum, rmsLevel: 0.3, deltaTime: 1.0 / 60.0)
+        spectrum: bassHeavySpectrum, rmsLevel: 0.3, deltaTime: 1.0 / 60.0,
+      )
 
       // Bass-focused detector should report higher energy for bass-heavy spectrum
       #expect(bassResult.energy > fullResult.energy)

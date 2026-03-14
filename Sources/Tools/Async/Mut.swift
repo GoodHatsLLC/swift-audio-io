@@ -1,3 +1,5 @@
+// © GoodHatsLLC
+
 #if canImport(Synchronization)
   import Synchronization
 #else
@@ -15,24 +17,24 @@ public struct Mut<Value>: Sendable, ~Copyable {
 extension Mut {
   public init(_ initialValue: consuming sending Value) {
     #if canImport(Synchronization)
-      self.lock = Mutex(initialValue)
+      lock = Mutex(initialValue)
     #else
-      self.lock = OSAllocatedUnfairLock(uncheckedState: initialValue)
+      lock = OSAllocatedUnfairLock(uncheckedState: initialValue)
     #endif
   }
 
   public borrowing func withLock<Result, E>(
-    _ body: (inout sending Value) throws(E) -> sending Result
+    _ body: (inout sending Value) throws(E) -> sending Result,
   ) throws(E) -> sending Result {
     do {
       #if canImport(Synchronization)
-        return try lock.withLock { (v) -> Transferring<Result> in
+        return try lock.withLock { v -> Transferring<Result> in
           nonisolated(unsafe) var copy = v
           defer { v = unsafe copy }
           return try unsafe Transferring(body(&copy))
         }.value
       #else
-        return try lock.withLockUnchecked { (v) -> Transferring<Result> in
+        return try lock.withLockUnchecked { v -> Transferring<Result> in
           nonisolated(unsafe) var copy = v
           defer { v = copy }
           return try Transferring(body(&copy))
@@ -46,17 +48,17 @@ extension Mut {
   }
 
   public borrowing func withLockIfAvailable<Result, E>(
-    _ body: (inout sending Value) throws(E) -> sending Result
+    _ body: (inout sending Value) throws(E) -> sending Result,
   ) throws(E) -> sending Result? {
     do {
       #if canImport(Synchronization)
-        return try lock.withLockIfAvailable { (v) -> Transferring<Result> in
+        return try lock.withLockIfAvailable { v -> Transferring<Result> in
           nonisolated(unsafe) var copy = v
           defer { v = unsafe copy }
           return try unsafe Transferring(body(&copy))
         }?.value
       #else
-        return try lock.withLockIfAvailableUnchecked { (v) -> Transferring<Result> in
+        return try lock.withLockIfAvailableUnchecked { v -> Transferring<Result> in
           nonisolated(unsafe) var copy = v
           defer { v = copy }
           return try Transferring(body(&copy))

@@ -2,8 +2,8 @@
 /// it when a new value is set, or when it is deallocated.
 @propertyWrapper public struct TaskHolder<Success: Sendable, Failure: Error>: ~Copyable {
   public init(
-    success: Success.Type = Success.self, failure: Failure.Type = Failure.self,
-    wrappedValue: Task<Success, Failure>? = nil
+    success _: Success.Type = Success.self, failure _: Failure.Type = Failure.self,
+    wrappedValue: Task<Success, Failure>? = nil,
   ) {
     self.wrappedValue = wrappedValue
   }
@@ -12,7 +12,7 @@
     wrappedValue?.cancel()
   }
 
-  public var wrappedValue: Task<Success, Failure>? = nil {
+  public var wrappedValue: Task<Success, Failure>? {
     willSet {
       wrappedValue?.cancel()
     }

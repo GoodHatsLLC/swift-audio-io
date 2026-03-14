@@ -1,3 +1,5 @@
+// © GoodHatsLLC
+
 #if canImport(UIKit)
   import Dispatch
   import Foundation
@@ -6,10 +8,9 @@
   @_spi(TESTING) import AIOEngine
   import Tools
 
-  @Suite
   struct AIOEngineReceiverTests {
     @Test
-    func testReceiverRunsOnReceiverQueue() async throws {
+    func `receiver runs on receiver queue`() async throws {
       let engine = AIOEngine()
       let configuration = makeConfiguration()
       let receiver = QueueLabelReceiver()
@@ -23,7 +24,7 @@
 
       let received = await waitFor(
         condition: { receiver.snapshot().isEmpty == false },
-        timeout: .seconds(1)
+        timeout: .seconds(1),
       )
       #expect(received == true)
 
@@ -34,7 +35,7 @@
     }
 
     @Test
-    func testReceiverOrderingUsesTimingPackets() async throws {
+    func `receiver ordering uses timing packets`() async throws {
       let engine = AIOEngine()
       let configuration = makeConfiguration()
       let receiver = OrderedReceiver()
@@ -51,7 +52,7 @@
 
       let received = await waitFor(
         condition: { receiver.snapshot().count >= 2 },
-        timeout: .seconds(1)
+        timeout: .seconds(1),
       )
       #expect(received == true)
 
@@ -66,7 +67,7 @@
     }
 
     @Test
-    func testSlowReceiverDoesNotBlockWriter() async throws {
+    func `slow receiver does not block writer`() async throws {
       let engine = AIOEngine()
       let configuration = makeConfiguration()
       let receiver = SlowReceiver(delay: 0.05)
@@ -98,17 +99,17 @@
     private func makeConfiguration() -> RecordingConfiguration {
       let input = InputConfiguration(
         sampleRate: SampleRate.common(.sr48000),
-        channels: .mono
+        channels: .mono,
       )
       let output = OutputConfiguration(
         fileFormat: .caf,
         bitDepth: .pcmFloat32,
-        quality: .high
+        quality: .high,
       )
       return RecordingConfiguration(
         inputConfiguration: input,
         outputConfiguration: output,
-        outputDestination: .temporary
+        outputDestination: .temporary,
       )
     }
 
@@ -119,7 +120,7 @@
 
     private func waitFor(
       condition: @Sendable () -> Bool,
-      timeout: Duration
+      timeout: Duration,
     ) async -> Bool {
       let clock = ContinuousClock()
       let deadline = clock.now.advanced(by: timeout)
@@ -147,10 +148,10 @@
     }
 
     nonisolated func processBuffer(_ data: UnsafeBufferPointer<Float>) {
-      unsafe processBuffer(data, timing: BufferTiming(sampleTime: 0, sampleRate: 48_000))
+      unsafe processBuffer(data, timing: BufferTiming(sampleTime: 0, sampleRate: 48000))
     }
 
-    nonisolated func processBuffer(_ data: UnsafeBufferPointer<Float>, timing: BufferTiming) {
+    nonisolated func processBuffer(_: UnsafeBufferPointer<Float>, timing _: BufferTiming) {
       let label = currentQueueLabel()
       lock.lock()
       storedLabels.append(label)
@@ -172,7 +173,7 @@
     }
 
     nonisolated func processBuffer(_ data: UnsafeBufferPointer<Float>) {
-      unsafe processBuffer(data, timing: BufferTiming(sampleTime: 0, sampleRate: 48_000))
+      unsafe processBuffer(data, timing: BufferTiming(sampleTime: 0, sampleRate: 48000))
     }
 
     nonisolated func processBuffer(_ data: UnsafeBufferPointer<Float>, timing: BufferTiming) {
@@ -193,10 +194,10 @@
     }
 
     nonisolated func processBuffer(_ data: UnsafeBufferPointer<Float>) {
-      unsafe processBuffer(data, timing: BufferTiming(sampleTime: 0, sampleRate: 48_000))
+      unsafe processBuffer(data, timing: BufferTiming(sampleTime: 0, sampleRate: 48000))
     }
 
-    nonisolated func processBuffer(_ data: UnsafeBufferPointer<Float>, timing: BufferTiming) {
+    nonisolated func processBuffer(_: UnsafeBufferPointer<Float>, timing _: BufferTiming) {
       Thread.sleep(forTimeInterval: delay)
     }
 

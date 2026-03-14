@@ -1,3 +1,5 @@
+// © GoodHatsLLC
+
 #if canImport(AVFoundation)
   import AVFoundation
   public import Foundation
@@ -18,11 +20,11 @@
         public var description: String {
           switch self {
           case .temporary:
-            return "temporary"
+            "temporary"
           case .directory(let url, let protection):
-            return "directory(\(url.path), protection=\(String(describing: protection)))"
+            "directory(\(url.path), protection=\(String(describing: protection)))"
           case .fileURL(let url, let protection):
-            return "fileURL(\(url.path), protection=\(String(describing: protection)))"
+            "fileURL(\(url.path), protection=\(String(describing: protection)))"
           }
         }
       }
@@ -35,17 +37,20 @@
         public var description: String {
           switch self {
           case .temporary:
-            return "temporary"
+            "temporary"
           case .directory(let url):
-            return "directory(\(url.path))"
+            "directory(\(url.path))"
           case .fileURL(let url):
-            return "fileURL(\(url.path))"
+            "fileURL(\(url.path))"
           }
         }
       }
     #endif
 
-    public var id: Self { self }
+    public var id: Self {
+      self
+    }
+
     public let inputConfiguration: InputConfiguration
     public let outputConfiguration: OutputConfiguration
     public let tapInterval: Duration
@@ -55,7 +60,7 @@
       inputConfiguration: InputConfiguration,
       outputConfiguration: OutputConfiguration,
       tapInterval: Duration = .seconds(0.1),
-      outputDestination: OutputDestination = .temporary
+      outputDestination: OutputDestination = .temporary,
     ) {
       self.inputConfiguration = inputConfiguration
       self.outputConfiguration = outputConfiguration
@@ -87,13 +92,13 @@
       """
     }
 
-    // Processing format for the audio engine pipeline.
+    /// Processing format for the audio engine pipeline.
     var processingFormat: AVAudioFormat? {
       AVAudioFormat(
         commonFormat: .pcmFormatFloat32,
         sampleRate: inputConfiguration.sampleRate.platform,
         channels: inputConfiguration.channels.platform,
-        interleaved: false
+        interleaved: false,
       )
     }
 
@@ -109,15 +114,15 @@
       bitDepth: Int,
       isFloat: Bool,
       isBigEndian: Bool,
-      isInterleaved: Bool
+      isInterleaved: Bool,
     ) -> AVAudioFormat? {
       AVAudioFormat(
         settings: makeLinearPCMSettings(
           bitDepth: bitDepth,
           isFloat: isFloat,
           isBigEndian: isBigEndian,
-          isInterleaved: isInterleaved
-        )
+          isInterleaved: isInterleaved,
+        ),
       )
     }
 
@@ -125,7 +130,7 @@
       bitDepth: Int,
       isFloat: Bool,
       isBigEndian: Bool,
-      isInterleaved: Bool
+      isInterleaved: Bool,
     ) -> [String: Any] {
       [
         AVFormatIDKey: kAudioFormatLinearPCM,
@@ -162,7 +167,7 @@
         return settings
 
       case .flac:
-        let encoderBitDepthHint: Int =
+        let encoderBitDepthHint =
           switch outputConfiguration.bitDepth {
           case .pcmInt16: 16
           case .pcmInt24: 24
@@ -184,13 +189,13 @@
             bitDepth: 24,
             isFloat: false,
             isBigEndian: false,
-            isInterleaved: outputConfiguration.fileFormat == .wav ? true : false
+            isInterleaved: outputConfiguration.fileFormat == .wav ? true : false,
           )
         }
         return fileFormat?.settings
 
       case .aiff:
-        let (bitDepth, isFloat): (Int, Bool) =
+        let (bitDepth, isFloat) =
           switch outputConfiguration.bitDepth {
           case .pcmInt16: (16, false)
           case .pcmInt24: (24, false)
@@ -201,7 +206,7 @@
           bitDepth: bitDepth,
           isFloat: isFloat,
           isBigEndian: true,
-          isInterleaved: true
+          isInterleaved: true,
         )
       }
     }
@@ -265,12 +270,12 @@
         let channelCount = inputConfiguration.channels.platform
 
         // FLAC supports wide range of sample rates
-        guard sampleRate <= 655350,  // FLAC max sample rate
+        guard sampleRate <= 655_350,  // FLAC max sample rate
           channelCount <= 8,  // FLAC supports up to 8 channels
           sampleRate >= 8000  // Reasonable minimum
         else {
           log.error(
-            "invalid FLAC configuration: \(sampleRate, privacy: .public)Hz, \(channelCount, privacy: .public)ch"
+            "invalid FLAC configuration: \(sampleRate, privacy: .public)Hz, \(channelCount, privacy: .public)ch",
           )
           return nil
         }
@@ -278,24 +283,24 @@
         return format
 
       case .wav, .caf:
-        let format: AVAudioFormat?
-        if outputConfiguration.bitDepth == .pcmInt24 {
-          // 24-bit PCM should be truly packed 24-bit container samples, not 32-bit container
-          // samples created via the .pcmFormatInt32 fallback.
-          format = makeLinearPCMFormat(
-            bitDepth: 24,
-            isFloat: false,
-            isBigEndian: false,
-            isInterleaved: outputConfiguration.fileFormat == .wav ? true : false
-          )
-        } else {
-          format = AVAudioFormat(
-            commonFormat: commonFormat,
-            sampleRate: inputConfiguration.sampleRate.rawValue,
-            channels: inputConfiguration.channels.platform,
-            interleaved: outputConfiguration.fileFormat.requiresInterleaved
-          )
-        }
+        let format: AVAudioFormat? =
+          if outputConfiguration.bitDepth == .pcmInt24 {
+            // 24-bit PCM should be truly packed 24-bit container samples, not 32-bit container
+            // samples created via the .pcmFormatInt32 fallback.
+            makeLinearPCMFormat(
+              bitDepth: 24,
+              isFloat: false,
+              isBigEndian: false,
+              isInterleaved: outputConfiguration.fileFormat == .wav ? true : false,
+            )
+          } else {
+            AVAudioFormat(
+              commonFormat: commonFormat,
+              sampleRate: inputConfiguration.sampleRate.rawValue,
+              channels: inputConfiguration.channels.platform,
+              interleaved: outputConfiguration.fileFormat.requiresInterleaved,
+            )
+          }
 
         // Validate PCM format constraints
         guard let validFormat = format else {
@@ -308,7 +313,7 @@
         let channelCount = inputConfiguration.channels.platform
 
         // Check for reasonable limits
-        guard sampleRate <= 192000,  // 192kHz max
+        guard sampleRate <= 192_000,  // 192kHz max
           channelCount <= 32,  // 32 channels max
           sampleRate >= 8000  // 8kHz min
         else {
@@ -320,7 +325,7 @@
         return validFormat
 
       case .aiff:
-        let (bitDepth, isFloat): (Int, Bool) =
+        let (bitDepth, isFloat) =
           switch outputConfiguration.bitDepth {
           case .pcmInt16: (16, false)
           case .pcmInt24: (24, false)
@@ -331,7 +336,7 @@
           bitDepth: bitDepth,
           isFloat: isFloat,
           isBigEndian: true,
-          isInterleaved: true
+          isInterleaved: true,
         )
 
         guard let validFormat = format else {
@@ -355,9 +360,8 @@
         channelCount: inputConfiguration.channels.count,
         inputFormat: input,
         outputFormat: fileFormat,
-        tapReadSeconds: tapInterval.seconds
+        tapReadSeconds: tapInterval.seconds,
       )
     }
-
   }
 #endif

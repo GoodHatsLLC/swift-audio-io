@@ -1,3 +1,5 @@
+// © GoodHatsLLC
+
 #if os(macOS)
   public import Foundation
   public import Tools
@@ -14,7 +16,7 @@
     public init(
       id: String = UUID().uuidString,
       name: String,
-      supportedPolarPatterns: [PolarPattern] = []
+      supportedPolarPatterns: [PolarPattern] = [],
     ) {
       self.id = id
       self.name = name

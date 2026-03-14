@@ -1,6 +1,8 @@
+// © GoodHatsLLC
+
 #if canImport(AVFoundation)
-  import AVFoundation
   import AsyncAlgorithms
+  import AVFoundation
   public import Foundation
   import os
   import Tools
@@ -8,7 +10,6 @@
   private let log = SystemLog.make()
 
   extension AIOEngine {
-
     /// Plays an audio file from the specified URL.
     ///
     /// This method stops any current playback or recording before starting the new playback.
@@ -46,13 +47,14 @@
         file = try AVAudioFile(forReading: url)
       } catch {
         throw AIOError.audioFileFailed(
-          operation: .openForReading, url: url, error: ErrorContext(error))
+          operation: .openForReading, url: url, error: ErrorContext(error),
+        )
       }
       guard file.length > 0 else {
         throw AIOError.audioFileFailed(
           operation: .openForReading,
           url: url,
-          error: ErrorContext(EmptyAudioFileError(url: url))
+          error: ErrorContext(EmptyAudioFileError(url: url)),
         )
       }
       let interval =
@@ -63,7 +65,7 @@
         id: .init(),
         file: file,
         startFrame: file.framePosition,
-        pollingInterval: interval
+        pollingInterval: interval,
       )
 
       // Clear any existing playback state before starting new playback.
@@ -78,30 +80,30 @@
       let startResult = await withEngineControlQueueResult { [weak self] in
         guard let self else { return }
         // Reset engine state
-        unsafe self.player.stop()
-        unsafe self.engine.stop()
-        unsafe self.engine.reset()
-        if unsafe !self.engine.attachedNodes.contains(self.player) {
-          unsafe self.engine.attach(self.player)
+        unsafe player.stop()
+        unsafe engine.stop()
+        unsafe engine.reset()
+        if unsafe !engine.attachedNodes.contains(player) {
+          unsafe engine.attach(player)
         }
         // Connect the player node through the main mixer for automatic format conversion.
         // Connecting directly to outputNode can raise an uncatchable NSException on iOS 26.x
         // when the file's processingFormat doesn't match the hardware output format.
-        unsafe self.engine.connect(
-          self.player,
-          to: self.engine.mainMixerNode,
-          format: file.processingFormat
+        unsafe engine.connect(
+          player,
+          to: engine.mainMixerNode,
+          format: file.processingFormat,
         )
-        unsafe self.player
+        unsafe player
           .scheduleFile(file, at: nil, completionCallbackType: .dataPlayedBack) {
             [
               weak self,
-              playbackInstance
+              playbackInstance,
             ] _ in
             self?.cleanupPlaybackInstance(playbackInstance)
           }
-        try unsafe self.engine.start()
-        unsafe self.player.play()
+        try unsafe engine.start()
+        unsafe player.play()
       }
       if case .failure(let error) = startResult {
         throw AIOError.engineStartFailed(error: ErrorContext(error))
@@ -130,7 +132,7 @@
       startTime: TimeInterval,
       endTime: TimeInterval,
       onComplete: (@MainActor @Sendable () -> Void)? = nil,
-      playbackPollingInterval: Duration? = nil
+      playbackPollingInterval: Duration? = nil,
     ) async throws(AIOError) -> Playback {
       guard !isRecording else {
         throw AIOError.cannotPlayWhileRecording
@@ -143,7 +145,8 @@
         file = try AVAudioFile(forReading: url)
       } catch {
         throw AIOError.audioFileFailed(
-          operation: .openForReading, url: url, error: ErrorContext(error))
+          operation: .openForReading, url: url, error: ErrorContext(error),
+        )
       }
       let sampleRate = file.processingFormat.sampleRate
       let startFrame = AVAudioFramePosition(startTime * sampleRate)
@@ -165,7 +168,7 @@
         id: .init(),
         file: file,
         startFrame: startFrame,
-        pollingInterval: interval
+        pollingInterval: interval,
       )
 
       // Clear any existing playback state before starting new playback.
@@ -180,23 +183,23 @@
       let startResult = await withEngineControlQueueResult { [weak self] in
         guard let self else { return }
         // Reset engine state
-        unsafe self.player.stop()
-        unsafe self.engine.stop()
-        unsafe self.engine.reset()
-        if unsafe !self.engine.attachedNodes.contains(self.player) {
-          unsafe self.engine.attach(self.player)
+        unsafe player.stop()
+        unsafe engine.stop()
+        unsafe engine.reset()
+        if unsafe !engine.attachedNodes.contains(player) {
+          unsafe engine.attach(player)
         }
-        unsafe self.engine.connect(
-          self.player,
-          to: self.engine.mainMixerNode,
-          format: file.processingFormat
+        unsafe engine.connect(
+          player,
+          to: engine.mainMixerNode,
+          format: file.processingFormat,
         )
-        unsafe self.player.scheduleSegment(
+        unsafe player.scheduleSegment(
           file,
           startingFrame: startFrame,
           frameCount: frameCount,
           at: nil,
-          completionCallbackType: .dataPlayedBack
+          completionCallbackType: .dataPlayedBack,
         ) { [weak self, playbackInstance] _ in
           self?.cleanupPlaybackInstance(playbackInstance)
           if let onComplete {
@@ -205,8 +208,8 @@
             }
           }
         }
-        try unsafe self.engine.start()
-        unsafe self.player.play()
+        try unsafe engine.start()
+        unsafe player.play()
       }
       if case .failure(let error) = startResult {
         throw AIOError.engineStartFailed(error: ErrorContext(error))
@@ -219,7 +222,7 @@
       return playback
     }
 
-    @MainActor func resetPlaybackTimer(to instance: PlaybackInstance) {
+    @MainActor internal func resetPlaybackTimer(to instance: PlaybackInstance) {
       playbackTask = Task { @MainActor in
         let interval = instance.pollingInterval
         for await _ in AsyncTimerSequence(interval: interval, clock: .suspending) {
@@ -237,18 +240,18 @@
     }
 
     @concurrent
-    nonisolated func scrub(
+    internal nonisolated func scrub(
       framePosition: AVAudioFramePosition,
       file: AVAudioFile,
       newInstance: PlaybackInstance,
-      play: Bool
+      play: Bool,
     ) async {
       if Task.isCancelled { return }
       await withEngineControlQueue { [weak self] in
         guard let self else { return }
-        unsafe self.player.stop()
+        unsafe player.stop()
         file.framePosition = framePosition
-        unsafe self.player
+        unsafe player
           .scheduleSegment(
             file,
             startingFrame: framePosition,
@@ -257,10 +260,10 @@
             completionCallbackType: .dataPlayedBack,
             completionHandler: { [weak self, newInstance] _ in
               self?.cleanupPlaybackInstance(newInstance)
-            }
+            },
           )
         if play {
-          unsafe self.player.play()
+          unsafe player.play()
         }
       }
     }
@@ -268,7 +271,7 @@
     @MainActor
     public func scrub(
       to time: TimeInterval,
-      updatePlaybackTimer: Bool = true
+      updatePlaybackTimer: Bool = true,
     ) throws(AIOError) -> Playback? {
       if let initialInstance = state[locked: \.playbackInstance] {
         let playback = getPlayback(for: initialInstance)
@@ -281,16 +284,16 @@
           id: .init(),
           file: file,
           startFrame: framePosition,
-          pollingInterval: initialInstance.pollingInterval
+          pollingInterval: initialInstance.pollingInterval,
         )
         state[locked: \.playbackInstance] = newInstance
         scrubTask = Task(priority: .utility) { [weak self] in
           guard let self else { return }
-          await self.scrub(
+          await scrub(
             framePosition: framePosition,
             file: file,
             newInstance: newInstance,
-            play: playback.isPlaying
+            play: playback.isPlaying,
           )
         }
 
@@ -299,7 +302,7 @@
           file: file.url,
           isPlaying: playback.isPlaying,
           time: time,
-          duration: playback.duration
+          duration: playback.duration,
         )
         defer { setPlayback(newPlayback) }
         if updatePlaybackTimer {
@@ -325,11 +328,11 @@
       // subsequent recording warm-up.
       await withEngineControlQueue { [weak self] in
         guard let self else { return }
-        unsafe self.player.stop()
-        unsafe self.engine.stop()
-        unsafe self.engine.reset()
-        if unsafe !self.engine.attachedNodes.contains(self.player) {
-          unsafe self.engine.attach(self.player)
+        unsafe player.stop()
+        unsafe engine.stop()
+        unsafe engine.reset()
+        if unsafe !engine.attachedNodes.contains(player) {
+          unsafe engine.attach(player)
         }
       }
       let finishedFile: AVAudioFile? = state {
@@ -381,7 +384,7 @@
       }
     }
 
-    nonisolated func cleanupPlaybackInstance(_ instance: PlaybackInstance) {
+    internal nonisolated func cleanupPlaybackInstance(_ instance: PlaybackInstance) {
       let finishedFile: AVAudioFile? = state.withLock { state in
         if let foundInstance = state.playbackInstance, foundInstance.id == instance.id {
           state.playbackInstance = nil
@@ -398,12 +401,12 @@
         engineControlQueue.async { [weak self] in
           guard let self else { return }
           // Only tear down if no new playback instance started meanwhile.
-          guard self.state[locked: \.playbackInstance] == nil else { return }
-          unsafe self.player.stop()
-          unsafe self.engine.stop()
-          unsafe self.engine.reset()
-          if unsafe !self.engine.attachedNodes.contains(self.player) {
-            unsafe self.engine.attach(self.player)
+          guard state[locked: \.playbackInstance] == nil else { return }
+          unsafe player.stop()
+          unsafe engine.stop()
+          unsafe engine.reset()
+          if unsafe !engine.attachedNodes.contains(player) {
+            unsafe engine.attach(player)
           }
         }
         Task { @MainActor [weak self, state] in
@@ -416,15 +419,15 @@
       }
     }
 
-    nonisolated func stopPlayerIfNeeded() async {
+    internal nonisolated func stopPlayerIfNeeded() async {
       await withEngineControlQueue { [weak self] in
-        guard let self, unsafe self.player.isPlaying else { return }
-        unsafe self.player.stop()
+        guard let self, unsafe player.isPlaying else { return }
+        unsafe player.stop()
       }
     }
 
     @MainActor
-    func capturePlaybackResumeState() -> PlaybackResume? {
+    internal func capturePlaybackResumeState() -> PlaybackResume? {
       guard let instance = state[locked: \.playbackInstance] else { return nil }
       let playback = getPlayback(for: instance)
       let time =
@@ -436,12 +439,12 @@
         time: time,
         duration: playback.duration,
         wasPlaying: playback.isPlaying,
-        pollingInterval: instance.pollingInterval
+        pollingInterval: instance.pollingInterval,
       )
     }
 
     @MainActor
-    func restartPlayback(from resume: PlaybackResume) async {
+    internal func restartPlayback(from resume: PlaybackResume) async {
       let duration = resume.duration
       let clampedTime = min(max(0, resume.time), max(0, duration - 0.001))
       guard duration > clampedTime else { return }
@@ -452,14 +455,15 @@
           startTime: clampedTime,
           endTime: duration,
           onComplete: nil,
-          playbackPollingInterval: resume.pollingInterval
+          playbackPollingInterval: resume.pollingInterval,
         )
         if resume.wasPlaying == false {
           pausePlayback()
         }
       } catch {
         log.error(
-          "Failed to resume playback after media services reset: \(error, privacy: .public)")
+          "Failed to resume playback after media services reset: \(error, privacy: .public)",
+        )
       }
     }
   }

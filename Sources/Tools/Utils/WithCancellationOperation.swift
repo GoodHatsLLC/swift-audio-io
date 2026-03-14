@@ -1,9 +1,11 @@
+// © GoodHatsLLC
+
 public import Foundation
 
 /// Suspend until the current task context is cancelled, then execute the operation.
 public func withCancellationOperation<T: Sendable>(
   isolation: isolated (any Actor)? = #isolation,
-  operation: () async -> T
+  operation: () async -> T,
 ) async -> T {
   let didCancel = AwaitableBox<Void>()
   return await withTaskCancellationHandler(
@@ -14,14 +16,14 @@ public func withCancellationOperation<T: Sendable>(
     onCancel: {
       try? didCancel.yield(())
     },
-    isolation: isolation
+    isolation: isolation,
   )
 }
 
 /// Suspend until the current task context is cancelled, then execute the operation.
 public func withCancellationOperation<T: Sendable, Failure: AudioError>(
   isolation: isolated (any Actor)? = #isolation,
-  operation: () async throws(Failure) -> T
+  operation: () async throws(Failure) -> T,
 ) async throws(Failure) -> T {
   let didCancel = AwaitableBox<Void>()
   do {
@@ -33,7 +35,7 @@ public func withCancellationOperation<T: Sendable, Failure: AudioError>(
       onCancel: {
         try? didCancel.yield(())
       },
-      isolation: isolation
+      isolation: isolation,
     )
   } catch let error as Failure {
     throw error
@@ -117,5 +119,7 @@ public final class AwaitableBox<Value: Sendable>: Identifiable, Hashable, Sendab
 }
 
 extension AwaitableBox where Value == Void {
-  public func yield() throws(AlreadyYielded) { try yield(()) }
+  public func yield() throws(AlreadyYielded) {
+    try yield(())
+  }
 }

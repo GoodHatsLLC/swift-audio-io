@@ -1,3 +1,5 @@
+// © GoodHatsLLC
+
 // SAFETY: Value is consumed at init and only exposed through this wrapper after transfer.
 public struct Transferring<T>: @unchecked Sendable {
   public let value: T

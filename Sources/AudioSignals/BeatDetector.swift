@@ -1,3 +1,5 @@
+// © GoodHatsLLC
+
 #if canImport(Accelerate)
   import Accelerate
   public import Foundation
@@ -38,7 +40,7 @@
     /// Creates a new beat detector with the specified configuration.
     public init(configuration: BeatDetectionConfiguration = .default) {
       self.configuration = configuration
-      self.energyHistory = Array(repeating: 0, count: configuration.historySize)
+      energyHistory = Array(repeating: 0, count: configuration.historySize)
     }
 
     // MARK: - Public Interface
@@ -67,7 +69,7 @@
     public func analyze(
       spectrum: [Float],
       rmsLevel: Float,
-      deltaTime: TimeInterval
+      deltaTime: TimeInterval,
     ) -> BeatInfo {
       currentTime += deltaTime
 
@@ -101,7 +103,7 @@
         beatDetected: beatDetected,
         energy: energy,
         timeSinceLastBeat: timeSinceLastBeat,
-        estimatedTempo: tempo
+        estimatedTempo: tempo,
       )
     }
 
@@ -205,7 +207,7 @@
       for i in 1..<beatTimestamps.count {
         let interval = beatTimestamps[i] - beatTimestamps[i - 1]
         // Only consider reasonable intervals (30-200 BPM range)
-        if interval >= 0.3 && interval <= 2.0 {
+        if interval >= 0.3, interval <= 2.0 {
           intervals.append(interval)
         }
       }

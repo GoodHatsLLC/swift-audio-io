@@ -1,3 +1,5 @@
+// © GoodHatsLLC
+
 #if canImport(UIKit)
   import AVFoundation
   import Dispatch
@@ -7,10 +9,9 @@
 
   @_spi(TESTING) @testable import AIOEngine
 
-  @Suite
   struct AIOEngineIntegrationTests {
     @Test
-    func testTestRecordingWritesFile() async throws {
+    func `recording writes file`() async throws {
       let engine = AIOEngine()
       let configuration = makeConfiguration()
 
@@ -28,7 +29,7 @@
     }
 
     @Test
-    func testTestRecordingDeliversReceiverBuffers() async throws {
+    func `recording delivers receiver buffers`() async throws {
       let engine = AIOEngine()
       let configuration = makeConfiguration()
       let receiver = CapturingReceiver()
@@ -37,7 +38,7 @@
 
       let url = try await engine.startTestRecording(
         configuration: configuration,
-        enableReceivers: true
+        enableReceivers: true,
       )
       defer { try? FileManager.default.removeItem(at: url) }
 
@@ -59,20 +60,20 @@
     }
 
     @Test
-    func testTapHandlerCanRunOffMainQueue() throws {
+    func `tap handler can run off main queue`() throws {
       let engine = AIOEngine()
       let processingFormat = try #require(
         AVAudioFormat(
-          standardFormatWithSampleRate: 48_000,
-          channels: 1
-        )
+          standardFormatWithSampleRate: 48000,
+          channels: 1,
+        ),
       )
       let tapHandler = engine.makeTapHandlerForTesting(processingFormat: processingFormat)
       let buffer = try #require(
         AVAudioPCMBuffer(
           pcmFormat: processingFormat,
-          frameCapacity: 64
-        )
+          frameCapacity: 64,
+        ),
       )
       buffer.frameLength = 64
       let time = AVAudioTime(sampleTime: 0, atRate: processingFormat.sampleRate)
@@ -84,11 +85,12 @@
     }
 
     @Test
-    func testRotateRecordingFileEmitsTwoFiles() async throws {
+    func `rotate recording file emits two files`() async throws {
       let engine = AIOEngine()
       let outputDirectory = FileManager.default.temporaryDirectory
         .appendingPathComponent(
-          "AIOEngineIntegrationTests-\(UUID().uuidString)", isDirectory: true)
+          "AIOEngineIntegrationTests-\(UUID().uuidString)", isDirectory: true,
+        )
       defer { try? FileManager.default.removeItem(at: outputDirectory) }
       let configuration = makeConfiguration(outputDestination: .directory(outputDirectory))
 
@@ -106,7 +108,7 @@
       #expect(rotatedURL == firstURL)
 
       let rotatedOutputURL = try #require(
-        await MainActor.run { engine.debugCurrentRecordingURL() }
+        await MainActor.run { engine.debugCurrentRecordingURL() },
       )
       #expect(rotatedOutputURL != firstURL)
 
@@ -132,7 +134,7 @@
     }
 
     @Test
-    func testStereoRecordingWritesFile() async throws {
+    func `stereo recording writes file`() async throws {
       let engine = AIOEngine()
       let configuration = makeStereoConfiguration()
 
@@ -155,7 +157,7 @@
     }
 
     @Test
-    func testInterruptionStopsRecording() async throws {
+    func `interruption stops recording`() async throws {
       let engine = AIOEngine()
       let configuration = makeConfiguration()
 
@@ -181,7 +183,7 @@
     }
 
     @Test
-    func testFaultInjectionStopsRecordingWhenSampleRateBecomesUnsupported() async throws {
+    func `fault injection stops recording when sample rate becomes unsupported`() async throws {
       let engine = AIOEngine()
       let configuration = makeConfiguration()
       let probe = RouteFaultProbe()
@@ -200,15 +202,15 @@
 
       let oldFormat = try #require(
         AVAudioFormat(
-          standardFormatWithSampleRate: 48_000,
-          channels: 1
-        )
+          standardFormatWithSampleRate: 48000,
+          channels: 1,
+        ),
       )
       let unsupported = try #require(
         AVAudioFormat(
-          standardFormatWithSampleRate: 7_000,
-          channels: oldFormat.channelCount
-        )
+          standardFormatWithSampleRate: 7000,
+          channels: oldFormat.channelCount,
+        ),
       )
 
       let continued = await engine.simulateRouteChangeForTesting(
@@ -216,7 +218,7 @@
         newFormat: unsupported,
         processingFormat: oldFormat,
         isInputAvailable: true,
-        reason: .routeConfigurationChange
+        reason: .routeConfigurationChange,
       )
 
       #expect(continued == false)
@@ -234,12 +236,12 @@
             return reason == "No suitable audio route available"
           }
           return false
-        }
+        },
       )
     }
 
     @Test
-    func testFaultInjectionStopsRecordingWhenInputBecomesUnavailable() async throws {
+    func `fault injection stops recording when input becomes unavailable`() async throws {
       let engine = AIOEngine()
       let configuration = makeConfiguration()
 
@@ -248,15 +250,15 @@
 
       let oldFormat = try #require(
         AVAudioFormat(
-          standardFormatWithSampleRate: 48_000,
-          channels: 1
-        )
+          standardFormatWithSampleRate: 48000,
+          channels: 1,
+        ),
       )
       let validNew = try #require(
         AVAudioFormat(
-          standardFormatWithSampleRate: 48_000,
-          channels: oldFormat.channelCount
-        )
+          standardFormatWithSampleRate: 48000,
+          channels: oldFormat.channelCount,
+        ),
       )
 
       let continued = await engine.simulateRouteChangeForTesting(
@@ -264,7 +266,7 @@
         newFormat: validNew,
         processingFormat: oldFormat,
         isInputAvailable: false,
-        reason: .oldDeviceUnavailable
+        reason: .oldDeviceUnavailable,
       )
 
       #expect(continued == false)
@@ -272,7 +274,7 @@
     }
 
     @Test
-    func testFaultInjectionContinuesRecordingAndEmitsQualityChange() async throws {
+    func `fault injection continues recording and emits quality change`() async throws {
       let engine = AIOEngine()
       let configuration = makeConfiguration()
       let probe = RouteFaultProbe()
@@ -288,15 +290,15 @@
 
       let oldFormat = try #require(
         AVAudioFormat(
-          standardFormatWithSampleRate: 48_000,
-          channels: 1
-        )
+          standardFormatWithSampleRate: 48000,
+          channels: 1,
+        ),
       )
       let changed = try #require(
         AVAudioFormat(
-          standardFormatWithSampleRate: 16_000,
-          channels: 2
-        )
+          standardFormatWithSampleRate: 16000,
+          channels: 2,
+        ),
       )
 
       let continued = await engine.simulateRouteChangeForTesting(
@@ -304,7 +306,7 @@
         newFormat: changed,
         processingFormat: oldFormat,
         isInputAvailable: true,
-        reason: .newDeviceAvailable
+        reason: .newDeviceAvailable,
       )
 
       #expect(continued == true)
@@ -322,17 +324,17 @@
           if case .routeChangeContinuing(_, let qualityChange) = interruption {
             guard let qualityChange else { return false }
             return qualityChange.currentChannels == 2
-              && abs(qualityChange.currentSampleRate - 16_000) < 0.5
+              && abs(qualityChange.currentSampleRate - 16000) < 0.5
           }
           return false
-        }
+        },
       )
 
       _ = try await engine.stopRecording()
     }
 
     @Test
-    func testHandleRouteChangeReconfiguresTapWhenFormatAppearsUnchanged() async throws {
+    func `handle route change reconfigures tap when format appears unchanged`() async throws {
       let engine = AIOEngine()
       let configuration = makeConfiguration()
       let reinstallCalls = LockedCounter()
@@ -341,15 +343,16 @@
       defer { try? FileManager.default.removeItem(at: url) }
 
       let unchangedFormat = try #require(
-        AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1)
+        AVAudioFormat(standardFormatWithSampleRate: 48000, channels: 1),
       )
 
       await MainActor.run {
         engine.setReinstallTapOverride {
-          (_, processingFormat) throws(AIOEngine.AIOError) in
+          _, processingFormat throws(AIOEngine.AIOError) in
           reinstallCalls.increment()
           return try makeMockTapInstallResult(
-            tapFormat: unchangedFormat, processingFormat: processingFormat)
+            tapFormat: unchangedFormat, processingFormat: processingFormat,
+          )
         }
       }
       defer {
@@ -359,7 +362,7 @@
       let event = AudioRouteChangeEvent(
         reason: .routeConfigurationChange,
         previousRoute: nil,
-        session: AVAudioSession.sharedInstance()
+        session: AVAudioSession.sharedInstance(),
       )
       await engine.handleRouteChange(event: event)
 
@@ -370,7 +373,7 @@
     }
 
     @Test
-    func testHandleRouteChangeContinuesWhenTapReconfigureSucceeds() async throws {
+    func `handle route change continues when tap reconfigure succeeds`() async throws {
       let engine = AIOEngine()
       let configuration = makeConfiguration()
       let probe = RouteFaultProbe()
@@ -386,15 +389,16 @@
       defer { try? FileManager.default.removeItem(at: url) }
 
       let routeFormat = try #require(
-        AVAudioFormat(standardFormatWithSampleRate: 16_000, channels: 2)
+        AVAudioFormat(standardFormatWithSampleRate: 16000, channels: 2),
       )
 
       await MainActor.run {
         engine.setReinstallTapOverride {
-          (_, processingFormat) throws(AIOEngine.AIOError) in
+          _, processingFormat throws(AIOEngine.AIOError) in
           reinstallCalls.increment()
           return try makeMockTapInstallResult(
-            tapFormat: routeFormat, processingFormat: processingFormat)
+            tapFormat: routeFormat, processingFormat: processingFormat,
+          )
         }
       }
       defer {
@@ -404,7 +408,7 @@
       let event = AudioRouteChangeEvent(
         reason: .newDeviceAvailable,
         previousRoute: nil,
-        session: AVAudioSession.sharedInstance()
+        session: AVAudioSession.sharedInstance(),
       )
       await engine.handleRouteChange(event: event)
 
@@ -422,17 +426,17 @@
           if case .routeChangeContinuing(_, let qualityChange) = interruption {
             guard let qualityChange else { return false }
             return qualityChange.currentChannels == 2
-              && abs(qualityChange.currentSampleRate - 16_000) < 0.5
+              && abs(qualityChange.currentSampleRate - 16000) < 0.5
           }
           return false
-        }
+        },
       )
 
       _ = try await engine.stopRecording()
     }
 
     @Test
-    func testHandleRouteChangeStopsWhenTapReconfigureFails() async throws {
+    func `handle route change stops when tap reconfigure fails`() async throws {
       let engine = AIOEngine()
       let configuration = makeConfiguration()
       let probe = RouteFaultProbe()
@@ -452,7 +456,7 @@
       await MainActor.run {
         engine.setReinstallTapOverride {
           (
-            _: RecordingConfiguration, _: AVAudioFormat
+            _: RecordingConfiguration, _: AVAudioFormat,
           ) throws(AIOEngine.AIOError) -> AIOEngine.TapInstallResult in
           throw .engineError
         }
@@ -464,7 +468,7 @@
       let event = AudioRouteChangeEvent(
         reason: .routeConfigurationChange,
         previousRoute: nil,
-        session: AVAudioSession.sharedInstance()
+        session: AVAudioSession.sharedInstance(),
       )
       await engine.handleRouteChange(event: event)
 
@@ -481,43 +485,43 @@
             return reason == "Route change reconfiguration failed"
           }
           return false
-        }
+        },
       )
     }
 
     private func makeConfiguration(
-      outputDestination: RecordingConfiguration.OutputDestination = .temporary
+      outputDestination: RecordingConfiguration.OutputDestination = .temporary,
     ) -> RecordingConfiguration {
       let input = InputConfiguration(
         sampleRate: SampleRate.common(.sr48000),
-        channels: .mono
+        channels: .mono,
       )
       let output = OutputConfiguration(
         fileFormat: .caf,
         bitDepth: .pcmFloat32,
-        quality: .high
+        quality: .high,
       )
       return RecordingConfiguration(
         inputConfiguration: input,
         outputConfiguration: output,
-        outputDestination: outputDestination
+        outputDestination: outputDestination,
       )
     }
 
     private func makeStereoConfiguration() -> RecordingConfiguration {
       let input = InputConfiguration(
         sampleRate: SampleRate.common(.sr48000),
-        channels: .stereo
+        channels: .stereo,
       )
       let output = OutputConfiguration(
         fileFormat: .caf,
         bitDepth: .pcmFloat32,
-        quality: .high
+        quality: .high,
       )
       return RecordingConfiguration(
         inputConfiguration: input,
         outputConfiguration: output,
-        outputDestination: .temporary
+        outputDestination: .temporary,
       )
     }
 
@@ -528,7 +532,7 @@
 
     private func waitUntil(
       timeout: Duration,
-      condition: @escaping @Sendable () async -> Bool
+      condition: @escaping @Sendable () async -> Bool,
     ) async -> Bool {
       let clock = ContinuousClock()
       let deadline = clock.now.advanced(by: timeout)
@@ -552,7 +556,7 @@
 
   private func makeMockTapInstallResult(
     tapFormat: AVAudioFormat,
-    processingFormat: AVAudioFormat
+    processingFormat: AVAudioFormat,
   ) throws(AIOEngine.AIOError) -> AIOEngine.TapInstallResult {
     guard let converter = AVAudioConverter(from: tapFormat, to: processingFormat) else {
       throw AIOEngine.AIOError.formatConversionFailed
@@ -560,7 +564,7 @@
     guard
       let buffer = AVAudioPCMBuffer(
         pcmFormat: processingFormat,
-        frameCapacity: 1024
+        frameCapacity: 1024,
       )
     else {
       throw AIOEngine.AIOError.formatConversionFailed
@@ -568,18 +572,18 @@
     let artifacts = AIOEngine.TapConversionArtifacts(
       converter: converter,
       inputFormat: tapFormat,
-      convertedBuffer: buffer
+      convertedBuffer: buffer,
     )
     let tapConfig = TapConfiguration(
       bus: 0,
       inputFormat: tapFormat,
       outputFormat: processingFormat,
-      bufferSize: 1024
+      bufferSize: 1024,
     )
     return AIOEngine.TapInstallResult(
       tapFormat: tapFormat,
       artifacts: artifacts,
-      tapConfiguration: tapConfig
+      tapConfiguration: tapConfig,
     )
   }
 
@@ -597,7 +601,7 @@
     }
 
     nonisolated func processBuffer(_ data: UnsafeBufferPointer<Float>) {
-      unsafe processBuffer(data, timing: BufferTiming(sampleTime: 0, sampleRate: 48_000))
+      unsafe processBuffer(data, timing: BufferTiming(sampleTime: 0, sampleRate: 48000))
     }
 
     nonisolated func processBuffer(_ data: UnsafeBufferPointer<Float>, timing: BufferTiming) {

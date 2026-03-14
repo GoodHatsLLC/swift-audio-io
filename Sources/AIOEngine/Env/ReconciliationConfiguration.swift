@@ -1,3 +1,5 @@
+// © GoodHatsLLC
+
 #if canImport(AVFoundation)
   import Foundation
 
@@ -24,7 +26,7 @@
     ///   - retryInterval: Time between retry attempts. Default is 100ms.
     public init(
       timeout: Duration = .seconds(2),
-      retryInterval: Duration = .milliseconds(100)
+      retryInterval: Duration = .milliseconds(100),
     ) {
       self.timeout = timeout
       self.retryInterval = retryInterval
@@ -36,13 +38,13 @@
     /// A more aggressive configuration with longer timeout for challenging audio environments.
     public static let extended = ReconciliationConfiguration(
       timeout: .seconds(5),
-      retryInterval: .milliseconds(150)
+      retryInterval: .milliseconds(150),
     )
 
     /// Minimal configuration that gives up quickly.
     public static let minimal = ReconciliationConfiguration(
       timeout: .milliseconds(500),
-      retryInterval: .milliseconds(50)
+      retryInterval: .milliseconds(50),
     )
   }
 #endif

@@ -1,7 +1,9 @@
+// © GoodHatsLLC
+
 public import Foundation
 
 extension String {
-  public init<T>(dump value: @autoclosure () -> T) {
+  public init(dump value: @autoclosure () -> some Any) {
     var output = ""
     dump(value(), to: &output)
     self = output
@@ -36,7 +38,7 @@ public struct Reporter<E: Error> {
     function: String = #function,
     line: Int = #line,
     column: Int = #column,
-    @_inheritActorContext(always) _ operation: sending @isolated(any) () async throws(E) -> V
+    @_inheritActorContext(always) _ operation: sending @isolated(any) () async throws(E) -> V,
   ) async throws(E) -> V where E: Error {
     _ = isolation
     let source = SourceLocation(file: file, function: function, line: line, column: column)
@@ -59,7 +61,7 @@ public struct Reporter<E: Error> {
     function: String = #function,
     line: Int = #line,
     column: Int = #column,
-    _ operation: () throws(E) -> V
+    _ operation: () throws(E) -> V,
   ) throws(E) -> V where E: Error {
     let source = SourceLocation(file: file, function: function, line: line, column: column)
     do {
@@ -83,7 +85,7 @@ public struct Reporter<E: Error> {
     line: Int = #line,
     column: Int = #column,
     @_inheritActorContext(always) _ operation: sending @isolated(any) () async throws(E) -> V,
-    catch catchBlock: (_ error: E) -> Void
+    catch catchBlock: (_ error: E) -> Void,
   ) async -> V? {
     _ = isolation
     let source = SourceLocation(file: file, function: function, line: line, column: column)
@@ -108,7 +110,7 @@ public struct Reporter<E: Error> {
     line: Int = #line,
     column: Int = #column,
     _ operation: () throws(E) -> V,
-    catch catchBlock: (_ error: E) -> Void
+    catch catchBlock: (_ error: E) -> Void,
   ) -> V? {
     let source = SourceLocation(file: file, function: function, line: line, column: column)
     do {
@@ -133,13 +135,15 @@ public enum ReportedError: Error, LocalizedError, Sendable, Equatable, CustomStr
   public var description: String {
     switch self {
     case .cancelled:
-      return "Operation cancelled"
+      "Operation cancelled"
     case .error(let description):
-      return description
+      description
     }
   }
 
-  public var errorDescription: String? { description }
+  public var errorDescription: String? {
+    description
+  }
 }
 
 extension Reporter where E == any Error {
@@ -151,7 +155,7 @@ extension Reporter where E == any Error {
     line: Int = #line,
     column: Int = #column,
     @_inheritActorContext(always) _ operation:
-      sending @isolated(any) () async throws(any Error) -> V
+      sending @isolated(any) () async throws -> V,
   ) async throws(ReportedError) -> V {
     _ = isolation
     let source = SourceLocation(file: file, function: function, line: line, column: column)
@@ -174,7 +178,7 @@ extension Reporter where E == any Error {
     function: String = #function,
     line: Int = #line,
     column: Int = #column,
-    _ operation: () throws(any Error) -> V
+    _ operation: () throws -> V,
   ) throws(ReportedError) -> V {
     let source = SourceLocation(file: file, function: function, line: line, column: column)
     do {

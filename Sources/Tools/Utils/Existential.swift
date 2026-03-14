@@ -1,3 +1,5 @@
+// © GoodHatsLLC
+
 enum Existential {}
 
 extension Existential {

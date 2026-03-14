@@ -1,30 +1,38 @@
+// © GoodHatsLLC
+
 public import UniformTypeIdentifiers
 
 public enum FileFormat: String, CaseIterable, CustomStringConvertible, Sendable, Identifiable,
   TypeDescribable
 {
-  case caf = "caf"
-  case wav = "wav"
-  case aiff = "aiff"
+  case caf
+  case wav
+  case aiff
   case aac = "m4a"
   case adts = "aac"
-  case flac = "flac"
-  public var id: Self { self }
-  public var fileExtension: String { rawValue }
+  case flac
+  public var id: Self {
+    self
+  }
+
+  public var fileExtension: String {
+    rawValue
+  }
+
   public static let typeDescription: String = "File Format"
 
   public var description: String {
     switch self {
-    case .adts: return "ADTS"
-    case .flac: return "FLAC"
-    default: return "\(rawValue)".uppercased()
+    case .adts: "ADTS"
+    case .flac: "FLAC"
+    default: "\(rawValue)".uppercased()
     }
   }
 
   public var requiresInterleaved: Bool {
     switch self {
-    case .aac, .adts, .aiff: return true
-    case .wav, .caf, .flac: return false
+    case .aac, .adts, .aiff: true
+    case .wav, .caf, .flac: false
     }
   }
 
@@ -57,8 +65,8 @@ public enum FileFormat: String, CaseIterable, CustomStringConvertible, Sendable,
 
   public var requiresQuality: Bool {
     switch self {
-    case .aac, .adts: return true
-    case .wav, .caf, .flac, .aiff: return false
+    case .aac, .adts: true
+    case .wav, .caf, .flac, .aiff: false
     }
   }
 
@@ -76,9 +84,9 @@ public enum FileFormat: String, CaseIterable, CustomStringConvertible, Sendable,
     case .aac, .adts:
       return Self.aacCompatibleSampleRates.contains(where: { abs($0 - sampleRate) < 0.5 })
     case .wav, .caf, .aiff:
-      return sampleRate >= 8000 && sampleRate <= 192000
+      return sampleRate >= 8000 && sampleRate <= 192_000
     case .flac:
-      return sampleRate >= 8000 && sampleRate <= 655350
+      return sampleRate >= 8000 && sampleRate <= 655_350
     }
   }
 

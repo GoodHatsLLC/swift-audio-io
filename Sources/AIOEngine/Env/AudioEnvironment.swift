@@ -1,7 +1,9 @@
+// © GoodHatsLLC
+
 #if os(iOS)
   public import AVFoundation
-  public import Tools
   import os
+  public import Tools
 
   private let log = SystemLog.make()
 
@@ -13,7 +15,9 @@
         case setPreferredSampleRate
         case setPreferredDataSource
 
-        public var description: String { rawValue }
+        public var description: String {
+          rawValue
+        }
       }
 
       case noActiveAudioInputForDataSource
@@ -36,7 +40,7 @@
     ///   - notifications: The `Notifications` instance to use.
     public init(
       session: AVAudioSession = AVAudioSession.sharedInstance(),
-      notifications: Notifications = Notifications()
+      notifications: Notifications = Notifications(),
     ) {
       self.session = session
       self.notifications = notifications
@@ -122,7 +126,6 @@
       }
       return input?.availableSources ?? []
     }
-
   }
 
   extension AudioEnvironment {
@@ -151,11 +154,11 @@
       /// An asynchronous stream of audio session interruption notifications.
       public var interruption:
         AsyncStream<
-          (type: AVAudioSession.InterruptionType, options: AVAudioSession.InterruptionOptions?)
+          (type: AVAudioSession.InterruptionType, options: AVAudioSession.InterruptionOptions?),
         >
       {
-        return AsyncStream<
-          (type: AVAudioSession.InterruptionType, options: AVAudioSession.InterruptionOptions?)
+        AsyncStream<
+          (type: AVAudioSession.InterruptionType, options: AVAudioSession.InterruptionOptions?),
         >(
           source: center.notifications(named: AVAudioSession.interruptionNotification),
           compactMap: {
@@ -171,7 +174,8 @@
                 """
                 interruption notification inapplicable:
                 info: \(String(dump: notification.userInfo), privacy: .public)
-                """)
+                """,
+              )
               return nil
             }
 
@@ -180,20 +184,22 @@
             let options = optionsValue.map { AVAudioSession.InterruptionOptions(rawValue: $0) }
             log.warning(
               """
-                env, interruption notification: type=\(type.rawValue, privacy: .public), options=\(options.map{ "\($0.rawValue)" } ?? "nil", privacy: .public)
-              """)
+                env, interruption notification: type=\(type.rawValue, privacy: .public), options=\(options.map { "\($0.rawValue)" } ?? "nil", privacy: .public)
+              """,
+            )
             return (type, options)
-          }
+          },
         )
       }
+
       /// An asynchronous stream of audio session route change notifications.
       public var routeChange:
         AsyncStream<
-          (reason: AVAudioSession.RouteChangeReason, previous: AVAudioSessionRouteDescription?)
+          (reason: AVAudioSession.RouteChangeReason, previous: AVAudioSessionRouteDescription?),
         >
       {
         AsyncStream<
-          (reason: AVAudioSession.RouteChangeReason, previous: AVAudioSessionRouteDescription?)
+          (reason: AVAudioSession.RouteChangeReason, previous: AVAudioSessionRouteDescription?),
         >(
           source: center.notifications(named: AVAudioSession.routeChangeNotification),
           compactMap: { notification in
@@ -210,10 +216,11 @@
                 """
                 routeChange notification inapplicable:
                 info: \(String(dump: notification.userInfo), privacy: .public)
-                """)
+                """,
+              )
               return nil
             }
-          }
+          },
         )
       }
 
@@ -222,12 +229,12 @@
         if #available(iOS 26.0, *) {
           AsyncStream<Void>(
             source: center.notifications(named: AVAudioSession.availableInputsChangeNotification),
-            map: { _ in () }
+            map: { _ in () },
           )
         } else {
           AsyncStream<Void> { i in
             log.warning(
-              "availableInputsChanged notifications are not available on this OS version"
+              "availableInputsChanged notifications are not available on this OS version",
             )
             i.finish()
           }
@@ -241,9 +248,10 @@
           map: { _ in
             log.warning("Environment: media services were lost")
             return ()
-          }
+          },
         )
       }
+
       /// An asynchronous stream of notifications for when the media services are reset.
       public var mediaServicesReset: AsyncStream<Void> {
         AsyncStream<Void>(
@@ -251,9 +259,10 @@
           map: { _ in
             log.warning("Environment: media services were reset")
             return ()
-          }
+          },
         )
       }
+
       /// An asynchronous stream of notifications for when secondary audio should be silenced.
       public var silenceSecondaryAudioHint: AsyncStream<Void> {
         AsyncStream<Void>(
@@ -261,7 +270,7 @@
           map: { _ in
             log.warning("Environment: silence secondary audio")
             return ()
-          }
+          },
         )
       }
     }

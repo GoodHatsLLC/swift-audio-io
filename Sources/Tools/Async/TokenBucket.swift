@@ -1,3 +1,5 @@
+// © GoodHatsLLC
+
 private import DequeModule
 
 /// Type modelled after a "token bucket" pattern, which is similar to a semaphore, but is built with
@@ -8,7 +10,7 @@ public actor TokenBucket {
 
   public init(tokens: Int) {
     self.tokens = tokens
-    self.waiters = Deque()
+    waiters = Deque()
   }
 
   /// Executes an `async` closure immediately when a token is available.
@@ -18,9 +20,9 @@ public actor TokenBucket {
   /// - Parameter body: The closure to invoke when a token is available.
   /// - Returns: Resulting value returned by `body`.
   public func withToken<ReturnType: Sendable>(
-    _ body: @Sendable () async -> ReturnType
+    _ body: @Sendable () async -> ReturnType,
   ) async -> ReturnType {
-    await self.getToken()
+    await getToken()
     defer {
       self.returnToken()
     }
@@ -28,10 +30,10 @@ public actor TokenBucket {
     return await body()
   }
 
-  public func withToken<ReturnType: Sendable, Failure>(
-    _ body: @Sendable () async throws(Failure) -> ReturnType
-  ) async throws(Failure) -> ReturnType where Failure: AudioError {
-    await self.getToken()
+  public func withToken<ReturnType: Sendable, Failure: AudioError>(
+    _ body: @Sendable () async throws(Failure) -> ReturnType,
+  ) async throws(Failure) -> ReturnType {
+    await getToken()
     defer {
       self.returnToken()
     }
@@ -40,8 +42,8 @@ public actor TokenBucket {
   }
 
   public func getToken() async {
-    if self.tokens > 0 {
-      self.tokens -= 1
+    if tokens > 0 {
+      tokens -= 1
       return
     }
 
@@ -51,10 +53,10 @@ public actor TokenBucket {
   }
 
   public func returnToken() {
-    if let nextWaiter = self.waiters.popFirst() {
+    if let nextWaiter = waiters.popFirst() {
       nextWaiter.resume()
     } else {
-      self.tokens += 1
+      tokens += 1
     }
   }
 }

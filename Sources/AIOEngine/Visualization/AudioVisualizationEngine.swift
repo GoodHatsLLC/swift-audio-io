@@ -1,3 +1,5 @@
+// © GoodHatsLLC
+
 #if canImport(AVFAudio)
   import Atomics
   public import AudioSignals
@@ -5,8 +7,8 @@
   import Foundation
   public import Observation
   import os
-  import Tools
   import QuartzCore
+  import Tools
 
   private let log = SystemLog.make()
 
@@ -165,12 +167,12 @@
         spectrumSize: Int = 256,
         analysisUpdateRateHz: Double = VisualizationRateDefaults.analysisUpdateRateHz,
         smoothingFactor: Float = 0.3,
-        sampleRate: Double = 44_100.0,
+        sampleRate: Double = 44100.0,
         amplitudeAnalyzerConfiguration: AmplitudeAnalyzer.Configuration? = nil,
         frequencyAnalyzerConfiguration: FrequencyAnalyzer.Configuration? = nil,
         bucketMode: FrequencyBucketMode = .default,
         frequencyWeighting: FrequencyWeighting = .none,
-        beatDetectionConfiguration: BeatDetectionConfiguration = .default
+        beatDetectionConfiguration: BeatDetectionConfiguration = .default,
       ) {
         self.amplitudeWindowSize = amplitudeWindowSize
         self.spectrumSize = spectrumSize
@@ -188,7 +190,7 @@
             windowSize: amplitudeWindowSize,
             smoothingFactor: smoothingFactor,
             peakDecayRate: 0.92,
-            noiseFloor: 0.001
+            noiseFloor: 0.001,
           )
         }
 
@@ -201,7 +203,7 @@
             sampleRate: sampleRate,
             smoothingFactor: smoothingFactor,
             noiseFloor: -60.0,
-            windowType: .hann
+            windowType: .hann,
           )
         } else {
           self.frequencyAnalyzerConfiguration = nil
@@ -211,8 +213,8 @@
 
     // MARK: - Multi-Band LOD (Optional)
 
-    /// Multi-band Level-of-Detail processor for Metal visualization.
-    /// Configured through `VisualizationWork.lod` from active subscribers.
+    // Multi-band Level-of-Detail processor for Metal visualization.
+    // Configured through `VisualizationWork.lod` from active subscribers.
 
     @ObservationIgnored
     private var lodProcessor: MultiBandLODProcessor?
@@ -244,11 +246,11 @@
 
     private let processingQueue = DispatchQueue(
       label: "audio-visualization",
-      qos: .userInteractive
+      qos: .userInteractive,
     )
     private let lodPublishQueue = DispatchQueue(
       label: "audio-visualization.lod-publish",
-      qos: .userInteractive
+      qos: .userInteractive,
     )
 
     private typealias SubscriberEventHandler = (VisualizationEvent) -> Void
@@ -261,7 +263,7 @@
 
     private func accepts(
       _ event: VisualizationEvent,
-      mask: VisualizationEventMask
+      mask: VisualizationEventMask,
     ) -> Bool {
       switch event {
       case .lodSnapshot:
@@ -281,7 +283,7 @@
 
     private func deliver(
       _ event: VisualizationEvent,
-      to subscribers: [SubscriberState]
+      to subscribers: [SubscriberState],
     ) {
       for subscriber in subscribers where accepts(event, mask: subscriber.request.eventMask) {
         subscriber.eventHandler(event)
@@ -314,9 +316,9 @@
 
       init(config: AnalysisConfig, sampleRate: Double) {
         if let amplitudeConfig = config.timeDomain {
-          self.amplitudeAnalyzer = AmplitudeAnalyzer(configuration: amplitudeConfig)
+          amplitudeAnalyzer = AmplitudeAnalyzer(configuration: amplitudeConfig)
         } else {
-          self.amplitudeAnalyzer = nil
+          amplitudeAnalyzer = nil
         }
 
         var builtFrequencyAnalyzer: FrequencyAnalyzer?
@@ -331,7 +333,7 @@
             builtFrequencyAnalyzer = try FrequencyAnalyzer(configuration: frequencyConfig)
           } catch {
             log.error(
-              "Failed to create FrequencyAnalyzer: \(error.localizedDescription, privacy: .public)"
+              "Failed to create FrequencyAnalyzer: \(error.localizedDescription, privacy: .public)",
             )
             frequencySampleCount = 0
           }
@@ -339,28 +341,28 @@
             mode: frequencyWork.bucketMode,
             sampleRate: Float(sampleRate),
             peakHoldDecayRate: frequencyWork.peakHoldDecayRate,
-            weighting: frequencyWork.weighting
+            weighting: frequencyWork.weighting,
           )
           peakHoldDecayRate = frequencyWork.peakHoldDecayRate
         }
 
-        self.frequencyAnalyzer = builtFrequencyAnalyzer
+        frequencyAnalyzer = builtFrequencyAnalyzer
         self.frequencySampleCount = frequencySampleCount
         self.frequencyBucketer = frequencyBucketer
         self.peakHoldDecayRate = peakHoldDecayRate
 
         if let beatConfig = config.beatDetection {
-          self.beatDetector = BeatDetector(configuration: beatConfig)
+          beatDetector = BeatDetector(configuration: beatConfig)
         } else {
-          self.beatDetector = nil
+          beatDetector = nil
         }
 
         let maxSamples = max(config.timeDomain?.windowSize ?? 0, frequencySampleCount)
         let resolvedMaxSamples = max(maxSamples, 1)
         let ringCapacity = max(resolvedMaxSamples * 4, 1024)
-        self.maxVisualizationSamples = resolvedMaxSamples
-        self.ringBuffer = SPSCRingBuffer<Float>(capacity: ringCapacity)
-        self.readScratchBuffer = Array(repeating: 0.0, count: resolvedMaxSamples)
+        maxVisualizationSamples = resolvedMaxSamples
+        ringBuffer = SPSCRingBuffer<Float>(capacity: ringCapacity)
+        readScratchBuffer = Array(repeating: 0.0, count: resolvedMaxSamples)
       }
     }
 
@@ -385,7 +387,7 @@
     /// - Parameter configuration: The configuration to use for the visualization engine.
     public init(configuration: Configuration = Configuration()) {
       self.configuration = configuration
-      self.latestSampleRateBitsAtomic = ManagedAtomic(configuration.sampleRate.bitPattern)
+      latestSampleRateBitsAtomic = ManagedAtomic(configuration.sampleRate.bitPattern)
     }
 
     deinit {
@@ -407,13 +409,13 @@
     @MainActor
     public func subscribe(
       request: VisualizationRequest,
-      handler: @escaping (VisualizationEvent) -> Void
+      handler: @escaping (VisualizationEvent) -> Void,
     ) -> VisualizationSubscription {
       let id = UUID()
       addSubscriber(
         id: id,
         request: request,
-        eventHandler: handler
+        eventHandler: handler,
       )
       recalculateDemandAndApply()
       updateProcessingState()
@@ -427,7 +429,7 @@
     @MainActor
     public func subscribe(
       request: VisualizationRequest,
-      sink: any VisualizationSink
+      sink: any VisualizationSink,
     ) -> VisualizationSubscription {
       subscribe(request: request) { [weak sink] event in
         guard let sink else { return }
@@ -507,23 +509,24 @@
 
       let bufferPointer = unsafe UnsafeBufferPointer(
         start: floatData,
-        count: Int(buffer.frameLength)
+        count: Int(buffer.frameLength),
       )
       unsafe processBuffer(bufferPointer)
     }
 
     // MARK: - Private Methods
+
     private func addSubscriber(
       id: UUID,
       request: VisualizationRequest,
-      eventHandler: @escaping SubscriberEventHandler
+      eventHandler: @escaping SubscriberEventHandler,
     ) {
       subscriberLock.lock()
       defer { subscriberLock.unlock() }
       let state = SubscriberState(
         id: id,
         request: request,
-        eventHandler: eventHandler
+        eventHandler: eventHandler,
       )
       subscribersById[id] = state
       subscriberOrder.append(id)
@@ -577,7 +580,7 @@
           let normalizedConfig = normalizedLODConfig(lodWork.configuration)
           if let selectedLodConfig, selectedLodConfig != normalizedConfig {
             log.warning(
-              "Conflicting LOD configurations across subscribers. Using the first requested configuration."
+              "Conflicting LOD configurations across subscribers. Using the first requested configuration.",
             )
           } else {
             selectedLodConfig = normalizedConfig
@@ -589,14 +592,14 @@
         analysisRequested = true
         selectedAnalysisUpdateRate = max(
           selectedAnalysisUpdateRate ?? 0,
-          analysisWork.updateRateHz
+          analysisWork.updateRateHz,
         )
 
         if selectedTimeDomain == nil {
           selectedTimeDomain = analysisWork.timeDomain
         } else if let requested = analysisWork.timeDomain, selectedTimeDomain != requested {
           log.warning(
-            "Conflicting time-domain configurations across subscribers. Using the first requested configuration."
+            "Conflicting time-domain configurations across subscribers. Using the first requested configuration.",
           )
         }
 
@@ -604,7 +607,7 @@
           let normalizedFrequency = normalizedFrequencyWork(frequencyDomainWork)
           if let selectedFrequencyDomain, selectedFrequencyDomain != normalizedFrequency {
             log.warning(
-              "Conflicting frequency-domain configurations across subscribers. Using the first requested configuration."
+              "Conflicting frequency-domain configurations across subscribers. Using the first requested configuration.",
             )
           } else {
             selectedFrequencyDomain = normalizedFrequency
@@ -614,7 +617,7 @@
         if let beatDetection = analysisWork.beatDetection {
           if let selectedBeatDetection, selectedBeatDetection != beatDetection {
             log.warning(
-              "Conflicting beat-detection configurations across subscribers. Using the first requested configuration."
+              "Conflicting beat-detection configurations across subscribers. Using the first requested configuration.",
             )
           } else {
             selectedBeatDetection = beatDetection
@@ -626,7 +629,7 @@
       if let selectedLodConfig {
         resolvedLodWork = LODWork(
           configuration: selectedLodConfig,
-          publishRateHz: maxLodPublishRate ?? VisualizationRateDefaults.lodPublishRateHz
+          publishRateHz: maxLodPublishRate ?? VisualizationRateDefaults.lodPublishRateHz,
         )
       }
 
@@ -635,18 +638,18 @@
         selectedTimeDomain != nil
         || selectedFrequencyDomain != nil
         || selectedBeatDetection != nil
-      if analysisRequested && hasAnyAnalysisDemand {
+      if analysisRequested, hasAnyAnalysisDemand {
         resolvedAnalysisWork = AnalysisWork(
           updateRateHz: selectedAnalysisUpdateRate ?? configuration.analysisUpdateRateHz,
           timeDomain: selectedTimeDomain,
           frequencyDomain: selectedFrequencyDomain,
-          beatDetection: selectedBeatDetection
+          beatDetection: selectedBeatDetection,
         )
       }
 
       return VisualizationWork(
         lod: resolvedLodWork,
-        analysis: resolvedAnalysisWork
+        analysis: resolvedAnalysisWork,
       )
     }
 
@@ -664,7 +667,7 @@
         }
         lodEnabledAtomic.store(true, ordering: .relaxed)
         log.info(
-          "Visualization LOD: publishRate=\(lodWork.publishRateHz, privacy: .public)Hz snapshotSwapInterval=\(resolvedConfig.snapshotSwapInterval, privacy: .public) lodRatio=\(resolvedConfig.lodRatio, privacy: .public)"
+          "Visualization LOD: publishRate=\(lodWork.publishRateHz, privacy: .public)Hz snapshotSwapInterval=\(resolvedConfig.snapshotSwapInterval, privacy: .public) lodRatio=\(resolvedConfig.lodRatio, privacy: .public)",
         )
       } else {
         lodEnabledAtomic.store(false, ordering: .relaxed)
@@ -708,7 +711,7 @@
         sampleRate: sampleRate,
         crossoverMode: config.crossoverMode,
         snapshotSwapInterval: config.snapshotSwapInterval,
-        rawBufferLengthOverride: config.rawBufferLengthOverride
+        rawBufferLengthOverride: config.rawBufferLengthOverride,
       )
     }
 
@@ -722,19 +725,19 @@
         sampleRate: sampleRate,
         smoothingFactor: config.smoothingFactor,
         noiseFloor: config.noiseFloor,
-        windowType: config.windowType
+        windowType: config.windowType,
       )
       return FrequencyDomainWork(
         configuration: adjusted,
         bucketMode: work.bucketMode,
         peakHoldDecayRate: work.peakHoldDecayRate,
-        weighting: work.weighting
+        weighting: work.weighting,
       )
     }
 
     private func configureAnalysisPipelineIfNeeded(
       analysisWork: AnalysisWork?,
-      flags: AnalysisFlags
+      flags: AnalysisFlags,
     ) {
       guard !flags.isEmpty else { return }
 
@@ -752,10 +755,10 @@
           resolvedFrequencyWork = FrequencyDomainWork(
             configuration: frequencyConfig,
             bucketMode: configuration.bucketMode,
-            weighting: configuration.frequencyWeighting
+            weighting: configuration.frequencyWeighting,
           )
           log.warning(
-            "Analysis frequency domain requested without a configuration; using defaults."
+            "Analysis frequency domain requested without a configuration; using defaults.",
           )
         }
       }
@@ -769,7 +772,7 @@
       let newConfig = AnalysisConfig(
         timeDomain: resolvedTimeDomain,
         frequencyDomain: resolvedFrequencyWork,
-        beatDetection: resolvedBeatDetection
+        beatDetection: resolvedBeatDetection,
       )
 
       let needsRebuild = analysisPipeline == nil || analysisConfig != newConfig
@@ -876,7 +879,7 @@
           samples: amplitudeResult.amplitudes,
           peaks: amplitudeResult.peaks,
           rmsLevel: amplitudeResult.rms,
-          level: amplitudeResult.overallLevel
+          level: amplitudeResult.overallLevel,
         )
       }
 
@@ -888,7 +891,7 @@
       {
         let buckets = bucketer.bucket(
           spectrum: spectrumResult.spectrum,
-          frequencies: spectrumResult.frequencies
+          frequencies: spectrumResult.frequencies,
         )
 
         newFrequencyDomain = FrequencyDomainData(
@@ -896,14 +899,14 @@
           rawSpectrum: spectrumResult.spectrum,
           frequencies: spectrumResult.frequencies,
           peakFrequency: spectrumResult.peakFrequency,
-          spectralCentroid: spectrumResult.spectralCentroid
+          spectralCentroid: spectrumResult.spectralCentroid,
         )
 
         let decayRate = pipeline.peakHoldDecayRate
         newSpectrumPeakHold = updateSpectrumPeaks(
           current: spectrumPeakHold,
           newSpectrum: spectrumResult.spectrum,
-          decayRate: decayRate
+          decayRate: decayRate,
         )
       }
 
@@ -913,7 +916,7 @@
         beatInfo = beatDetector.analyze(
           spectrum: spectrumResult?.spectrum ?? [],
           rmsLevel: rmsLevel,
-          deltaTime: deltaTime
+          deltaTime: deltaTime,
         )
       }
 
@@ -950,14 +953,14 @@
     private func updateSpectrumPeaks(
       current: [Float],
       newSpectrum: [Float],
-      decayRate: Float
+      decayRate: Float,
     ) -> [Float] {
-      var peaks: [Float]
-      if current.count != newSpectrum.count {
-        peaks = Array(repeating: 0.0, count: newSpectrum.count)
-      } else {
-        peaks = current
-      }
+      var peaks: [Float] =
+        if current.count != newSpectrum.count {
+          Array(repeating: 0.0, count: newSpectrum.count)
+        } else {
+          current
+        }
 
       for index in newSpectrum.indices {
         let decayed = max(0.0, peaks[index] - decayRate)
@@ -971,31 +974,31 @@
   extension AudioVisualizationEngine: BufferReceiver {
     public typealias T = Float
 
-    nonisolated public func processBuffer(_ data: UnsafeBufferPointer<Float>) {
-      guard wantsActiveAtomic.load(ordering: .relaxed), data.count > 0 else { return }
+    public nonisolated func processBuffer(_ data: UnsafeBufferPointer<Float>) {
+      guard wantsActiveAtomic.load(ordering: .relaxed), !data.isEmpty else { return }
       let startSampleTime = fallbackSampleTimeAtomic.load(ordering: .relaxed)
       fallbackSampleTimeAtomic.wrappingIncrement(by: Int64(data.count), ordering: .relaxed)
       let timing = BufferTiming(
         sampleTime: startSampleTime,
-        sampleRate: configuration.sampleRate
+        sampleRate: configuration.sampleRate,
       )
       unsafe processBuffer(data, timing: timing)
     }
 
-    nonisolated public func processBuffer(
+    public nonisolated func processBuffer(
       _ data: UnsafeBufferPointer<Float>,
-      timing: BufferTiming
+      timing: BufferTiming,
     ) {
-      guard wantsActiveAtomic.load(ordering: .relaxed), data.count > 0 else { return }
+      guard wantsActiveAtomic.load(ordering: .relaxed), !data.isEmpty else { return }
       latestEndSampleTimeAtomic.store(
         timing.sampleTime + Int64(data.count),
-        ordering: .relaxed
+        ordering: .relaxed,
       )
       latestSampleRateBitsAtomic.store(timing.sampleRate.bitPattern, ordering: .relaxed)
 
       guard isActiveAtomic.load(ordering: .relaxed) else { return }
       if analysisEnabledAtomic.load(ordering: .relaxed) {
-        unsafe self.updateAudioBuffer(data)
+        unsafe updateAudioBuffer(data)
       }
 
       if lodEnabledAtomic.load(ordering: .relaxed) {
@@ -1009,7 +1012,7 @@
       }
     }
 
-    nonisolated public func endBufferTask() {
+    public nonisolated func endBufferTask() {
       wantsActiveAtomic.store(false, ordering: .relaxed)
       Task { @MainActor [weak self] in
         self?.stopVisualization()
@@ -1032,7 +1035,7 @@
         frequencyAnalyzerConfiguration: frequencyAnalyzerConfiguration,
         bucketMode: bucketMode,
         frequencyWeighting: frequencyWeighting,
-        beatDetectionConfiguration: beatDetectionConfiguration
+        beatDetectionConfiguration: beatDetectionConfiguration,
       )
     }
 
@@ -1043,7 +1046,7 @@
       analysisUpdateRateHz: 60.0,
       smoothingFactor: 0.4,
       bucketMode: .mel(bucketCount: 24),
-      beatDetectionConfiguration: .default
+      beatDetectionConfiguration: .default,
     )
 
     /// A low-power configuration for conserving battery.
@@ -1053,7 +1056,7 @@
       analysisUpdateRateHz: 30.0,
       smoothingFactor: 0.5,
       bucketMode: .mel(bucketCount: 16),
-      beatDetectionConfiguration: .lowSensitivity
+      beatDetectionConfiguration: .lowSensitivity,
     )
 
     /// A high-quality configuration for detailed analysis.
@@ -1063,7 +1066,7 @@
       analysisUpdateRateHz: 60.0,
       smoothingFactor: 0.2,
       bucketMode: .mel(bucketCount: 32),
-      beatDetectionConfiguration: .highSensitivity
+      beatDetectionConfiguration: .highSensitivity,
     )
   }
 

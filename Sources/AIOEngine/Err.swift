@@ -1,3 +1,5 @@
+// © GoodHatsLLC
+
 #if canImport(AVFoundation)
   import AVFoundation
   public import Tools
@@ -56,7 +58,7 @@
               nil
             }
           if let audioSessionError {
-            self.description = audioSessionError
+            description = audioSessionError
             return
           }
         }
@@ -124,8 +126,7 @@
           "kAUGraphErr_CannotDoInCurrentContext"
         case kAUGraphErr_InvalidAudioUnit:
           "kAUGraphErr_InvalidAudioUnit"
-
-        //***** MIDI errors
+        // ***** MIDI errors
         case kMIDIInvalidClient:
           "kMIDIInvalidClient"
         case kMIDIInvalidPort:
@@ -156,8 +157,7 @@
           "kMIDIIDNotUnique"
         case kMIDINotPermitted:
           "kMIDINotPermitted"
-
-        //***** AudioToolbox errors
+        // ***** AudioToolbox errors
         case kAudioToolboxErr_CannotDoInCurrentContext:
           "kAudioToolboxErr_CannotDoInCurrentContext"
         case kAudioToolboxErr_EndOfTrack:
@@ -180,8 +180,7 @@
           "kAudioToolboxErr_TrackNotFound"
         case kAudioToolboxError_NoTrackDestination:
           "kAudioToolboxError_NoTrackDestination"
-
-        //***** AudioUnit errors
+        // ***** AudioUnit errors
         case kAudioUnitErr_CannotDoInCurrentContext:
           "kAudioUnitErr_CannotDoInCurrentContext"
         case kAudioUnitErr_FailedInitialization:
@@ -226,8 +225,7 @@
           "kAudioUnitErr_UnknownFileType"
         case kAudioUnitErr_RenderTimeout:
           "kAudioUnitErr_RenderTimeout"
-
-        //***** AudioComponent errors
+        // ***** AudioComponent errors
         case kAudioComponentErr_DuplicateDescription:
           "kAudioComponentErr_DuplicateDescription"
         case kAudioComponentErr_InitializationTimedOut:
@@ -242,8 +240,7 @@
           "kAudioComponentErr_TooManyInstances"
         case kAudioComponentErr_UnsupportedType:
           "kAudioComponentErr_UnsupportedType"
-
-        //***** Audio errors
+        // ***** Audio errors
         case kAudio_BadFilePathError:
           "kAudio_BadFilePathError"
         case kAudio_FileNotFoundError:
@@ -263,13 +260,13 @@
         }
 
       if let osstatus {
-        self.description = osstatus
+        description = osstatus
         return
       }
 
-      self.description = String(describing: error)
-
+      description = String(describing: error)
     }
+
     public let description: String
   }
 #endif

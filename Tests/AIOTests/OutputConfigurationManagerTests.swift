@@ -1,11 +1,11 @@
+// © GoodHatsLLC
+
 import Foundation
 import Testing
 
 @testable import AIOEngine
 
-@Suite
 struct OutputConfigurationManagerTests {
-
   @MainActor
   private func makeIsolatedDefaults() throws -> UserDefaults {
     let suiteName = "aio.tests.output-config.\(UUID().uuidString)"
@@ -16,13 +16,13 @@ struct OutputConfigurationManagerTests {
 
   @Test
   @MainActor
-  func defaultConfigurationIsADTSHigh() throws {
+  func `default configuration is ADTS high`() throws {
     let env = AudioEnvironment()
     let errors = MockErrorManager()
-    let manager = OutputConfigurationManager(
+    let manager = try OutputConfigurationManager(
       env: env,
       errorManager: errors,
-      defaults: try makeIsolatedDefaults()
+      defaults: makeIsolatedDefaults(),
     )
 
     #expect(manager.outputFormat == .adts)
@@ -37,13 +37,13 @@ struct OutputConfigurationManagerTests {
 
   @Test
   @MainActor
-  func switchingToFlacAlignsBitDepthAndForcesMaximumQuality() throws {
+  func `switching to flac aligns bit depth and forces maximum quality`() throws {
     let env = AudioEnvironment()
     let errors = MockErrorManager()
-    let manager = OutputConfigurationManager(
+    let manager = try OutputConfigurationManager(
       env: env,
       errorManager: errors,
-      defaults: try makeIsolatedDefaults()
+      defaults: makeIsolatedDefaults(),
     )
 
     // Start from a bit depth FLAC does not support.
@@ -65,13 +65,13 @@ struct OutputConfigurationManagerTests {
 
   @Test
   @MainActor
-  func switchingToWavKeepsBitDepthAndForcesMaximumQuality() throws {
+  func `switching to wav keeps bit depth and forces maximum quality`() throws {
     let env = AudioEnvironment()
     let errors = MockErrorManager()
-    let manager = OutputConfigurationManager(
+    let manager = try OutputConfigurationManager(
       env: env,
       errorManager: errors,
-      defaults: try makeIsolatedDefaults()
+      defaults: makeIsolatedDefaults(),
     )
 
     manager.bitDepth = .pcmInt24
@@ -92,7 +92,7 @@ struct OutputConfigurationManagerTests {
 
   @Test
   @MainActor
-  func remembersPreviousOutputConfigurationAcrossInstances() throws {
+  func `remembers previous output configuration across instances`() throws {
     let defaults = try makeIsolatedDefaults()
 
     let env = AudioEnvironment()

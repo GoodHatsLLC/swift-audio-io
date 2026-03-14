@@ -24,29 +24,29 @@ let package = Package(
   products: [
     .library(
       name: "Tools",
-      targets: ["Tools"]
+      targets: ["Tools"],
     ),
     .library(
       name: "AudioSignals",
-      targets: ["AudioSignals"]
+      targets: ["AudioSignals"],
     ),
     .library(
       name: "AIOEngine",
-      targets: ["AIOEngine"]
+      targets: ["AIOEngine"],
     ),
   ],
   dependencies: [
     .package(
       url: "https://github.com/apple/swift-collections.git",
-      from: "1.3.0"
+      from: "1.3.0",
     ),
     .package(
       url: "https://github.com/apple/swift-async-algorithms.git",
-      from: "1.1.1"
+      from: "1.1.1",
     ),
     .package(
       url: "https://github.com/apple/swift-atomics.git",
-      from: "1.3.0"
+      from: "1.3.0",
     ),
   ],
   targets: [
@@ -58,12 +58,12 @@ let package = Package(
         .product(name: "OrderedCollections", package: "swift-collections"),
         .product(name: "AsyncAlgorithms", package: "swift-async-algorithms"),
       ],
-      swiftSettings: swiftSettings()
+      swiftSettings: swiftSettings(),
     ),
     .testTarget(
       name: "ToolsTests",
       dependencies: ["Tools"],
-      swiftSettings: swiftSettings()
+      swiftSettings: swiftSettings(),
     ),
     .target(
       name: "AudioSignals",
@@ -71,7 +71,7 @@ let package = Package(
         "Tools",
         .product(name: "Atomics", package: "swift-atomics"),
       ],
-      swiftSettings: swiftSettings()
+      swiftSettings: swiftSettings(),
     ),
     .target(
       name: "AIOEngine",
@@ -83,17 +83,17 @@ let package = Package(
         .product(name: "DequeModule", package: "swift-collections"),
         .product(name: "OrderedCollections", package: "swift-collections"),
       ],
-      swiftSettings: swiftSettings()
+      swiftSettings: swiftSettings(),
     ),
     .testTarget(
       name: "AIOTests",
       dependencies: ["AIOEngine"],
-      swiftSettings: swiftSettings()
+      swiftSettings: swiftSettings(),
     ),
     .testTarget(
       name: "AudioVisualizationTests",
       dependencies: ["AIOEngine", "AudioSignals"],
-      swiftSettings: swiftSettings()
+      swiftSettings: swiftSettings(),
     ),
-  ]
+  ],
 )

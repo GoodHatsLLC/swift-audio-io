@@ -1,26 +1,26 @@
+// © GoodHatsLLC
+
 #if canImport(AVFoundation)
   import AIOEngine
   import AudioSignals
   import Testing
 
-  @Suite("MultiBandLOD Contract Tests")
   struct MultiBandLODContractTests {
-
-    @Test("lodBufferLength uses ceil(raw/lodRatio)")
-    func testLODBufferLengthCeil() {
+    @Test
+    func `lodBufferLength uses ceil(raw/lodRatio)`() {
       let config = MultiBandLODConfiguration(
         bandCount: 3,
         lodRatio: 6,
         bufferSeconds: 1,
-        sampleRate: 10
+        sampleRate: 10,
       )
 
       #expect(config.rawBufferLength == 10)
       #expect(config.lodBufferLength == 2)
     }
 
-    @Test("Positive modulo wraps negative indices")
-    func testPositiveModulo() {
+    @Test
+    func `Positive modulo wraps negative indices`() {
       func positiveModulo(_ x: Int, _ m: Int) -> Int {
         let r = x % m
         return r < 0 ? (r + m) : r
@@ -34,8 +34,8 @@
       #expect(positiveModulo(11, 10) == 1)
     }
 
-    @Test("copyContiguousLODChannel returns band-contiguous buffers")
-    func testCopyContiguousLODChannelBandContiguous() {
+    @Test
+    func `copyContiguousLODChannel returns band-contiguous buffers`() {
       var band0 = BandLODData(bandIndex: 0, capacity: 3)
       band0.minBuffer = [1, 2, 3]
       band0.maxBuffer = [11, 12, 13]
@@ -50,7 +50,7 @@
         bands: [band0, band1],
         writeIndex: 0,
         lodRatio: 2,
-        rawBufferLength: 6
+        rawBufferLength: 6,
       )
 
       #expect(snapshot.copyContiguousLODChannel(.min) == [1, 2, 3, 4, 5, 6])
@@ -58,13 +58,13 @@
       #expect(snapshot.copyContiguousLODChannel(.rms) == [21, 22, 23, 24, 25, 26])
     }
 
-    @Test("Checked band access returns nil for out-of-range bands")
-    func testCheckedBandAccess() {
+    @Test
+    func `Checked band access returns nil for out-of-range bands`() {
       let snapshot = MultiBandLODSnapshot(
         bands: [BandLODData(bandIndex: 0, capacity: 4)],
         writeIndex: 0,
         lodRatio: 2,
-        rawBufferLength: 8
+        rawBufferLength: 8,
       )
 
       let validCount = unsafe snapshot.withMinBufferIfValid(band: 0) { $0.count }

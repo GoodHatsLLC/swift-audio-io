@@ -1,14 +1,16 @@
+// © GoodHatsLLC
+
 import Foundation
 import os
 
 enum SystemLog {
   static func make(
     subsystem: String = defaultSubsystem,
-    category: String = #fileID
+    category: String = #fileID,
   ) -> Logger {
     Logger(
       subsystem: subsystem,
-      category: normalizedCategory(from: category)
+      category: normalizedCategory(from: category),
     )
   }
 

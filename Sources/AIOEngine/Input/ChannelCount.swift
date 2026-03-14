@@ -1,10 +1,11 @@
+// © GoodHatsLLC
+
 #if canImport(AVFoundation)
   public import AVFoundation
 
   public struct ChannelCount: Sendable, Hashable, Identifiable,
     CustomStringConvertible, TypeDescribable, Comparable
   {
-
     public init(platform: AVAudioChannelCount) {
       self.platform = platform
     }
@@ -17,7 +18,9 @@
       lhs.platform < rhs.platform
     }
 
-    public var id: Self { self }
+    public var id: Self {
+      self
+    }
 
     public var count: Int {
       Int(platform)
@@ -27,13 +30,13 @@
     public static let stereo: ChannelCount = .init(platform: 2)
 
     public var description: String {
-      switch self.platform {
+      switch platform {
       case 1:
-        return "Mono"
+        "Mono"
       case 2:
-        return "Stereo"
+        "Stereo"
       default:
-        return "Spatial"
+        "Spatial"
       }
     }
   }

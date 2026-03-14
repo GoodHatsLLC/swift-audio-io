@@ -1,7 +1,9 @@
+// © GoodHatsLLC
+
 #if canImport(AVFoundation)
-  import AVFoundation
   import AsyncAlgorithms
   import Atomics
+  import AVFoundation
   public import Foundation
   import os
   import Tools
@@ -9,7 +11,6 @@
   private let log = SystemLog.make()
 
   extension AIOEngine {
-
     // MARK: - Recording State Management
 
     /// Sets the desired recording state and attempts to reconcile it with the actual state.
@@ -30,7 +31,7 @@
     @MainActor
     public func setDesiredRecordingState(
       _ desiredState: Bool,
-      configuration: RecordingConfiguration? = nil
+      configuration: RecordingConfiguration? = nil,
     ) {
       wantsRecording = desiredState
       lastRecordingStartFailure = nil
@@ -67,7 +68,7 @@
     ///            failed after the timeout period or a non-transient error occurred.
     @MainActor
     public func startRecordingWithReconciliation(
-      configuration: RecordingConfiguration
+      configuration: RecordingConfiguration,
     ) async -> Bool {
       wantsRecording = true
       lastRecordingStartFailure = nil
@@ -95,7 +96,7 @@
     @MainActor
     func reconcileRecordingState(
       desiredState: Bool,
-      configuration: RecordingConfiguration
+      configuration: RecordingConfiguration,
     ) async {
       guard desiredState else { return }
 
@@ -104,18 +105,18 @@
       let retryInterval = reconciliationConfiguration.retryInterval
 
       log.info(
-        "Starting recording reconciliation (timeout: \(timeout, privacy: .public), interval: \(retryInterval, privacy: .public))"
+        "Starting recording reconciliation (timeout: \(timeout, privacy: .public), interval: \(retryInterval, privacy: .public))",
       )
 
       var lastError: AIOError?
 
-      while !Task.isCancelled && wantsRecording {
+      while !Task.isCancelled, wantsRecording {
         let elapsed = ContinuousClock.now - startTime
 
         // Check if we've exceeded the timeout
         if elapsed >= timeout {
           log.warning(
-            "Recording reconciliation timed out after \(elapsed, privacy: .public)"
+            "Recording reconciliation timed out after \(elapsed, privacy: .public)",
           )
           break
         }
@@ -133,14 +134,14 @@
           lastError = error
           lastRecordingStartFailure = error
           log.info(
-            "Transient error during reconciliation: \(error, privacy: .public), retrying..."
+            "Transient error during reconciliation: \(error, privacy: .public), retrying...",
           )
           try? await Task.sleep(for: retryInterval)
           continue
-        } catch let error {
+        } catch {
           // Non-transient error - give up immediately
           log.error(
-            "Non-transient error during reconciliation: \(error, privacy: .public)"
+            "Non-transient error during reconciliation: \(error, privacy: .public)",
           )
           lastError = error
           lastRecordingStartFailure = error
@@ -149,9 +150,9 @@
       }
 
       // Reconciliation failed - reset desired state to match actual
-      if wantsRecording && !isRecording {
+      if wantsRecording, !isRecording {
         log.warning(
-          "Reconciliation failed, resetting wantsRecording to false. Last error: \(lastError?.localizedDescription ?? "none", privacy: .public)"
+          "Reconciliation failed, resetting wantsRecording to false. Last error: \(lastError?.localizedDescription ?? "none", privacy: .public)",
         )
         wantsRecording = false
         onReconciliationFailed?(true)
@@ -166,12 +167,12 @@
     /// - Parameter configuration: The configuration to use for recording.
     /// - Throws: An `AIOError` if the recording configuration is invalid or if the engine fails to start.
     public nonisolated func startRecording(
-      configuration: RecordingConfiguration
+      configuration: RecordingConfiguration,
     ) async throws(AIOError) {
       do {
         let shouldStopPlayer = await withEngineControlQueue { [weak self] in
           guard let self else { return false }
-          return unsafe self.player.isPlaying
+          return unsafe player.isPlaying
         }
         if shouldStopPlayer {
           await stopPlayerIfNeeded()
@@ -196,20 +197,21 @@
           let (buffers, writer, url, receiverBuffers, receiverTiming) = state {
             (
               $0.audioBuffers, $0.recordingWriter, $0.recordingURL, $0.receiverBuffers,
-              $0.receiverTiming
+              $0.receiverTiming,
             )
           }
-          guard let buffers = buffers,
+          guard let buffers,
             let processingFormat = configuration.processingFormat,
             let writeWriter = writer,
-            let url = url
+            let url
           else {
             throw AIOError.invalidRecordingConfiguration(
-              details: "state after warm(configuration:) was invalid")
+              details: "state after warm(configuration:) was invalid",
+            )
           }
           let startResult = runOnEngineControlQueueResult { [weak self] in
             guard let self else { return }
-            try unsafe self.engine.start()
+            try unsafe engine.start()
           }
           if case .failure(let error) = startResult {
             throw AIOError.engineStartFailed(error: ErrorContext(error))
@@ -221,7 +223,7 @@
             startReceiverLoop(
               buffers: receiverBuffers,
               timing: receiverTiming,
-              processingFormat: processingFormat
+              processingFormat: processingFormat,
             )
           }
           self.isRecording = true
@@ -236,7 +238,7 @@
     @MainActor func startFileWriteLoop(
       flushing buffers: [SPSCRingBuffer<Float>],
       of processingFormat: AVAudioFormat,
-      to writer: any RecordingFileWriter
+      to writer: any RecordingFileWriter,
     ) {
       let control = WriterControl()
       let localMetrics = metrics
@@ -246,7 +248,7 @@
         Task { @MainActor in
           self.recordWriteFailure(error, url: writer.fileURL)
           self.errorSubject.send(
-            AIOError.audioFileFailed(operation: .write, url: writer.fileURL, error: error)
+            AIOError.audioFileFailed(operation: .write, url: writer.fileURL, error: error),
           )
           self.onRecordingFailed?()
         }
@@ -255,15 +257,16 @@
         id: UUID(),
         control: control,
         writer: writer,
-        fileURL: writer.fileURL
+        fileURL: writer.fileURL,
       )
       writerSession = session
       let writeBufferSize = 1024
       let preAllocatedBuffer = Transferring(
         AVAudioPCMBuffer(
           pcmFormat: processingFormat,
-          frameCapacity: AVAudioFrameCount(writeBufferSize)
-        ))
+          frameCapacity: AVAudioFrameCount(writeBufferSize),
+        ),
+      )
       writerQueue.async { [control, localMetrics] in
         AIOEngine.writerLoopSync(
           writer: writer,
@@ -277,17 +280,16 @@
           },
           errorHandler: errorHandler,
           tapErrorPoll: tapErrorPoll,
-          onTapError: onTapError
+          onTapError: onTapError,
         )
       }
       log.info("📝 Writer started for \(writer.fileURL.lastPathComponent, privacy: .public)")
-
     }
 
     @MainActor func startReceiverLoop(
       buffers: [SPSCRingBuffer<Float>],
       timing: SPSCRingBuffer<TimingPacket>,
-      processingFormat: AVAudioFormat
+      processingFormat: AVAudioFormat,
     ) {
       stopReceiverLoop()
       let control = ReceiverControl()
@@ -296,7 +298,7 @@
         control: control,
         buffers: buffers,
         timing: timing,
-        processingFormat: processingFormat
+        processingFormat: processingFormat,
       )
       receiverSession = session
       #if DEBUG
@@ -323,7 +325,7 @@
           onUnderrun: onUnderrun,
           onDrop: onDrop,
           tapErrorPoll: tapErrorPoll,
-          onTapError: onTapError
+          onTapError: onTapError,
         )
       }
     }
@@ -343,13 +345,13 @@
         Task { await session.control.targetSatisfiedSignal.signal() }
       }
       if logBuffers {
-        let counts = state.withLock { $0.audioBuffers?.map { $0.availableToRead } ?? [] }
+        let counts = state.withLock { $0.audioBuffers?.map(\.availableToRead) ?? [] }
         log.info(
-          "🧹 Stop target set: target=\(targetSampleTime, privacy: .public) written=\(written, privacy: .public) buffers=\(counts, privacy: .public)"
+          "🧹 Stop target set: target=\(targetSampleTime, privacy: .public) written=\(written, privacy: .public) buffers=\(counts, privacy: .public)",
         )
       } else {
         log.info(
-          "🧹 Stop target set: target=\(targetSampleTime, privacy: .public) (non-current session)"
+          "🧹 Stop target set: target=\(targetSampleTime, privacy: .public) (non-current session)",
         )
       }
     }
@@ -365,7 +367,7 @@
         session.writer.close()
         let size = fileSizeDescription(for: session.fileURL)
         log.info(
-          "🧹 Writer drained for \(session.fileURL.lastPathComponent, privacy: .public) (size=\(size, privacy: .public), elapsed=\(elapsed, privacy: .public))"
+          "🧹 Writer drained for \(session.fileURL.lastPathComponent, privacy: .public) (size=\(size, privacy: .public), elapsed=\(elapsed, privacy: .public))",
         )
       case .targetSatisfied:
         session.control.cancelRequested.store(true, ordering: .relaxed)
@@ -373,7 +375,7 @@
         let target = session.control.targetSampleTime.load(ordering: .relaxed)
         let written = session.control.writtenSampleTime.load(ordering: .relaxed)
         log.info(
-          "🧹 Drain short-circuit: target satisfied for \(session.fileURL.lastPathComponent, privacy: .public) target=\(target, privacy: .public) written=\(written, privacy: .public) elapsed=\(elapsed, privacy: .public)"
+          "🧹 Drain short-circuit: target satisfied for \(session.fileURL.lastPathComponent, privacy: .public) target=\(target, privacy: .public) written=\(written, privacy: .public) elapsed=\(elapsed, privacy: .public)",
         )
       case .timedOut:
         let error = WriterDrainTimeoutError(url: session.fileURL, timeout: writerDrainTimeout)
@@ -382,7 +384,7 @@
         let target = session.control.targetSampleTime.load(ordering: .relaxed)
         let written = session.control.writtenSampleTime.load(ordering: .relaxed)
         log.error(
-          "⏱️ Writer drain timed out for \(session.fileURL.lastPathComponent, privacy: .public) after \(elapsed, privacy: .public): \(error, privacy: .public) target=\(target, privacy: .public) written=\(written, privacy: .public)"
+          "⏱️ Writer drain timed out for \(session.fileURL.lastPathComponent, privacy: .public) after \(elapsed, privacy: .public): \(error, privacy: .public) target=\(target, privacy: .public) written=\(written, privacy: .public)",
         )
         recordWriteFailure(ErrorContext(error), url: session.fileURL)
         if notifyOnFailure {
@@ -390,8 +392,8 @@
             AIOError.audioFileFailed(
               operation: .write,
               url: session.fileURL,
-              error: ErrorContext(error)
-            )
+              error: ErrorContext(error),
+            ),
           )
           onRecordingFailed?()
         }
@@ -402,11 +404,12 @@
     func enqueueDrain(for session: WriterSession) {
       let target = recordingSampleTimeAtomic.load(ordering: .relaxed)
       prepareDrain(
-        for: session, targetSampleTime: target, logBuffers: session.id == writerSession?.id)
+        for: session, targetSampleTime: target, logBuffers: session.id == writerSession?.id,
+      )
       drainingWriterSessions.append(session)
       Task { [weak self] in
         guard let self else { return }
-        await self.drainWriterSession(session, notifyOnFailure: true)
+        await drainWriterSession(session, notifyOnFailure: true)
         await MainActor.run { self.drainingWriterSessions.removeAll { $0.id == session.id } }
       }
     }
@@ -430,9 +433,11 @@
           return
         }
         log.info(
-          "🧹 Stop requested for writer \(session.fileURL.lastPathComponent, privacy: .public)")
+          "🧹 Stop requested for writer \(session.fileURL.lastPathComponent, privacy: .public)",
+        )
         prepareDrain(
-          for: session, targetSampleTime: target, logBuffers: session.id == writerSession?.id)
+          for: session, targetSampleTime: target, logBuffers: session.id == writerSession?.id,
+        )
       }
       for session in sessions {
         if Task.isCancelled {
@@ -466,7 +471,7 @@
       guard lastWriteFailure == nil else { return }
       lastWriteFailure = WriteFailure(url: url, error: error)
       log.error(
-        "🛑 Recording write failed for \(url?.lastPathComponent ?? "missing URL", privacy: .public): \(error, privacy: .public)"
+        "🛑 Recording write failed for \(url?.lastPathComponent ?? "missing URL", privacy: .public): \(error, privacy: .public)",
       )
     }
 
@@ -485,7 +490,7 @@
     /// - Throws: An `AIOError` if the configuration is invalid or if the engine fails to warm up.
     @MainActor
     public func warm(configuration: RecordingConfiguration) throws(AIOError) {
-      guard !isRecording && !isPlaying else {
+      guard !isRecording, !isPlaying else {
         return
       }
       try validateEncoderCompatibility(for: configuration)
@@ -506,11 +511,11 @@
       // input node correctly.
       runOnEngineControlQueue { [weak self] in
         guard let self else { return }
-        unsafe self.player.stop()
-        unsafe self.engine.stop()
-        unsafe self.engine.reset()
-        if unsafe !self.engine.attachedNodes.contains(self.player) {
-          unsafe self.engine.attach(self.player)
+        unsafe player.stop()
+        unsafe engine.stop()
+        unsafe engine.reset()
+        if unsafe !engine.attachedNodes.contains(player) {
+          unsafe engine.attach(player)
         }
       }
 
@@ -525,7 +530,7 @@
         let channelCount = Int(processingFormat.channelCount)
         guard sampleRate > 0, channelCount > 0 else {
           throw AIOError.audioSessionNotReady(
-            details: "Invalid format: \(sampleRate)Hz, \(channelCount)ch"
+            details: "Invalid format: \(sampleRate)Hz, \(channelCount)ch",
           )
         }
         guard sampleRate < Int.max / channelCount / 2 else {
@@ -539,20 +544,20 @@
         let tapResult = try reinstallTap(
           configuration: configuration,
           processingFormat: processingFormat,
-          stopEngine: false
+          stopEngine: false,
         )
 
         let audioBuffers = makeAudioBuffers(sampleRate: sampleRate, channelCount: channelCount)
         let receiverBuffers = makeAudioBuffers(sampleRate: sampleRate, channelCount: channelCount)
         let timingCapacity = max(
           64,
-          Int(ceil(Double(sampleRate) / Double(tapResult.tapConfiguration.bufferSize))) * 4
+          Int(ceil(Double(sampleRate) / Double(tapResult.tapConfiguration.bufferSize))) * 4,
         )
         let receiverTiming = SPSCRingBuffer<TimingPacket>(capacity: timingCapacity)
 
         let (url, protection): (URL, OutputFileProtection?) = try resolveOutputURL(
           for: configuration,
-          allowExplicitFile: true
+          allowExplicitFile: true,
         )
         let writer = try makeRecordingWriter(url: url, configuration: configuration)
         applyFileProtectionIfNeeded(protection, to: url)
@@ -582,12 +587,12 @@
 
     func makeAudioBuffers(
       sampleRate: Int,
-      channelCount: Int
+      channelCount: Int,
     ) -> [SPSCRingBuffer<Float>] {
       let cappedChannels = min(channelCount, 2)
       if channelCount > cappedChannels {
         log.warning(
-          "Clamping channel count from \(channelCount, privacy: .public) to \(cappedChannels, privacy: .public)"
+          "Clamping channel count from \(channelCount, privacy: .public) to \(cappedChannels, privacy: .public)",
         )
       }
       let capacity = max(1, Int(Double(sampleRate) * maxBufferSeconds))
@@ -598,7 +603,7 @@
 
     @MainActor
     func validateEncoderCompatibility(
-      for configuration: RecordingConfiguration
+      for configuration: RecordingConfiguration,
     ) throws(AIOError) {
       let fileFormat = configuration.outputConfiguration.fileFormat
       guard fileFormat == .aac || fileFormat == .adts else { return }
@@ -608,7 +613,7 @@
         throw AIOError.unsupportedEncodedSampleRate(
           fileFormat: fileFormat,
           sampleRate: sampleRate,
-          supportedSampleRates: FileFormat.aacCompatibleSampleRates
+          supportedSampleRates: FileFormat.aacCompatibleSampleRates,
         )
       }
     }
@@ -623,7 +628,7 @@
             inputConfiguration: $0.inputConfiguration,
             outputConfiguration: $0.outputConfiguration,
             tapInterval: interval,
-            outputDestination: $0.outputDestination
+            outputDestination: $0.outputDestination,
           )
         }
         return
@@ -633,7 +638,7 @@
         inputConfiguration: currentConfig.inputConfiguration,
         outputConfiguration: currentConfig.outputConfiguration,
         tapInterval: interval,
-        outputDestination: currentConfig.outputDestination
+        outputDestination: currentConfig.outputDestination,
       )
 
       guard updated.tapInterval != currentConfig.tapInterval else { return }
@@ -645,16 +650,16 @@
 
       do {
         try reconfigureTapForIntervalChange(configuration: updated)
-      } catch let error {
+      } catch {
         log.warning(
-          "Failed to update tap interval to \(interval, privacy: .public): \(error, privacy: .public)"
+          "Failed to update tap interval to \(interval, privacy: .public): \(error, privacy: .public)",
         )
       }
     }
 
     @MainActor
     private func reconfigureTapForIntervalChange(
-      configuration: RecordingConfiguration
+      configuration: RecordingConfiguration,
     ) throws(AIOError) {
       guard let processingFormat = state.withLock({ $0.tapConverterOutputFormat }) else {
         return
@@ -663,34 +668,34 @@
       let result = try reinstallTap(
         configuration: configuration,
         processingFormat: processingFormat,
-        stopEngine: false
+        stopEngine: false,
       )
       applyTapInstallResult(result, processingFormat: processingFormat)
 
       log.info(
-        "Updated tap interval to \(configuration.tapInterval, privacy: .public) (bufferSize: \(result.tapConfiguration.bufferSize, privacy: .public) frames)"
+        "Updated tap interval to \(configuration.tapInterval, privacy: .public) (bufferSize: \(result.tapConfiguration.bufferSize, privacy: .public) frames)",
       )
     }
 
     /// Thread Domain: MainActor (entry point), engineControl (graph mutations).
     @MainActor func hardStop() {
       let tapBus = state.consume(\.installedTapBus)
-      let busesToRemove = Array(Set([tapBus, 0].compactMap { $0 }))
+      let busesToRemove = Array(Set([tapBus, 0].compactMap(\.self)))
       runOnEngineControlQueue { [weak self] in
         guard let self else { return }
-        dispatchPrecondition(condition: .onQueue(self.engineControlQueue))
+        dispatchPrecondition(condition: .onQueue(engineControlQueue))
         for bus in busesToRemove {
-          unsafe self.engine.inputNode.removeTap(onBus: bus)
+          unsafe engine.inputNode.removeTap(onBus: bus)
         }
-        if unsafe self.engine.isRunning {
-          unsafe self.engine.stop()
+        if unsafe engine.isRunning {
+          unsafe engine.stop()
         }
-        if unsafe self.player.isPlaying {
-          unsafe self.player.stop()
+        if unsafe player.isPlaying {
+          unsafe player.stop()
         }
         // On iOS 26.x, explicit `disconnectNodeOutput(_:)` has been observed to occasionally
         // raise an uncatchable NSException after background transitions; prefer `reset()`.
-        unsafe self.engine.reset()
+        unsafe engine.reset()
       }
       let hasActiveWriter = writerSession != nil || !drainingWriterSessions.isEmpty
       if let current = writerSession {
@@ -705,24 +710,24 @@
     func gracefulStop() async {
       log.info("gracefulStop requested")
       let tapBus = state.consume(\.installedTapBus)
-      let busesToRemove = Array(Set([tapBus, 0].compactMap { $0 }))
+      let busesToRemove = Array(Set([tapBus, 0].compactMap(\.self)))
       log.info("gracefulStop starting (tapBus=\(String(describing: tapBus), privacy: .public))")
       engineControlQueue.async { [weak self] in
         guard let self else { return }
-        dispatchPrecondition(condition: .onQueue(self.engineControlQueue))
+        dispatchPrecondition(condition: .onQueue(engineControlQueue))
         for bus in busesToRemove {
-          unsafe self.engine.inputNode.removeTap(onBus: bus)
+          unsafe engine.inputNode.removeTap(onBus: bus)
         }
-        unsafe self.engine.stop()
+        unsafe engine.stop()
       }
       log.info("gracefulStop draining writer sessions")
       let drainCompleted = await withTaskGroup(of: Bool.self) { group in
         group.addTask { [self] in
-          await self.stopAndDrainAllWriterSessions(notifyOnFailure: false)
+          await stopAndDrainAllWriterSessions(notifyOnFailure: false)
           return true
         }
         group.addTask { [self] in
-          try? await Task.sleep(for: self.stopDrainTimeout)
+          try? await Task.sleep(for: stopDrainTimeout)
           return false
         }
         let result = await group.next() ?? false
@@ -771,21 +776,22 @@
     }
 
     // MARK: - Thread Domain: tapCallback
-    //
-    // Threading model for the audio pipeline:
-    // - Tap callback (processAudio): semi-RT thread managed by AVAudioEngine's
-    //   internal RealtimeMessenger.mServiceQueue. Must avoid blocking locks,
-    //   heap allocations, and ObjC messaging where possible. Uses
-    //   withLockIfAvailable for non-blocking state access with a cached
-    //   snapshot fallback.
-    // - Writer loop: writerQueue (serial, .userInitiated), file I/O only.
-    // - Engine control: engineControlQueue (serial, .default) for all
-    //   AVAudioEngine graph mutations.
-    // - Receiver loop: receiverQueue (serial, .userInitiated), visualization.
+
+    ///
+    /// Threading model for the audio pipeline:
+    /// - Tap callback (processAudio): semi-RT thread managed by AVAudioEngine's
+    ///   internal RealtimeMessenger.mServiceQueue. Must avoid blocking locks,
+    ///   heap allocations, and ObjC messaging where possible. Uses
+    ///   withLockIfAvailable for non-blocking state access with a cached
+    ///   snapshot fallback.
+    /// - Writer loop: writerQueue (serial, .userInitiated), file I/O only.
+    /// - Engine control: engineControlQueue (serial, .default) for all
+    ///   AVAudioEngine graph mutations.
+    /// - Receiver loop: receiverQueue (serial, .userInitiated), visualization.
     nonisolated func processAudio(
       buffer: AVAudioPCMBuffer,
       time: AVAudioTime?,
-      to processingFormat: AVAudioFormat
+      to processingFormat: AVAudioFormat,
     ) {
       #if DEBUG
         //        tapThreadChecker.checkThread()
@@ -808,8 +814,9 @@
             converter: state.tapConverter,
             converterInputFormat: state.tapConverterInputFormat,
             converterOutputFormat: state.tapConverterOutputFormat,
-            convertedBuffer: state.tapConvertedBuffer
-          ))
+            convertedBuffer: state.tapConvertedBuffer,
+          ),
+        )
       }) {
         snapshot = locked.value
         // Update the cached copy for future fallback reads.
@@ -853,7 +860,7 @@
       let frameRatio = processingFormat.sampleRate / buffer.format.sampleRate
       let requestedCapacity = max(
         AVAudioFrameCount(ceil(Double(frameLength) * frameRatio)),
-        1
+        1,
       )
       guard let convertedBuffer else {
         recordTapError(.converterMissing)
@@ -886,14 +893,14 @@
       guard effectiveChannelCount > 0 else { return }
       if channelCount > audioBuffers.count, rtLoggingEnabled {
         log.error(
-          "Channel count mismatch: \(channelCount, privacy: .public) vs \(audioBuffers.count, privacy: .public)"
+          "Channel count mismatch: \(channelCount, privacy: .public) vs \(audioBuffers.count, privacy: .public)",
         )
       }
       let convertedFrameLength = Int(convertedBuffer.frameLength)
       let writerAvailable = AIOEngine.minimumAvailableWriteFrames(
         channelCount: effectiveChannelCount,
         audioBuffers: audioBuffers,
-        limit: convertedFrameLength
+        limit: convertedFrameLength,
       )
       let writerCanWrite = writerAvailable >= convertedFrameLength
       let receiverCanWrite: Bool
@@ -904,7 +911,7 @@
           && AIOEngine.minimumAvailableWriteFrames(
             channelCount: effectiveChannelCount,
             audioBuffers: receiverBuffers,
-            limit: convertedFrameLength
+            limit: convertedFrameLength,
           ) >= convertedFrameLength
       } else {
         receiverCanWrite = false
@@ -915,7 +922,8 @@
         }
         if receiverBuffers != nil, !receiverCanWrite {
           metrics.receiverDrops.wrappingIncrement(
-            by: Int64(convertedFrameLength), ordering: .relaxed)
+            by: Int64(convertedFrameLength), ordering: .relaxed,
+          )
         }
       #endif
 
@@ -931,19 +939,19 @@
           guard let channelData = unsafe convertedBuffer.floatChannelData?[i] else {
             if rtLoggingEnabled {
               log.error(
-                "Failed to access channel data for channel \(i, privacy: .public)"
+                "Failed to access channel data for channel \(i, privacy: .public)",
               )
             }
             continue
           }
           if writerCanWrite {
             unsafe audioBuffers[i].write(
-              UnsafeBufferPointer(start: channelData, count: convertedFrameLength)
+              UnsafeBufferPointer(start: channelData, count: convertedFrameLength),
             )
           }
           if receiverCanWrite, let receiverBuffers, i < receiverBuffers.count {
             unsafe receiverBuffers[i].write(
-              UnsafeBufferPointer(start: channelData, count: convertedFrameLength)
+              UnsafeBufferPointer(start: channelData, count: convertedFrameLength),
             )
           }
         }
@@ -955,7 +963,7 @@
           frameCount: convertedFrameLength,
           hostTime: sourceHostTime,
           sourceSampleTime: sourceSampleTime,
-          sourceSampleRate: sourceSampleRate
+          sourceSampleRate: sourceSampleRate,
         )
         _ = unsafe withUnsafePointer(to: &packet) { pointer in
           unsafe receiverTimingBuffer.write(UnsafeBufferPointer(start: pointer, count: 1))
@@ -964,7 +972,7 @@
 
       recordingSampleTimeAtomic.wrappingIncrement(
         by: Int64(convertedBuffer.frameLength),
-        ordering: .relaxed
+        ordering: .relaxed,
       )
       #if DEBUG
         metrics.tapCallbackCount.wrappingIncrement(ordering: .relaxed)
@@ -978,7 +986,7 @@
 
     nonisolated func formatsCompatible(
       _ lhs: AVAudioFormat,
-      _ rhs: AVAudioFormat
+      _ rhs: AVAudioFormat,
     ) -> Bool {
       lhs.commonFormat == rhs.commonFormat
         && lhs.sampleRate == rhs.sampleRate
@@ -999,11 +1007,11 @@
       guard
         let buffer = AVAudioPCMBuffer(
           pcmFormat: processingFormat,
-          frameCapacity: targetCapacity
+          frameCapacity: targetCapacity,
         )
       else {
         log.error(
-          "Failed to resize tap buffer to \(requested, privacy: .public) frames"
+          "Failed to resize tap buffer to \(requested, privacy: .public) frames",
         )
         return
       }
@@ -1017,12 +1025,13 @@
             converter: state.tapConverter,
             converterInputFormat: state.tapConverterInputFormat,
             converterOutputFormat: state.tapConverterOutputFormat,
-            convertedBuffer: state.tapConvertedBuffer
-          ))
+            convertedBuffer: state.tapConvertedBuffer,
+          ),
+        )
       }
       tapSnapshotLock.withLock { $0 = wrapped.value }
       log.warning(
-        "Resized tap buffer to \(requested, privacy: .public) frames"
+        "Resized tap buffer to \(requested, privacy: .public) frames",
       )
     }
 
@@ -1038,7 +1047,7 @@
       shouldCancel: @escaping @Sendable () -> Bool,
       errorHandler: @escaping @Sendable (ErrorContext) -> Void,
       tapErrorPoll: (@Sendable () -> TapErrorCode?)?,
-      onTapError: (@Sendable (TapErrorCode) -> Void)?
+      onTapError: (@Sendable (TapErrorCode) -> Void)?,
     ) {
       #if !DEBUG
         _ = metrics
@@ -1059,7 +1068,7 @@
           from: audioBuffers,
           in: format,
           to: writer,
-          using: writeBuffer
+          using: writeBuffer,
         )
         switch result {
         case .success(let writeResult):
@@ -1085,14 +1094,14 @@
             if stopRequested, stopRequestedAt == nil {
               stopRequestedAt = clock.now
               log.info(
-                "🧹 Writer stop requested: target=\(control.targetSampleTime.load(ordering: .relaxed), privacy: .public) written=\(writtenSampleTime, privacy: .public) file=\(writer.fileURL.lastPathComponent, privacy: .public)"
+                "🧹 Writer stop requested: target=\(control.targetSampleTime.load(ordering: .relaxed), privacy: .public) written=\(writtenSampleTime, privacy: .public) file=\(writer.fileURL.lastPathComponent, privacy: .public)",
               )
             }
             if stopRequested,
               minimumAvailableFrames(
                 channelCount: Int(format.channelCount),
                 audioBuffers: audioBuffers,
-                limit: bufferSize
+                limit: bufferSize,
               ) == 0
             {
               break
@@ -1111,14 +1120,14 @@
                 #if DEBUG
                   metrics.writerStallCount.wrappingIncrement(ordering: .relaxed)
                 #endif
-                let counts = audioBuffers.map { $0.availableToRead }
+                let counts = audioBuffers.map(\.availableToRead)
                 let minAvail = minimumAvailableFrames(
                   channelCount: Int(format.channelCount),
                   audioBuffers: audioBuffers,
-                  limit: bufferSize
+                  limit: bufferSize,
                 )
                 log.warning(
-                  "🧹 Writer stall after stop: elapsed=\(elapsed, privacy: .public) minAvail=\(minAvail, privacy: .public) counts=\(counts, privacy: .public)"
+                  "🧹 Writer stall after stop: elapsed=\(elapsed, privacy: .public) minAvail=\(minAvail, privacy: .public) counts=\(counts, privacy: .public)",
                 )
               }
             }
@@ -1132,14 +1141,14 @@
         case .failure(let error):
           let context = ErrorContext(error)
           errorHandler(context)
-          break
         }
       }
       log.info("🧹 writerLoop exiting for \(writer.fileURL.lastPathComponent, privacy: .public)")
       Task { await control.drainSignal.signal() }
     }
+
     /// Thread Domain: receiverQueue
-    // swift-format-ignore
+    /// swift-format-ignore
     static func receiverLoopSync(
       buffers: [SPSCRingBuffer<Float>],
       timing: SPSCRingBuffer<TimingPacket>,
@@ -1150,7 +1159,7 @@
       onUnderrun: (@Sendable () -> Void)?,
       onDrop: (@Sendable () -> Void)?,
       tapErrorPoll: (@Sendable () -> TapErrorCode?)?,
-      onTapError: (@Sendable (TapErrorCode) -> Void)?
+      onTapError: (@Sendable (TapErrorCode) -> Void)?,
     ) {
       let channelCount = min(Int(processingFormat.channelCount), buffers.count)
       guard channelCount > 0 else { return }
@@ -1162,7 +1171,7 @@
       var scratchBuffers: [UnsafeMutableBufferPointer<Float>] = unsafe []
       func ensureScratchCapacity(_ needed: Int) {
         guard needed > scratchCapacity else { return }
-        for unsafe buffer in unsafe scratchBuffers {
+        for unsafebuffer in unsafe scratchBuffers {
           unsafe buffer.baseAddress?.deallocate()
         }
         unsafe scratchBuffers = unsafe (0..<channelCount).map { _ in
@@ -1172,15 +1181,15 @@
         scratchCapacity = needed
       }
       defer {
-        for unsafe buffer in unsafe scratchBuffers {
+        for unsafebuffer in unsafe scratchBuffers {
           unsafe buffer.baseAddress?.deallocate()
         }
       }
 
-      let sleepInterval =  max(
-          0.001,
-          cadence / Duration.seconds(1.0)
-        )
+      let sleepInterval = max(
+        0.001,
+        cadence / Duration.seconds(1.0),
+      )
 
       let maxBacklog = 4
       while !control.cancelRequested.load(ordering: .relaxed) {
@@ -1188,7 +1197,7 @@
           onTapError(code)
         }
         var backlog = timing.availableToRead
-        while backlog > maxBacklog && !control.cancelRequested.load(ordering: .relaxed) {
+        while backlog > maxBacklog, !control.cancelRequested.load(ordering: .relaxed) {
           let droppedTimingRead = unsafe timing.read(into: timingScratch)
           guard droppedTimingRead > 0 else { break }
           let droppedPacket = unsafe timingScratch[0]
@@ -1200,7 +1209,7 @@
           for index in 0..<channelCount {
             let destination = unsafe UnsafeMutableBufferPointer(
               start: scratchBuffers[index].baseAddress,
-              count: droppedPacket.frameCount
+              count: droppedPacket.frameCount,
             )
             _ = unsafe buffers[index].read(into: destination)
           }
@@ -1220,7 +1229,7 @@
         for index in 0..<channelCount {
           let destination = unsafe UnsafeMutableBufferPointer(
             start: scratchBuffers[index].baseAddress,
-            count: packet.frameCount
+            count: packet.frameCount,
           )
           let read = unsafe buffers[index].read(into: destination)
           actualFrames = min(actualFrames, read)
@@ -1236,11 +1245,11 @@
           sampleRate: processingFormat.sampleRate,
           hostTime: packet.hostTime,
           sourceSampleTime: packet.sourceSampleTime,
-          sourceSampleRate: packet.sourceSampleRate
+          sourceSampleRate: packet.sourceSampleRate,
         )
         let bufferPointer = unsafe UnsafeBufferPointer(start: base, count: actualFrames)
-        bufferReceivers({ $0 }).forEach {
-          unsafe $0.processBuffer(bufferPointer, timing: timing)
+        for bufferReceiver in bufferReceivers({ $0 }) {
+          unsafe bufferReceiver.processBuffer(bufferPointer, timing: timing)
         }
       }
     }
@@ -1256,13 +1265,13 @@
       in audioFormat: AVAudioFormat,
       to writer: any RecordingFileWriter,
       using reusableBuffer: AVAudioPCMBuffer? = nil,
-      clock: ContinuousClock = .continuous
+      clock: ContinuousClock = .continuous,
     ) -> Result<WriteResult, any Error> {
       let channelCount = Int(audioFormat.channelCount)
       let framesToRead = minimumAvailableFrames(
         channelCount: channelCount,
         audioBuffers: audioBuffers,
-        limit: bufferSize
+        limit: bufferSize,
       )
 
       guard framesToRead > 0 else {
@@ -1277,7 +1286,7 @@
         guard
           let freshBuffer = AVAudioPCMBuffer(
             pcmFormat: audioFormat,
-            frameCapacity: AVAudioFrameCount(bufferSize)
+            frameCapacity: AVAudioFrameCount(bufferSize),
           )
         else {
           return .success(.init(framesRead: 0, writeDuration: nil))
@@ -1293,7 +1302,8 @@
           return .success(.init(framesRead: 0, writeDuration: nil))
         }
         let readSize = unsafe audioBuffers[i].read(
-          into: UnsafeMutableBufferPointer(start: channelData, count: framesToRead))
+          into: UnsafeMutableBufferPointer(start: channelData, count: framesToRead),
+        )
         actualFrames = min(actualFrames, readSize)
       }
 
@@ -1308,7 +1318,7 @@
         let elapsed = start.duration(to: clock.now)
         if elapsed > .milliseconds(200) {
           log.warning(
-            "🐢 Slow write: \(elapsed, privacy: .public) frames=\(actualFrames, privacy: .public) file=\(writer.fileURL.lastPathComponent, privacy: .public)"
+            "🐢 Slow write: \(elapsed, privacy: .public) frames=\(actualFrames, privacy: .public) file=\(writer.fileURL.lastPathComponent, privacy: .public)",
           )
         }
         return .success(.init(framesRead: actualFrames, writeDuration: elapsed))
@@ -1321,7 +1331,7 @@
     static func minimumAvailableFrames(
       channelCount: Int,
       audioBuffers: [SPSCRingBuffer<Float>],
-      limit: Int
+      limit: Int,
     ) -> Int {
       guard channelCount > 0 else { return 0 }
 
@@ -1336,7 +1346,7 @@
     static func minimumAvailableWriteFrames(
       channelCount: Int,
       audioBuffers: [SPSCRingBuffer<Float>],
-      limit: Int
+      limit: Int,
     ) -> Int {
       guard channelCount > 0 else { return 0 }
 
@@ -1365,20 +1375,20 @@
         throw AIOError.audioFileFailed(
           operation: .write,
           url: url,
-          error: ErrorContext(MissingAudioFileError(url: url))
+          error: ErrorContext(MissingAudioFileError(url: url)),
         )
       }
       if let size = fileSize, size == 0 {
         throw AIOError.audioFileFailed(
           operation: .write,
           url: url,
-          error: ErrorContext(EmptyAudioFileError(url: url))
+          error: ErrorContext(EmptyAudioFileError(url: url)),
         )
       }
       if let failure {
         if isWriterDrainTimeout(failure), fileExists, (fileSize ?? 0) > 0 {
           log.warning(
-            "⚠️ Writer drain timed out but file exists with data; continuing stop for \(url.lastPathComponent, privacy: .public)"
+            "⚠️ Writer drain timed out but file exists with data; continuing stop for \(url.lastPathComponent, privacy: .public)",
           )
         } else {
           throw AIOError.audioFileFailed(operation: .write, url: failure.url, error: failure.error)
@@ -1386,7 +1396,7 @@
       }
       let finalSize = fileSizeDescription(for: url)
       log.info(
-        "✅ Recording stopped: \(url.lastPathComponent, privacy: .public) size=\(finalSize, privacy: .public)"
+        "✅ Recording stopped: \(url.lastPathComponent, privacy: .public) size=\(finalSize, privacy: .public)",
       )
       onRecordingCompleted?()
       return url
@@ -1414,7 +1424,6 @@
     /// - Throws: `AIOError.notRecording` if not currently recording
     @MainActor
     public func rotateRecordingFile() async throws(AIOError) -> URL {
-
       guard isRecording,
         let (currentURL, configuration, format): (URL, RecordingConfiguration, AVAudioFormat) =
           state.withLock({
@@ -1433,7 +1442,7 @@
       // Create new file with fresh filename
       let (newURL, protection): (URL, OutputFileProtection?) = try resolveOutputURL(
         for: configuration,
-        allowExplicitFile: false
+        allowExplicitFile: false,
       )
       let newWriter = try makeRecordingWriter(url: newURL, configuration: configuration)
       applyFileProtectionIfNeeded(protection, to: newURL)
@@ -1446,7 +1455,7 @@
 
       let newBuffers = makeAudioBuffers(
         sampleRate: sampleRate,
-        channelCount: channelCount
+        channelCount: channelCount,
       )
 
       if let currentWriter = writerSession {
@@ -1469,8 +1478,9 @@
             converter: state.tapConverter,
             converterInputFormat: state.tapConverterInputFormat,
             converterOutputFormat: state.tapConverterOutputFormat,
-            convertedBuffer: state.tapConvertedBuffer
-          ))
+            convertedBuffer: state.tapConvertedBuffer,
+          ),
+        )
       }
       tapSnapshotLock.withLock { $0 = wrapped.value }
 

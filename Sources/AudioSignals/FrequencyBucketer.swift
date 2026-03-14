@@ -1,3 +1,5 @@
+// © GoodHatsLLC
+
 #if canImport(Accelerate)
   import Accelerate
   import Foundation
@@ -42,11 +44,11 @@
       mode: FrequencyBucketMode = .default,
       sampleRate: Float = 44100,
       peakHoldDecayRate: Float = 0.015,
-      weighting: FrequencyWeighting = .none
+      weighting: FrequencyWeighting = .none,
     ) {
       self.mode = mode
       self.sampleRate = sampleRate
-      self.nyquist = sampleRate / 2
+      nyquist = sampleRate / 2
       self.peakHoldDecayRate = max(0, peakHoldDecayRate)
       self.weighting = weighting
 
@@ -75,7 +77,9 @@
     }
 
     /// The current bucketing mode.
-    public var currentMode: FrequencyBucketMode { mode }
+    public var currentMode: FrequencyBucketMode {
+      mode
+    }
 
     /// Converts raw spectrum data into frequency buckets.
     ///
@@ -130,8 +134,9 @@
             lowFrequency: boundary.low,
             highFrequency: boundary.high,
             magnitude: weightedMagnitude,
-            peakHold: peakHoldValues[index]
-          ))
+            peakHold: peakHoldValues[index],
+          ),
+        )
       }
 
       return buckets
@@ -234,7 +239,7 @@
 
         // Find the bucket this frequency belongs to
         for (bucketIndex, boundary) in bucketBoundaries.enumerated() {
-          if frequency >= boundary.low && frequency < boundary.high {
+          if frequency >= boundary.low, frequency < boundary.high {
             spectrumToBucketMap[spectrumIndex] = bucketIndex
             break
           }
@@ -242,7 +247,7 @@
 
         // Handle frequencies at the upper boundary
         if let lastBoundary = bucketBoundaries.last,
-          frequency >= lastBoundary.low && frequency <= lastBoundary.high
+          frequency >= lastBoundary.low, frequency <= lastBoundary.high
         {
           spectrumToBucketMap[spectrumIndex] = bucketBoundaries.count - 1
         }
@@ -260,8 +265,8 @@
             0,
             peakHoldValues.count > index
               ? peakHoldValues[index] - peakHoldDecayRate
-              : 0
-          )
+              : 0,
+          ),
         )
       }
     }
@@ -297,8 +302,8 @@
       let term1 = f2 + 20.6 * 20.6
       let term2 = f2 + 107.7 * 107.7
       let term3 = f2 + 737.9 * 737.9
-      let term4 = f2 + 12_200 * 12_200
-      let numerator = 12_200 * 12_200 * f2 * f2
+      let term4 = f2 + 12200 * 12200
+      let numerator = 12200 * 12200 * f2 * f2
       let denominator = term1 * sqrt(term2 * term3) * term4
       guard denominator > 0 else { return -80 }
       let ra = numerator / denominator

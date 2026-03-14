@@ -1,13 +1,14 @@
+// © GoodHatsLLC
+
 #if canImport(UIKit)
   import Foundation
   import Testing
 
   @_spi(TESTING) import AIOEngine
 
-  @Suite
   struct AIOEngineBufferCapacityTests {
     @Test
-    func testMonoBufferCapacityMatchesTwoSeconds() async throws {
+    func `mono buffer capacity matches two seconds`() async throws {
       let engine = AIOEngine()
       let configuration = makeConfiguration(channels: .mono)
 
@@ -15,7 +16,7 @@
       defer { try? FileManager.default.removeItem(at: url) }
 
       let capacities = engine.debugBufferCapacities()
-      let expected = expectedCapacity(sampleRate: 48_000, seconds: 2.0)
+      let expected = expectedCapacity(sampleRate: 48000, seconds: 2.0)
 
       #expect(capacities.writer.count == 1)
       #expect(capacities.receiver.count == 1)
@@ -26,7 +27,7 @@
     }
 
     @Test
-    func testStereoBufferCapacityMatchesTwoSeconds() async throws {
+    func `stereo buffer capacity matches two seconds`() async throws {
       let engine = AIOEngine()
       let configuration = makeConfiguration(channels: .stereo)
 
@@ -34,7 +35,7 @@
       defer { try? FileManager.default.removeItem(at: url) }
 
       let capacities = engine.debugBufferCapacities()
-      let expected = expectedCapacity(sampleRate: 48_000, seconds: 2.0)
+      let expected = expectedCapacity(sampleRate: 48000, seconds: 2.0)
 
       #expect(capacities.writer.count == 2)
       #expect(capacities.receiver.count == 2)
@@ -47,17 +48,17 @@
     private func makeConfiguration(channels: ChannelCount) -> RecordingConfiguration {
       let input = InputConfiguration(
         sampleRate: SampleRate.common(.sr48000),
-        channels: channels
+        channels: channels,
       )
       let output = OutputConfiguration(
         fileFormat: .caf,
         bitDepth: .pcmFloat32,
-        quality: .high
+        quality: .high,
       )
       return RecordingConfiguration(
         inputConfiguration: input,
         outputConfiguration: output,
-        outputDestination: .temporary
+        outputDestination: .temporary,
       )
     }
 

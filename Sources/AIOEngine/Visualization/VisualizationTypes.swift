@@ -1,6 +1,8 @@
+// © GoodHatsLLC
+
 #if canImport(AVFAudio)
-  public import Foundation
   public import AudioSignals
+  public import Foundation
 
   // MARK: - Visualization Events & Subscription
 
@@ -48,7 +50,7 @@
 
     public init(
       work: VisualizationWork = .none,
-      eventMask: VisualizationEventMask = .all
+      eventMask: VisualizationEventMask = .all,
     ) {
       self.work = work
       self.eventMask = eventMask
@@ -86,11 +88,10 @@
     @MainActor
     func subscribe(
       request: VisualizationRequest,
-      handler: @escaping @Sendable (VisualizationEvent) -> Void
+      handler: @escaping @Sendable (VisualizationEvent) -> Void,
     ) -> VisualizationSubscription
 
-    nonisolated
-      func withCurrentLODSnapshotRef<R>(_ body: (LODSnapshotRef) -> R) -> R?
+    nonisolated func withCurrentLODSnapshotRef<R>(_ body: (LODSnapshotRef) -> R) -> R?
   }
 
 #endif

@@ -1,3 +1,5 @@
+// © GoodHatsLLC
+
 #if os(iOS)
   public import AVFoundation
 
