@@ -758,8 +758,8 @@
       unsafe rawWriteIndex.store(0, ordering: .relaxed)
       // Zero out raw buffers
       if let rawBandStorage = unsafe rawBandStorage {
-        for unsafeb in unsafe rawBandStorage.buffers {
-          unsafe b.initialize(repeating: 0)
+        unsafe rawBandStorage.buffers.forEach {
+          unsafe $0.initialize(repeating: 0)
         }
       }
 

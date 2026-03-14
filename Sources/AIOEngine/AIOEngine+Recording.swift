@@ -1171,8 +1171,8 @@
       var scratchBuffers: [UnsafeMutableBufferPointer<Float>] = unsafe []
       func ensureScratchCapacity(_ needed: Int) {
         guard needed > scratchCapacity else { return }
-        for unsafebuffer in unsafe scratchBuffers {
-          unsafe buffer.baseAddress?.deallocate()
+        unsafe scratchBuffers.forEach {
+          unsafe $0.baseAddress?.deallocate()
         }
         unsafe scratchBuffers = unsafe (0..<channelCount).map { _ in
           let pointer = UnsafeMutablePointer<Float>.allocate(capacity: needed)
@@ -1181,8 +1181,8 @@
         scratchCapacity = needed
       }
       defer {
-        for unsafebuffer in unsafe scratchBuffers {
-          unsafe buffer.baseAddress?.deallocate()
+        unsafe scratchBuffers.forEach {
+          unsafe $0.baseAddress?.deallocate()
         }
       }
 
