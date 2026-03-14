@@ -251,12 +251,12 @@
       qos: .userInteractive
     )
 
-    private typealias SubscriberEventHandler = @Sendable (VisualizationEvent) -> Void
+    private typealias SubscriberEventHandler = (VisualizationEvent) -> Void
 
-    private struct SubscriberState: Sendable {
+    private struct SubscriberState {
       let id: UUID
       var request: VisualizationRequest
-      var eventHandler: SubscriberEventHandler
+      let eventHandler: SubscriberEventHandler
     }
 
     private func accepts(
@@ -407,7 +407,7 @@
     @MainActor
     public func subscribe(
       request: VisualizationRequest,
-      handler: @escaping @Sendable (VisualizationEvent) -> Void
+      handler: @escaping (VisualizationEvent) -> Void
     ) -> VisualizationSubscription {
       let id = UUID()
       addSubscriber(
