@@ -358,6 +358,12 @@
     /// Number of LOD indices written since the last publish.
     private var deltaWrittenCount: Int = 0
 
+    /// Delta from the previous swap interval. The new write slot has been inactive for 2
+    /// intervals (it was retiring), so it needs both the previous and current deltas to be
+    /// fully coherent. Without this, bars/discrete renderers see stale data every 3rd publish.
+    private var previousDeltaStartWriteIndex: Int = 0
+    private var previousDeltaWrittenCount: Int = 0
+
     /// Direct reference to write slot's bands for fast access.
     private var writeSlot: LODBufferSlot {
       unsafe bufferSlots[writeSlotIndex]
@@ -603,8 +609,16 @@
       let publishedSlot = unsafe bufferSlots[newCurrent]
       let nextWriteSlot = unsafe bufferSlots[newWrite]
 
-      // Copy only the indices written since the last publish into the next write slot,
-      // so when it later becomes current it contains a coherent history buffer.
+      // The new write slot (old retiring) has been inactive for 2 swap intervals.
+      // Copy both the previous interval's delta AND the current interval's delta
+      // so it has a fully coherent history buffer. Without this, discrete renderers
+      // (e.g. bar-style waveforms) see stale data every 3rd publish cycle.
+      unsafe copyDeltaIndices(
+        from: publishedSlot,
+        to: nextWriteSlot,
+        startWriteIndex: previousDeltaStartWriteIndex,
+        count: previousDeltaWrittenCount,
+      )
       unsafe copyDeltaIndices(
         from: publishedSlot,
         to: nextWriteSlot,
@@ -622,7 +636,9 @@
       unsafe retiringSlotIndex = newRetiring
       unsafe writeSlotIndex = newWrite
 
-      // Next publish interval starts at the current write index.
+      // Save current delta as previous, then reset for the next interval.
+      unsafe previousDeltaStartWriteIndex = deltaStartWriteIndex
+      unsafe previousDeltaWrittenCount = deltaWrittenCount
       unsafe deltaStartWriteIndex = nextWriteSlot.writeIndex
       unsafe deltaWrittenCount = 0
       unsafe writerWriteIndexAtomic.store(nextWriteSlot.writeIndex, ordering: .relaxed)
