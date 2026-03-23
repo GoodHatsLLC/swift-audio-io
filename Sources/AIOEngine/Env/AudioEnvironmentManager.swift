@@ -143,9 +143,10 @@
       errorManager: any ErrorManaging,
       defaults: UserDefaults = .standard,
     ) {
+      let preferenceStore = AudioEnvironmentPreferenceStore(defaults: defaults)
       self.env = env
       self.errorManager = errorManager
-      self.defaults = defaults
+      self.preferenceStore = preferenceStore
       _input = env.input
       _availableInputs = env.availableInputs
       _selectedSource = env.input?.selectedSource
@@ -153,8 +154,7 @@
       _availableSources = env.input?.availableSources ?? []
       _orientation = .none
       _selectedNumberOfChannels = (env.input?.channelCount) ?? .mono
-      _useMeasurement = defaults.bool(forKey: StorageKey.useMeasurement)
-      persistedInputPreferencesById = Self.loadInputPreferences(from: defaults)
+      _useMeasurement = preferenceStore.useMeasurement
     }
 
     private let env: AudioEnvironment
@@ -166,14 +166,8 @@
     /// The preferred category/mode/options for this environment.
     public var sessionConfiguration: AudioSessionConfiguration = .recordingConfiguration
     private let errorManager: any ErrorManaging
-    private let defaults: UserDefaults
-
-    private struct PersistedInputPreferences: Codable {
-      var sampleRateHz: Double?
-      var channelCount: Int?
-      var sourceId: String?
-      var rejectedSampleRatesHz: [Double]?
-    }
+    private let preferenceStore: AudioEnvironmentPreferenceStore
+    private typealias PersistedInputPreferences = AudioEnvironmentPreferenceStore.InputPreferences
 
     /// Describes audio input configuration operations that require synchronous XPC
     /// round-trips to `mediaserverd`. Computed on MainActor (where cached state is
@@ -262,18 +256,11 @@
       }
     }
 
-    private enum StorageKey {
-      static let preferredInputId = "aio.audio_env.preferred_input_id.v1"
-      static let inputPrefsById = "aio.audio_env.input_prefs_by_id.v1"
-      static let useMeasurement = "aio.audio_env.use_measurement"
-    }
-
-    private var persistedInputPreferencesById: [String: PersistedInputPreferences] = [:]
     private var isRestoringFromDefaults: Bool = false
 
     public var shouldAutoSelectStereoWhenAvailable: Bool {
       let inputId = env.input?.id ?? "_default"
-      return persistedInputPreferencesById[inputId] == nil
+      return !preferenceStore.hasPreferences(for: inputId)
     }
 
     public var useMeasurement: Bool = AudioSessionConfiguration.useMeasurement {
@@ -563,7 +550,6 @@
             }
           }
           _availableSources = env.input?.availableSources ?? validSources
-          defaults.set(env.input?.id, forKey: StorageKey.preferredInputId)
           persistInputPreferencesIfNeeded { prefs in
             prefs.sampleRateHz = env.sampleRate.rawValue
             prefs.channelCount = _selectedNumberOfChannels.count
@@ -1351,10 +1337,10 @@
       isRestoringFromDefaults = true
       defer { isRestoringFromDefaults = false }
 
-      persistedInputPreferencesById = Self.loadInputPreferences(from: defaults)
+      preferenceStore.reload()
 
       if !isAudioSessionActive,
-        let preferredInputId = defaults.string(forKey: StorageKey.preferredInputId),
+        let preferredInputId = preferenceStore.preferredInputId,
         let preferredInput = env.availableInputs.first(where: { $0.id == preferredInputId }),
         env.input?.id != preferredInputId
       {
@@ -1376,7 +1362,7 @@
       let inputId = env.input?.id ?? "_default"
       let canApplyPreferences = isAudioSessionActive
       let modeStatus = canApplyPreferences ? "applied" : "deferred"
-      if let prefs = persistedInputPreferencesById[inputId] {
+      if let prefs = preferenceStore.preferences(for: inputId) {
         if canApplyPreferences {
           if let sampleRateHz = prefs.sampleRateHz {
             sampleRate = SampleRate(rawValue: sampleRateHz)
@@ -1439,35 +1425,20 @@
       guard !isRestoringFromDefaults else { return }
 
       let inputId = env.input?.id ?? "_default"
-      defaults.set(inputId, forKey: StorageKey.preferredInputId)
-
-      var prefs =
-        persistedInputPreferencesById[inputId]
-        ?? PersistedInputPreferences(
-          sampleRateHz: env.sampleRate.rawValue,
-          channelCount: isConfiguredForStereo ? 2 : 1,
-          sourceId: env.source?.id,
-        )
-      update(&prefs)
-
-      persistedInputPreferencesById[inputId] = prefs
-      guard let data = try? JSONEncoder().encode(persistedInputPreferencesById) else { return }
-      defaults.set(data, forKey: StorageKey.inputPrefsById)
-    }
-
-    private static func loadInputPreferences(
-      from defaults: UserDefaults,
-    ) -> [String: PersistedInputPreferences] {
-      guard let data = defaults.data(forKey: StorageKey.inputPrefsById) else { return [:] }
-      return (try? JSONDecoder().decode([String: PersistedInputPreferences].self, from: data))
-        ?? [:]
+      preferenceStore.update(
+        inputId: inputId,
+        currentSampleRate: env.sampleRate,
+        isConfiguredForStereo: isConfiguredForStereo,
+        currentSourceId: env.source?.id,
+        update,
+      )
     }
 
     private func preferredStereoCandidates(from stereoSources: [AudioSource]) -> [AudioSource] {
       guard !stereoSources.isEmpty else { return [] }
 
       let inputId = env.input?.id ?? "_default"
-      let preferredSourceId = persistedInputPreferencesById[inputId]?.sourceId
+      let preferredSourceId = preferenceStore.preferences(for: inputId)?.sourceId
 
       var ordered: [AudioSource] = []
       ordered.reserveCapacity(stereoSources.count)
