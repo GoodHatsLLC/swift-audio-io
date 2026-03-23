@@ -336,23 +336,14 @@
         @Sendable @MainActor (AVAudioSession.InterruptionType, AVAudioSession.InterruptionOptions?)
           async -> Void
       )?
+
     /// A callback that is invoked when media services are lost.
     public var onMediaServicesLost: (@Sendable @MainActor () async -> Void)?
+
     /// A callback that is invoked when media services are reset.
     public var onMediaServicesReset: (@Sendable @MainActor () async -> Void)?
 
-    private var routeChangeSubscribers:
-      [UUID: @Sendable @MainActor (AudioRouteChangeEvent) async -> Void] =
-        [:]
-    private var interruptionSubscribers:
-      [UUID:
-
-        @Sendable @MainActor (
-          AVAudioSession.InterruptionType, AVAudioSession.InterruptionOptions?,
-        )
-        async -> Void] = [:]
-    private var mediaServicesLostSubscribers: [UUID: @Sendable @MainActor () async -> Void] = [:]
-    private var mediaServicesResetSubscribers: [UUID: @Sendable @MainActor () async -> Void] = [:]
+    private let eventHub = AudioEnvironmentEventHub()
 
     /// A Boolean value that indicates whether the manager is currently running.
     public private(set) var isRunning: Bool = false
@@ -371,46 +362,34 @@
     public func addRouteChangeSubscriber(
       _ handler: @escaping @Sendable @MainActor (AudioRouteChangeEvent) async -> Void,
     ) -> UUID {
-      let id = UUID()
-      routeChangeSubscribers[id] = handler
-      return id
+      eventHub.addRouteChangeSubscriber(handler)
     }
 
     @discardableResult
     public func addInterruptionSubscriber(
       _ handler:
-        @escaping @Sendable @MainActor (
-          AVAudioSession.InterruptionType, AVAudioSession.InterruptionOptions?,
-        ) async -> Void,
+        @escaping @Sendable @MainActor (AudioInterruptionType, AudioInterruptionOptions?)
+        async -> Void,
     ) -> UUID {
-      let id = UUID()
-      interruptionSubscribers[id] = handler
-      return id
+      eventHub.addInterruptionSubscriber(handler)
     }
 
     @discardableResult
     public func addMediaServicesLostSubscriber(
       _ handler: @escaping @Sendable @MainActor () async -> Void,
     ) -> UUID {
-      let id = UUID()
-      mediaServicesLostSubscribers[id] = handler
-      return id
+      eventHub.addMediaServicesLostSubscriber(handler)
     }
 
     @discardableResult
     public func addMediaServicesResetSubscriber(
       _ handler: @escaping @Sendable @MainActor () async -> Void,
     ) -> UUID {
-      let id = UUID()
-      mediaServicesResetSubscribers[id] = handler
-      return id
+      eventHub.addMediaServicesResetSubscriber(handler)
     }
 
     public func removeSubscriber(_ id: UUID) {
-      routeChangeSubscribers.removeValue(forKey: id)
-      interruptionSubscribers.removeValue(forKey: id)
-      mediaServicesLostSubscribers.removeValue(forKey: id)
-      mediaServicesResetSubscribers.removeValue(forKey: id)
+      eventHub.removeSubscriber(id)
     }
 
     /// The current orientation of the device.
@@ -1131,37 +1110,29 @@
 
     @MainActor
     private func dispatchInterruption(
-      type: AVAudioSession.InterruptionType,
-      options: AVAudioSession.InterruptionOptions?,
+      type: AudioInterruptionType,
+      options: AudioInterruptionOptions?,
     ) async {
       await onInterruption?(type, options)
-      for subscriber in interruptionSubscribers.values {
-        await subscriber(type, options)
-      }
+      await eventHub.dispatchInterruption(type: type, options: options)
     }
 
     @MainActor
     private func dispatchRouteChange(_ event: AudioRouteChangeEvent) async {
       await onRouteChange?(event)
-      for subscriber in routeChangeSubscribers.values {
-        await subscriber(event)
-      }
+      await eventHub.dispatchRouteChange(event)
     }
 
     @MainActor
     private func dispatchMediaServicesLost() async {
       await onMediaServicesLost?()
-      for subscriber in mediaServicesLostSubscribers.values {
-        await subscriber()
-      }
+      await eventHub.dispatchMediaServicesLost()
     }
 
     @MainActor
     private func dispatchMediaServicesReset() async {
       await onMediaServicesReset?()
-      for subscriber in mediaServicesResetSubscribers.values {
-        await subscriber()
-      }
+      await eventHub.dispatchMediaServicesReset()
     }
 
     /// Subscribes to all AVAudioSession notification streams.

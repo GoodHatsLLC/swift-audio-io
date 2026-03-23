@@ -207,23 +207,13 @@
       try await applyStereo()
     }
 
-    private var routeChangeSubscribers:
-      [UUID: @Sendable @MainActor (AudioRouteChangeEvent) async -> Void] =
-        [:]
-    private var interruptionSubscribers:
-      [UUID:
-        @Sendable @MainActor (AudioInterruptionType, AudioInterruptionOptions?) async -> Void] =
-        [:]
-    private var mediaServicesLostSubscribers: [UUID: @Sendable @MainActor () async -> Void] = [:]
-    private var mediaServicesResetSubscribers: [UUID: @Sendable @MainActor () async -> Void] = [:]
+    private let eventHub = AudioEnvironmentEventHub()
 
     @discardableResult
     public func addRouteChangeSubscriber(
       _ handler: @escaping @Sendable @MainActor (AudioRouteChangeEvent) async -> Void,
     ) -> UUID {
-      let id = UUID()
-      routeChangeSubscribers[id] = handler
-      return id
+      eventHub.addRouteChangeSubscriber(handler)
     }
 
     @discardableResult
@@ -232,34 +222,25 @@
         @escaping @Sendable @MainActor (AudioInterruptionType, AudioInterruptionOptions?)
         async -> Void,
     ) -> UUID {
-      let id = UUID()
-      interruptionSubscribers[id] = handler
-      return id
+      eventHub.addInterruptionSubscriber(handler)
     }
 
     @discardableResult
     public func addMediaServicesLostSubscriber(
       _ handler: @escaping @Sendable @MainActor () async -> Void,
     ) -> UUID {
-      let id = UUID()
-      mediaServicesLostSubscribers[id] = handler
-      return id
+      eventHub.addMediaServicesLostSubscriber(handler)
     }
 
     @discardableResult
     public func addMediaServicesResetSubscriber(
       _ handler: @escaping @Sendable @MainActor () async -> Void,
     ) -> UUID {
-      let id = UUID()
-      mediaServicesResetSubscribers[id] = handler
-      return id
+      eventHub.addMediaServicesResetSubscriber(handler)
     }
 
     public func removeSubscriber(_ id: UUID) {
-      routeChangeSubscribers.removeValue(forKey: id)
-      interruptionSubscribers.removeValue(forKey: id)
-      mediaServicesLostSubscribers.removeValue(forKey: id)
-      mediaServicesResetSubscribers.removeValue(forKey: id)
+      eventHub.removeSubscriber(id)
     }
 
     @MainActor
@@ -338,11 +319,8 @@
     }
 
     private func notifyRouteChangeSubscribers() async {
-      guard !routeChangeSubscribers.isEmpty else { return }
       let event = AudioRouteChangeEvent(userMessage: "Audio route changed")
-      for handler in routeChangeSubscribers.values {
-        await handler(event)
-      }
+      await eventHub.dispatchRouteChange(event)
     }
   }
 #endif

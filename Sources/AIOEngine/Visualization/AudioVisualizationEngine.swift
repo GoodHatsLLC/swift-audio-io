@@ -253,43 +253,6 @@
       qos: .userInteractive,
     )
 
-    private typealias SubscriberEventHandler = (VisualizationEvent) -> Void
-
-    private struct SubscriberState {
-      let id: UUID
-      var request: VisualizationRequest
-      let eventHandler: SubscriberEventHandler
-    }
-
-    private func accepts(
-      _ event: VisualizationEvent,
-      mask: VisualizationEventMask,
-    ) -> Bool {
-      switch event {
-      case .lodSnapshot:
-        mask.contains(.lodSnapshot)
-      case .lodSnapshotBackground:
-        mask.contains(.lodSnapshotBackground)
-      case .timeDomain:
-        mask.contains(.timeDomain)
-      case .frequencyDomain:
-        mask.contains(.frequencyDomain)
-      case .beat:
-        mask.contains(.beat)
-      case .latestBufferTiming:
-        mask.contains(.latestBufferTiming)
-      }
-    }
-
-    private func deliver(
-      _ event: VisualizationEvent,
-      to subscribers: [SubscriberState],
-    ) {
-      for subscriber in subscribers where accepts(event, mask: subscriber.request.eventMask) {
-        subscriber.eventHandler(event)
-      }
-    }
-
     private struct AnalysisFlags: OptionSet {
       let rawValue: Int
       static let timeDomain = AnalysisFlags(rawValue: 1 << 0)
@@ -366,9 +329,7 @@
       }
     }
 
-    private let subscriberLock = NSLock()
-    private var subscribersById: [UUID: SubscriberState] = [:]
-    private var subscriberOrder: [UUID] = []
+    private let hub: VisualizationHub
     private let analysisFlagsAtomic = ManagedAtomic<Int>(0)
 
     private var analysisConfig: AnalysisConfig?
@@ -387,6 +348,7 @@
     /// - Parameter configuration: The configuration to use for the visualization engine.
     public init(configuration: Configuration = Configuration()) {
       self.configuration = configuration
+      hub = VisualizationHub(configuration: configuration)
       latestSampleRateBitsAtomic = ManagedAtomic(configuration.sampleRate.bitPattern)
     }
 
@@ -412,12 +374,12 @@
       handler: @escaping (VisualizationEvent) -> Void,
     ) -> VisualizationSubscription {
       let id = UUID()
-      addSubscriber(
+      let demand = hub.addSubscriber(
         id: id,
         request: request,
         eventHandler: handler,
       )
-      recalculateDemandAndApply()
+      applyDemandResolution(demand)
       updateProcessingState()
 
       return VisualizationSubscription { [weak self] in
@@ -516,141 +478,15 @@
 
     // MARK: - Private Methods
 
-    private func addSubscriber(
-      id: UUID,
-      request: VisualizationRequest,
-      eventHandler: @escaping SubscriberEventHandler,
-    ) {
-      subscriberLock.lock()
-      defer { subscriberLock.unlock() }
-      let state = SubscriberState(
-        id: id,
-        request: request,
-        eventHandler: eventHandler,
-      )
-      subscribersById[id] = state
-      subscriberOrder.append(id)
-    }
-
-    private func removeSubscriber(id: UUID) -> Bool {
-      subscriberLock.lock()
-      defer { subscriberLock.unlock() }
-      guard subscribersById.removeValue(forKey: id) != nil else { return false }
-      subscriberOrder.removeAll { $0 == id }
-      return true
-    }
-
     private func removeSubscription(id: UUID) {
-      let removed = removeSubscriber(id: id)
-      guard removed else { return }
-      recalculateDemandAndApply()
+      guard let demand = hub.removeSubscriber(id: id) else { return }
+      applyDemandResolution(demand)
       updateProcessingState()
     }
 
-    private func subscriberSnapshots() -> [SubscriberState] {
-      subscriberLock.lock()
-      let snapshots = subscriberOrder.compactMap { subscribersById[$0] }
-      subscriberLock.unlock()
-      return snapshots
-    }
-
-    private func recalculateDemandAndApply() {
-      let subscribers = subscriberSnapshots()
-      hasSubscriberAtomic.store(!subscribers.isEmpty, ordering: .relaxed)
-      let aggregatedWork = aggregatedWork(from: subscribers)
-      applyWork(aggregatedWork)
-    }
-
-    private func aggregatedWork(from subscribers: [SubscriberState]) -> VisualizationWork {
-      guard !subscribers.isEmpty else { return .none }
-
-      var selectedLodConfig: MultiBandLODConfiguration?
-      var maxLodPublishRate: Double?
-
-      var analysisRequested = false
-      var selectedAnalysisUpdateRate: Double?
-      var selectedTimeDomain: AmplitudeAnalyzer.Configuration?
-      var selectedFrequencyDomain: FrequencyDomainWork?
-      var selectedBeatDetection: BeatDetectionConfiguration?
-
-      for subscriber in subscribers {
-        let work = subscriber.request.work
-
-        if let lodWork = work.lod {
-          let normalizedConfig = normalizedLODConfig(lodWork.configuration)
-          if let selectedLodConfig, selectedLodConfig != normalizedConfig {
-            log.warning(
-              "Conflicting LOD configurations across subscribers. Using the first requested configuration.",
-            )
-          } else {
-            selectedLodConfig = normalizedConfig
-          }
-          maxLodPublishRate = max(maxLodPublishRate ?? 0, lodWork.publishRateHz)
-        }
-
-        guard let analysisWork = work.analysis else { continue }
-        analysisRequested = true
-        selectedAnalysisUpdateRate = max(
-          selectedAnalysisUpdateRate ?? 0,
-          analysisWork.updateRateHz,
-        )
-
-        if selectedTimeDomain == nil {
-          selectedTimeDomain = analysisWork.timeDomain
-        } else if let requested = analysisWork.timeDomain, selectedTimeDomain != requested {
-          log.warning(
-            "Conflicting time-domain configurations across subscribers. Using the first requested configuration.",
-          )
-        }
-
-        if let frequencyDomainWork = analysisWork.frequencyDomain {
-          let normalizedFrequency = normalizedFrequencyWork(frequencyDomainWork)
-          if let selectedFrequencyDomain, selectedFrequencyDomain != normalizedFrequency {
-            log.warning(
-              "Conflicting frequency-domain configurations across subscribers. Using the first requested configuration.",
-            )
-          } else {
-            selectedFrequencyDomain = normalizedFrequency
-          }
-        }
-
-        if let beatDetection = analysisWork.beatDetection {
-          if let selectedBeatDetection, selectedBeatDetection != beatDetection {
-            log.warning(
-              "Conflicting beat-detection configurations across subscribers. Using the first requested configuration.",
-            )
-          } else {
-            selectedBeatDetection = beatDetection
-          }
-        }
-      }
-
-      var resolvedLodWork: LODWork?
-      if let selectedLodConfig {
-        resolvedLodWork = LODWork(
-          configuration: selectedLodConfig,
-          publishRateHz: maxLodPublishRate ?? VisualizationRateDefaults.lodPublishRateHz,
-        )
-      }
-
-      var resolvedAnalysisWork: AnalysisWork?
-      let hasAnyAnalysisDemand =
-        selectedTimeDomain != nil
-        || selectedFrequencyDomain != nil
-        || selectedBeatDetection != nil
-      if analysisRequested, hasAnyAnalysisDemand {
-        resolvedAnalysisWork = AnalysisWork(
-          updateRateHz: selectedAnalysisUpdateRate ?? configuration.analysisUpdateRateHz,
-          timeDomain: selectedTimeDomain,
-          frequencyDomain: selectedFrequencyDomain,
-          beatDetection: selectedBeatDetection,
-        )
-      }
-
-      return VisualizationWork(
-        lod: resolvedLodWork,
-        analysis: resolvedAnalysisWork,
-      )
+    private func applyDemandResolution(_ demand: VisualizationHub.DemandResolution) {
+      hasSubscriberAtomic.store(demand.hasSubscribers, ordering: .relaxed)
+      applyWork(demand.work)
     }
 
     private func applyWork(_ work: VisualizationWork) {
@@ -920,22 +756,22 @@
         )
       }
 
-      let subscribers = subscriberSnapshots()
+      let dispatcher = hub.dispatcher()
       DispatchQueue.main.async {
         if let newTimeDomain {
           self.timeDomain = newTimeDomain
-          self.deliver(.timeDomain(newTimeDomain), to: subscribers)
+          dispatcher.deliver(.timeDomain(newTimeDomain))
         }
 
         if let newFrequencyDomain {
           self.frequencyDomain = newFrequencyDomain
-          self.deliver(.frequencyDomain(newFrequencyDomain), to: subscribers)
+          dispatcher.deliver(.frequencyDomain(newFrequencyDomain))
           self.spectrumPeakHold = newSpectrumPeakHold
         }
 
         if let beatInfo {
           self.beat = beatInfo
-          self.deliver(.beat(beatInfo), to: subscribers)
+          dispatcher.deliver(.beat(beatInfo))
         }
       }
     }
@@ -943,10 +779,10 @@
     private func publishLODSnapshot() {
       guard lodEnabledAtomic.load(ordering: .relaxed) else { return }
       let snapshot = unsafe lodProcessor?.withCurrentLODSnapshotRef { $0 }
-      let subscribers = subscriberSnapshots()
-      deliver(.lodSnapshotBackground(snapshot), to: subscribers)
+      let dispatcher = hub.dispatcher()
+      dispatcher.deliver(.lodSnapshotBackground(snapshot))
       DispatchQueue.main.async {
-        self.deliver(.lodSnapshot(snapshot), to: subscribers)
+        dispatcher.deliver(.lodSnapshot(snapshot))
       }
     }
 
@@ -1005,10 +841,10 @@
         unsafe lodProcessor?.process(data)
       }
 
-      let subscribers = subscriberSnapshots()
+      let dispatcher = hub.dispatcher()
       DispatchQueue.main.async {
         self.latestBufferTiming = timing
-        self.deliver(.latestBufferTiming(timing), to: subscribers)
+        dispatcher.deliver(.latestBufferTiming(timing))
       }
     }
 
