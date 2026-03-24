@@ -197,11 +197,10 @@
     let sourceSampleRate: Double?
   }
 
-  struct InternalState {
+  struct RecordingState {
     var recordingWriter: (any RecordingFileWriter)?
     var recordingURL: URL?
     var recordingConfiguration: RecordingConfiguration?
-    var playbackInstance: PlaybackInstance?
     var installedTapBus: Int?
     var audioBuffers: [SPSCRingBuffer<Float>]?
     var receiverBuffers: [SPSCRingBuffer<Float>]?
@@ -212,9 +211,13 @@
     var tapConvertedBuffer: AVAudioPCMBuffer?
   }
 
+  struct PlaybackRuntimeState {
+    var playbackInstance: PlaybackInstance?
+  }
+
   // MARK: - Tap Snapshot (Lock-Free Tap State)
 
-  /// A snapshot of the fields `processAudio()` reads from `InternalState`.
+  /// A snapshot of the fields `processAudio()` reads from `RecordingState`.
   ///
   /// This struct enables a lock-free read path on the tap thread. The configuration
   /// thread writes a new snapshot under the lock; the tap thread reads a cached copy

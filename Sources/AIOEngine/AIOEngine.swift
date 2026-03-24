@@ -352,7 +352,8 @@
     let tapResizeRequestedFrames = ManagedAtomic<Int>(0)
     let metrics = EngineMetrics()
 
-    let state: Synchronized<InternalState> = .init(.init())
+    let state: Synchronized<RecordingState> = .init(.init())
+    let playbackState: Synchronized<PlaybackRuntimeState> = .init(.init())
 
     // MARK: - Tap Snapshot Lock
 
@@ -362,7 +363,7 @@
     /// MainActor + engineControl + writerQueue (write via `withLock`).
     ///
     /// This is a separate, lightweight lock dedicated to the tap snapshot. Unlike the
-    /// main `state` lock (which protects all of `InternalState` and can be held during
+    /// main `state` lock (which protects all of `RecordingState` and can be held during
     /// complex operations), this lock is only held for trivial struct copies —
     /// nanosecond-scale. The tap thread uses `withLockIfAvailable` so it never blocks
     /// if a writer is to be updating concurrently.
@@ -541,10 +542,6 @@
 
     // MARK: - Atomic State Helpers
 
-    nonisolated func placeState<T>(_ path: WritableKeyPath<InternalState, T>, _ field: T) {
-      state.withLock { $0[keyPath: path] = field }
-    }
-
     nonisolated func recordTapError(_ code: TapErrorCode) {
       tapErrorCode.store(code.rawValue, ordering: .relaxed)
     }
@@ -647,7 +644,8 @@
       let previousSignature = PlaybackStateSignature(playback: playback)
 
       let updated: Playback? =
-        if let playbackInstance = state[locked: \.playbackInstance], new?.id == playbackInstance.id
+        if let playbackInstance = playbackState[locked: \.playbackInstance],
+          new?.id == playbackInstance.id
         {
           new
         } else if new == nil {
@@ -668,7 +666,7 @@
     }
 
     func getPlayback() -> Playback? {
-      guard let playbackInstance = state[locked: \.playbackInstance] else { return nil }
+      guard let playbackInstance = playbackState[locked: \.playbackInstance] else { return nil }
       return getPlayback(for: playbackInstance)
     }
 
