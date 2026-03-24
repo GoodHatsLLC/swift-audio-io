@@ -1,6 +1,7 @@
 // © GoodHatsLLC
 
 #if os(iOS)
+  import AIOSupport
   public import AVFoundation
   import os
   public import Tools

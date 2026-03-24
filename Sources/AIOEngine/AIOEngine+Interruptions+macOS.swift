@@ -1,6 +1,10 @@
 // © GoodHatsLLC
 
 #if os(macOS)
+  public import AIOAudioSession
+  import AIOPlayback
+  import AIORecording
+  public import AIOEngineCore
   import AVFoundation
   import Tools
 

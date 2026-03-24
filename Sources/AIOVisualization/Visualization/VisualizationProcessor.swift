@@ -1,6 +1,8 @@
 // © GoodHatsLLC
 
 #if canImport(AVFAudio)
+  import AIOContracts
+  import AIOSupport
   import Atomics
   import AudioSignals
   import AVFAudio

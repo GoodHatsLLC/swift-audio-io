@@ -1,7 +1,8 @@
 // © GoodHatsLLC
 
 #if canImport(AVFoundation)
-  import AVFoundation
+  public import AIOEngineCore
+  package import AVFoundation
   public import Foundation
 
   extension AIOEngine {
@@ -42,12 +43,12 @@
     }
 
     @MainActor
-    internal func resetPlaybackTimer(to instance: PlaybackInstance) {
+    package func resetPlaybackTimer(to instance: PlaybackInstance) {
       playbackRuntime.resetPlaybackTimer(to: instance)
     }
 
     @concurrent
-    internal nonisolated func scrub(
+    package nonisolated func scrub(
       framePosition: AVAudioFramePosition,
       file: AVAudioFile,
       newInstance: PlaybackInstance,
@@ -87,21 +88,21 @@
       playbackRuntime.resumePlayback()
     }
 
-    internal nonisolated func cleanupPlaybackInstance(_ instance: PlaybackInstance) {
+    package nonisolated func cleanupPlaybackInstance(_ instance: PlaybackInstance) {
       playbackRuntime.cleanupPlaybackInstance(instance)
     }
 
-    internal nonisolated func stopPlayerIfNeeded() async {
+    package nonisolated func stopPlayerIfNeeded() async {
       await playbackRuntime.stopPlayerIfNeeded()
     }
 
     @MainActor
-    internal func capturePlaybackResumeState() -> PlaybackResume? {
+    package func capturePlaybackResumeState() -> PlaybackResume? {
       playbackRuntime.capturePlaybackResumeState()
     }
 
     @MainActor
-    internal func restartPlayback(from resume: PlaybackResume) async {
+    package func restartPlayback(from resume: PlaybackResume) async {
       await playbackRuntime.restartPlayback(from: resume)
     }
   }

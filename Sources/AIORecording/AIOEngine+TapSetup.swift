@@ -1,25 +1,16 @@
 // © GoodHatsLLC
 
 #if canImport(AVFoundation)
-  import AVFoundation
+  package import AIOAudioSession
+  import AIOSupport
+  package import AIOEngineCore
+  package import AVFoundation
   import os
   import Tools
 
   private let tapSetupLog = SystemLog.make()
 
   extension AIOEngine {
-    struct TapConversionArtifacts {
-      let converter: AVAudioConverter
-      let inputFormat: AVAudioFormat
-      let convertedBuffer: AVAudioPCMBuffer
-    }
-
-    struct TapInstallResult {
-      let tapFormat: AVAudioFormat
-      let artifacts: TapConversionArtifacts
-      let tapConfiguration: TapConfiguration
-    }
-
     func makeTapConversionArtifacts(
       inputFormat: AVAudioFormat,
       processingFormat: AVAudioFormat,
@@ -54,7 +45,7 @@
     /// and tap interval updates. All engine graph mutations happen on the
     /// engine control queue in a single dispatch.
     @MainActor
-    func reinstallTap(
+    package func reinstallTap(
       configuration: RecordingConfiguration,
       processingFormat: AVAudioFormat,
       stopEngine: Bool,
@@ -179,7 +170,7 @@
     ///
     /// Thread Domain: engineControl (called from `reinstallTap` on the engine
     /// control queue, or from `warm()` on MainActor after the queue dispatch).
-    func applyTapInstallResult(_ result: TapInstallResult, processingFormat: AVAudioFormat) {
+    package func applyTapInstallResult(_ result: TapInstallResult, processingFormat: AVAudioFormat) {
       let wrapped = state { state -> Transferring<TapSnapshot> in
         state.tapConverter = result.artifacts.converter
         state.tapConverterInputFormat = result.artifacts.inputFormat

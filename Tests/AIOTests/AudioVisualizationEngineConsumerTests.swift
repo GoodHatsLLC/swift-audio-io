@@ -1,6 +1,7 @@
 // © GoodHatsLLC
 
 #if canImport(AVFAudio)
+  @testable import AIOAudioSession
   import AIOEngine
   import AudioSignals
   import Foundation

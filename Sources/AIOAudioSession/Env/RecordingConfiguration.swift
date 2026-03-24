@@ -1,7 +1,8 @@
 // © GoodHatsLLC
 
 #if canImport(AVFoundation)
-  import AVFoundation
+  import AIOSupport
+  package import AVFoundation
   public import Foundation
   import os
   import Tools
@@ -93,7 +94,7 @@
     }
 
     /// Processing format for the audio engine pipeline.
-    var processingFormat: AVAudioFormat? {
+    package var processingFormat: AVAudioFormat? {
       AVAudioFormat(
         commonFormat: .pcmFormatFloat32,
         sampleRate: inputConfiguration.sampleRate.platform,
@@ -148,7 +149,7 @@
     /// This intentionally returns the original settings (not `AVAudioFormat.settings`), since
     /// `AVAudioFormat` may normalize/strip encoder-specific keys that must be preserved
     /// (example: `AVEncoderBitDepthHintKey`).
-    var fileSettings: [String: Any]? {
+    package var fileSettings: [String: Any]? {
       switch outputConfiguration.fileFormat {
       case .aac, .adts:
         let sampleRate = inputConfiguration.sampleRate.rawValue
@@ -353,7 +354,7 @@
       outputConfiguration.fileFormat.fileExtension
     }
 
-    func tapConfiguration(bus: Int = 0, input: AVAudioFormat) -> TapConfiguration? {
+    package func tapConfiguration(bus: Int = 0, input: AVAudioFormat) -> TapConfiguration? {
       guard let fileFormat else { return nil }
       return .init(
         bus: bus,

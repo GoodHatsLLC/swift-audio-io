@@ -3,6 +3,7 @@
 #if canImport(AVFoundation)
   import AVFoundation
   import Testing
+  @testable import AIOAudioSession
   @testable import AIOEngine
 
   struct RecordingConfigurationPCMSettingsTests {

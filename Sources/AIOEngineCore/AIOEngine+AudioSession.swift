@@ -1,6 +1,9 @@
 // © GoodHatsLLC
 
 #if canImport(AVFoundation)
+  package import AIOAudioSession
+  import AIOContracts
+  import AIOSupport
   import AVFoundation
   import os
   import Tools
@@ -9,7 +12,7 @@
 
   extension AIOEngine {
     @MainActor
-    func configureAudioSession(for configuration: RecordingConfiguration) throws(AIOError) {
+    package func configureAudioSession(for configuration: RecordingConfiguration) throws(AIOError) {
       do {
         try audioSessionDelegate?.setAudioSessionActive(true)
       } catch {
@@ -69,7 +72,7 @@
     }
 
     @MainActor
-    func configureAudioSessionForPlayback() throws(AIOError) {
+    package func configureAudioSessionForPlayback() throws(AIOError) {
       do {
         try audioSessionDelegate?.setAudioSessionActive(true)
       } catch {
@@ -146,7 +149,7 @@
     #endif
 
     @MainActor
-    func deactivateAudioSessionIfNeeded(reason: String) {
+    package func deactivateAudioSessionIfNeeded(reason: String) {
       guard deactivateAudioSessionOnStop else { return }
       guard !isRecording, !isPlayback, !wantsRecording else { return }
 

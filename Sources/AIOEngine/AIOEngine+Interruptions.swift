@@ -1,6 +1,10 @@
 // © GoodHatsLLC
 
 #if os(iOS)
+  public import AIOAudioSession
+  import AIOPlayback
+  import AIORecording
+  public import AIOEngineCore
   public import AVFoundation
   import Foundation
   import os

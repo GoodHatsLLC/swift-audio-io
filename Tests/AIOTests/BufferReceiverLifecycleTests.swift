@@ -4,6 +4,7 @@ import Atomics
 import Testing
 import Tools
 
+@testable import AIOAudioSession
 @testable import AIOEngine
 
 struct BufferReceiverLifecycleTests {

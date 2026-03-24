@@ -1,6 +1,9 @@
 // © GoodHatsLLC
 
 #if canImport(AVFoundation)
+  import AIOAudioSession
+  import AIOSupport
+  import AIOEngineCore
   import AsyncAlgorithms
   import AVFoundation
   import Foundation
@@ -301,8 +304,7 @@
       owner.playbackTask = nil
       owner.scrubTask = nil
       owner.playbackState[locked: \.playbackInstance] = nil
-      owner.playback = nil
-      owner.onPlaybackUpdated?(nil)
+      owner.setPlayback(nil)
       owner.deactivateAudioSessionIfNeeded(reason: "playback stopped")
     }
 
