@@ -168,6 +168,11 @@
     private let errorManager: any ErrorManaging
     private let preferenceStore: AudioEnvironmentPreferenceStore
     private typealias PersistedInputPreferences = AudioEnvironmentPreferenceStore.InputPreferences
+    private var sessionBootstrap: AudioSessionBootstrap { .init(owner: self) }
+    private var sessionController: AudioSessionController { .init(owner: self) }
+    private var inputPreferenceController: AudioInputPreferenceController { .init(owner: self) }
+    private var inputPreferenceRestorer: AudioInputPreferenceRestorer { .init(owner: self) }
+    private var routeObserver: AudioRouteObserver { .init(owner: self) }
 
     /// Describes audio input configuration operations that require synchronous XPC
     /// round-trips to `mediaserverd`. Computed on MainActor (where cached state is
@@ -357,6 +362,26 @@
     private var _selectedSampleRate: SampleRate
     private var _availableInputs: [AudioInput]
     private var _availableSources: [AudioSource]
+    private var state: AudioEnvironmentState {
+      get {
+        AudioEnvironmentState(
+          input: _input,
+          selectedSource: _selectedSource,
+          selectedSampleRate: _selectedSampleRate,
+          availableInputs: _availableInputs,
+          availableSources: _availableSources,
+          selectedNumberOfChannels: _selectedNumberOfChannels,
+        )
+      }
+      set {
+        _input = newValue.input
+        _selectedSource = newValue.selectedSource
+        _selectedSampleRate = newValue.selectedSampleRate
+        _availableInputs = newValue.availableInputs
+        _availableSources = newValue.availableSources
+        _selectedNumberOfChannels = newValue.selectedNumberOfChannels
+      }
+    }
 
     @discardableResult
     public func addRouteChangeSubscriber(
@@ -662,69 +687,7 @@
     }
 
     private func applyMonoInternal(persistPreference: Bool) async throws(ManagerError) {
-      if persistPreference {
-        persistInputPreferencesIfNeeded { prefs in
-          prefs.channelCount = ChannelCount.mono.count
-        }
-      }
-
-      // Build an execution plan on MainActor, then run XPC calls off MainActor.
-      var plan = InputConfigurationPlan()
-      plan.channelCount = 1
-
-      if let input = env.input {
-        let allSources: [AudioSource] = input.availableSources
-        let current = env.source
-
-        var didApply = false
-        // 1) Try to keep the current source but switch its pattern to non-stereo
-        if let current,
-          let pattern = current.supportedPolarPatterns.first(where: { $0 != .stereo })
-        {
-          plan.polarPatternSource = current
-          plan.polarPattern = pattern
-          plan.preferredInput = input
-          plan.preferredSource = current
-          didApply = true
-        }
-        // 2) If that fails, select a source that doesn't support stereo at all
-        if !didApply,
-          let monoCapable = allSources.first(where: { !$0.supportedPolarPatterns.contains(.stereo) }
-          )
-        {
-          plan.preferredInput = input
-          plan.preferredSource = monoCapable
-          didApply = true
-        }
-        // 3) As a last resort, pick the first source and force a non-stereo pattern if available
-        if !didApply,
-          let fallback = allSources.first,
-          let pattern = fallback.supportedPolarPatterns.first(where: { $0 != .stereo })
-        {
-          plan.polarPatternSource = fallback
-          plan.polarPattern = pattern
-          plan.preferredInput = input
-          plan.preferredSource = fallback
-        }
-      }
-
-      defer {
-        // Refresh cached mirrors
-        _input = env.input
-        _selectedNumberOfChannels = (env.input?.channelCount) ?? .mono
-        _availableInputs = env.availableInputs
-        _selectedSource = env.source
-        _availableSources = filterSources(env.availableSources, for: _selectedNumberOfChannels)
-      }
-
-      // Execute XPC-blocking calls off MainActor to avoid run-loop hangs.
-      try await Self.executeInputConfiguration(plan, session: session)
-
-      if persistPreference {
-        persistInputPreferencesIfNeeded { prefs in
-          prefs.sourceId = env.source?.id
-        }
-      }
+      try await inputPreferenceController.applyMono(persistPreference: persistPreference)
     }
 
     /// Applies a stereo audio configuration.
@@ -741,71 +704,7 @@
     }
 
     private func applyStereoInternal(persistPreference: Bool) async throws(ManagerError) {
-      if persistPreference {
-        persistInputPreferencesIfNeeded { prefs in
-          prefs.channelCount = ChannelCount.stereo.count
-        }
-      }
-      do {
-        if let input = env.input {
-          let allDataSources: [AudioSource] = input.availableSources
-
-          // Try to find a stereo-capable source, preferring the currently selected one
-          let stereoCapableSources = allDataSources.filter {
-            $0.supportedPolarPatterns.contains(.stereo)
-          }
-
-          let candidates = preferredStereoCandidates(from: stereoCapableSources)
-          let session = session
-          let currentOrientation = orientation
-
-          // Run XPC-blocking calls off MainActor.
-          // The loop tries each stereo-capable source until one succeeds.
-          try await Task.detached {
-            var lastError: (any Error)?
-            for stereoSource in candidates {
-              do {
-                try stereoSource.set(preferredPolarPattern: .stereo)
-                try input.set(preferredSource: stereoSource)
-                if currentOrientation != .none {
-                  try session.setPreferredInputOrientation(currentOrientation)
-                }
-                lastError = nil
-                break
-              } catch {
-                lastError = error
-                continue
-              }
-            }
-            if let lastError { throw lastError }
-          }.value
-        }
-
-        // Refresh cached mirrors to match applyMono()
-        _input = env.input
-        _selectedNumberOfChannels = (env.input?.channelCount) ?? .mono
-        _availableInputs = env.availableInputs
-        _selectedSource = env.source
-        _availableSources = filterSources(env.availableSources, for: _selectedNumberOfChannels)
-        if persistPreference {
-          persistInputPreferencesIfNeeded { prefs in
-            prefs.sourceId = env.source?.id
-          }
-        }
-      } catch let error as AudioSource.PreferenceError {
-        try await applyMonoInternal(persistPreference: false)
-        throw .audioSource(error)
-      } catch let error as AudioInput.PreferenceError {
-        try await applyMonoInternal(persistPreference: false)
-        throw .audioInput(error)
-      } catch let error as ManagerError {
-        try await applyMonoInternal(persistPreference: false)
-        throw error
-      } catch {
-        let mapped = ManagerError.unexpected(ErrorContext(error))
-        try await applyMonoInternal(persistPreference: false)
-        throw mapped
-      }
+      try await inputPreferenceController.applyStereo(persistPreference: persistPreference)
     }
 
     /// Manually sets the audio session active state.
@@ -816,30 +715,7 @@
     /// - Parameter active: Whether the audio session should be active.
     /// - Throws: An error if the audio session state cannot be changed.
     public func setAudioSessionActive(_ active: Bool) throws(ManagerError) {
-      guard isRunning else {
-        log.warning("Cannot set audio session active state when manager is not running")
-        return
-      }
-      do {
-        try env.session.setActive(active, options: .notifyOthersOnDeactivation)
-      } catch {
-        throw .audioSessionFailed(operation: .setActive, error: ErrorContext(error))
-      }
-      isAudioSessionActive = active
-      log.info(
-        "🔊 Audio session manually set to \(active ? "active" : "inactive", privacy: .public)",
-      )
-      if active {
-        // Schedule restoration asynchronously. The XPC-blocking preference
-        // calls (setPreferredPolarPattern, setPreferredDataSource, etc.) now
-        // run off the main actor, so this Task lets the activation return
-        // promptly while preferences are restored in the background.
-        Task { @MainActor [weak self] in
-          await self?.restorePreferredInputAndConfigurationIfPossible(
-            reason: "audio session activated",
-          )
-        }
-      }
+      try sessionController.setAudioSessionActive(active)
     }
   }
 
@@ -875,117 +751,36 @@
       isRunning = true
       defer { isRunning = false }
 
-      // Within this task group:
-      // - teardown symmetric with setup must always happen
-      // - it should be applied at the same level of nesting as its setup
-      // - the end effect once returning should be that `run()` is ready to be called
-      await withThrowingTaskGroup(of: Void.self) { group in
-        /// Configure audio session category/options on MainActor, per Apple DTS
-        /// recommendation that AVAudioSession configuration should occur on the
-        /// main thread. The category call is fast (< 1ms) and happens during
-        /// app startup; remaining setup (input request, preference restoration)
-        /// runs in a child task.
-        func configureAudioSession(
-          env: AudioEnvironment,
-          configuration: AudioSessionConfiguration,
-        ) throws(ManagerError) {
-          // Category configuration on MainActor (we are @MainActor here).
-          try Self.configureAudioSessionCategory(
-            env.session,
-            configuration: configuration,
+      // Wait for session configuration to complete before starting notifications.
+      var isConfigured = false
+      var configureAttempt = 0
+      var configureRetryDelay: Duration = .milliseconds(100)
+      let maxConfigureRetryDelay: Duration = .seconds(2)
+      while !isConfigured {
+        configureAttempt += 1
+        do {
+          try await sessionBootstrap.configureInitialSession(configuration: sessionConfiguration)
+          isConfigured = true
+        } catch {
+          if Task.isCancelled {
+            return
+          }
+
+          log.error(
+            """
+            Engine failed to configure audio session (attempt \(configureAttempt, privacy: .public)):
+            \(String(describing: error), privacy: .public)
+            Retrying in \(configureRetryDelay, privacy: .public)
+            """,
           )
-
-          // Remaining setup in a child task for input request + preference restoration.
-          group.addTask {
-            do {
-              do {
-                try env.request(
-                  input: env.input
-                    ?? env.availableInputs.first(where: { $0.platform.portType == .builtInMic }),
-                )
-              } catch let error as AudioEnvironment.RequestError {
-                throw ManagerError.audioEnvironment(error)
-              }
-
-              await self.restorePreferredInputAndConfigurationIfPossible(reason: "run() startup")
-
-              log.info(
-                """
-                🔊 AudioEnvironmentManager.run() configured AudioSession (inactive) with base settings:
-                category: \(env.session.category.rawValue, privacy: .public)
-                options: \(env.session.categoryOptions.description, privacy: .public)
-                allowHapticsAndSystemSoundsDuringRecording: \(env.session.allowHapticsAndSystemSoundsDuringRecording, privacy: .public)
-                prefersNoInterruptionsFromSystemAlerts: \(env.session.prefersNoInterruptionsFromSystemAlerts, privacy: .public)
-                prefersInterruptionOnRouteDisconnect: \(env.session.prefersInterruptionOnRouteDisconnect, privacy: .public)
-                """,
-              )
-            } catch let error as ManagerError {
-              log.error(
-                """
-                🔊 AudioEnvironmentManager.run() failed:
-                category: \(env.session.category.rawValue, privacy: .public)
-                options: \(env.session.categoryOptions.description, privacy: .public)
-                allowHapticsAndSystemSoundsDuringRecording: \(env.session.allowHapticsAndSystemSoundsDuringRecording, privacy: .public)
-                prefersNoInterruptionsFromSystemAlerts: \(env.session.prefersNoInterruptionsFromSystemAlerts, privacy: .public)
-                prefersInterruptionOnRouteDisconnect: \(env.session.prefersInterruptionOnRouteDisconnect, privacy: .public)
-                error: \(error, privacy: .public)
-                """,
-              )
-              throw error
-            } catch {
-              let mapped = ManagerError.unexpected(ErrorContext(error))
-              log.error(
-                """
-                🔊 AudioEnvironmentManager.run() failed:
-                category: \(env.session.category.rawValue, privacy: .public)
-                options: \(env.session.categoryOptions.description, privacy: .public)
-                allowHapticsAndSystemSoundsDuringRecording: \(env.session.allowHapticsAndSystemSoundsDuringRecording, privacy: .public)
-                prefersNoInterruptionsFromSystemAlerts: \(env.session.prefersNoInterruptionsFromSystemAlerts, privacy: .public)
-                prefersInterruptionOnRouteDisconnect: \(env.session.prefersInterruptionOnRouteDisconnect, privacy: .public)
-                error: \(mapped, privacy: .public)
-                """,
-              )
-              throw mapped
-            }
-          }
-        }
-
-        // Wait for session configuration to complete before starting notifications
-        var isConfigured = false
-        var configureAttempt = 0
-        var configureRetryDelay: Duration = .milliseconds(100)
-        let maxConfigureRetryDelay: Duration = .seconds(2)
-        while !isConfigured {
-          configureAttempt += 1
-          do {
-            let (env, configuration) = (self.env, self.sessionConfiguration)
-            try configureAudioSession(env: env, configuration: configuration)
-            _ = try await group.next()
-            isConfigured = true
-          } catch {
-            if Task.isCancelled {
-              return
-            } else {
-              log.error(
-                """
-                Engine failed to configure audio session (attempt \(configureAttempt, privacy: .public)):
-                \(String(describing: error), privacy: .public)
-                Retrying in \(configureRetryDelay, privacy: .public)
-                """,
-              )
-              try? await Task.sleep(for: configureRetryDelay)
-              let nextRetryDelay = configureRetryDelay + configureRetryDelay
-              configureRetryDelay =
-                nextRetryDelay > maxConfigureRetryDelay ? maxConfigureRetryDelay : nextRetryDelay
-            }
-          }
-        }
-
-        group.addTask { [weak self] in
-          guard let self else { return }
-          await subscribe()
+          try? await Task.sleep(for: configureRetryDelay)
+          let nextRetryDelay = configureRetryDelay + configureRetryDelay
+          configureRetryDelay =
+            nextRetryDelay > maxConfigureRetryDelay ? maxConfigureRetryDelay : nextRetryDelay
         }
       }
+
+      await subscribe()
 
       let wasActive = isAudioSessionActive
       await withCancellationOperation {
@@ -1012,41 +807,7 @@
     @discardableResult
     @MainActor
     private func updateAudioInputs(reason: String) -> AudioDeviceChangeSummary? {
-      let updatedInputs = env.availableInputs
-      let rawSources = env.availableSources
-
-      // Refresh the cached channel configuration before filtering sources so we react to
-      // changes triggered by external route updates (e.g. plugging in a stereo mic).
-      _selectedNumberOfChannels = env.input?.channelCount ?? .mono
-
-      let filteredSources = filterSources(rawSources, for: _selectedNumberOfChannels)
-
-      guard updatedInputs != _availableInputs || filteredSources != _availableSources else {
-        return nil
-      }
-
-      let previousInputs = _availableInputs
-      let previousSources = _availableSources
-
-      _input = env.input
-      _selectedSampleRate = env.sampleRate
-      _availableInputs = updatedInputs
-
-      let selectedSource = env.source
-      _selectedSource = selectedSource.flatMap { source in
-        filteredSources.first(where: { $0 == source })
-      }
-      _availableSources = filteredSources
-
-      let summary = AudioDeviceChangeSummary(
-        previousInputs: previousInputs,
-        currentInputs: updatedInputs,
-        previousSources: previousSources,
-        currentSources: filteredSources,
-      )
-      let changeMsg = summary.description
-      log.info("\(reason, privacy: .public): \(changeMsg, privacy: .public)")
-      return summary
+      inputPreferenceController.updateAudioInputs(reason: reason)
     }
 
     struct AudioDeviceChangeSummary: Equatable, CustomStringConvertible {
@@ -1080,6 +841,34 @@
         let sourcesDescription =
           "sources + [\(addedSources)], - [\(removedSources)]"
         return "\(inputsDescription), \(sourcesDescription)"
+      }
+    }
+
+    private struct AudioEnvironmentState {
+      let input: AudioInput?
+      let selectedSource: AudioSource?
+      let selectedSampleRate: SampleRate
+      let availableInputs: [AudioInput]
+      let availableSources: [AudioSource]
+      let selectedNumberOfChannels: ChannelCount
+
+      static func mirrored(
+        env: AudioEnvironment,
+        sourceFilter: ([AudioSource], ChannelCount) -> [AudioSource],
+      ) -> Self {
+        let selectedNumberOfChannels = env.input?.channelCount ?? .mono
+        let availableSources = sourceFilter(env.availableSources, selectedNumberOfChannels)
+        let selectedSource = env.source.flatMap { source in
+          availableSources.first(where: { $0 == source })
+        }
+        return .init(
+          input: env.input,
+          selectedSource: selectedSource,
+          selectedSampleRate: env.sampleRate,
+          availableInputs: env.availableInputs,
+          availableSources: availableSources,
+          selectedNumberOfChannels: selectedNumberOfChannels,
+        )
       }
     }
 
@@ -1180,50 +969,7 @@
             await self?.handleMediaServicesReset()
           }
         }
-        group.addTask { [weak self] in
-          for await _ in env.notifications.availableInputsChanged {
-            guard let self else { return }
-            await updateAudioInputs(reason: "availableInputsChanged notification")
-          }
-        }
-        group.addTask { [weak self] in
-          for await notification in env.notifications.routeChange {
-            log.info(
-              "Route change notification: \(String(describing: notification), privacy: .public)",
-            )
-            if Task.isCancelled { return }
-            guard let self else { return }
-            let reasonMsg =
-              switch notification.reason {
-              case .oldDeviceUnavailable: "oldDeviceUnavailable"
-              case .categoryChange: "categoryChange"
-              case .newDeviceAvailable: "newDeviceAvailable"
-              case .noSuitableRouteForCategory: "noSuitableRouteForCategory"
-              case .override: "override"
-              case .routeConfigurationChange: "routeConfigurationChange"
-              case .wakeFromSleep: "wakeFromSleep"
-              case .unknown: "unknown"
-              @unknown default: "unknowndefault"
-              }
-            await updateAudioInputs(reason: "routeChange notification: .\(reasonMsg)")
-            if await !isAudioSessionActive,
-              notification.reason == .newDeviceAvailable
-                || notification.reason == .oldDeviceUnavailable
-            {
-              await restorePreferredInputAndConfigurationIfPossible(
-                reason: "routeChange notification: .\(reasonMsg)",
-              )
-            }
-
-            // Forward route change to audio engine
-            let event = AudioRouteChangeEvent(
-              reason: notification.reason,
-              previousRoute: notification.previous,
-              session: env.session,
-            )
-            await dispatchRouteChange(event)
-          }
-        }
+        routeObserver.addTasks(to: &group)
         group.addTask { [weak self] in
           await self?.subscribeToOrientation { @MainActor [weak self] orientation in
             guard let self else { return }
@@ -1304,137 +1050,7 @@
   extension AudioEnvironmentManager {
     @MainActor
     private func restorePreferredInputAndConfigurationIfPossible(reason: String) async {
-      guard !isRestoringFromDefaults else { return }
-      isRestoringFromDefaults = true
-      defer { isRestoringFromDefaults = false }
-
-      preferenceStore.reload()
-
-      if !isAudioSessionActive,
-        let preferredInputId = preferenceStore.preferredInputId,
-        let preferredInput = env.availableInputs.first(where: { $0.id == preferredInputId }),
-        env.input?.id != preferredInputId
-      {
-        do {
-          try env.request(input: preferredInput)
-        } catch {
-          errorManager.enqueue(error)
-        }
-      }
-
-      // Refresh cached mirrors before applying per-input preferences.
-      _input = env.input
-      _selectedSampleRate = env.sampleRate
-      _selectedNumberOfChannels = (env.input?.channelCount) ?? .mono
-      _availableInputs = env.availableInputs
-      _selectedSource = env.source
-      _availableSources = filterSources(env.availableSources, for: _selectedNumberOfChannels)
-
-      let inputId = env.input?.id ?? "_default"
-      let canApplyPreferences = isAudioSessionActive
-      let modeStatus = canApplyPreferences ? "applied" : "deferred"
-      if let prefs = preferenceStore.preferences(for: inputId) {
-        if canApplyPreferences {
-          if let sampleRateHz = prefs.sampleRateHz {
-            sampleRate = SampleRate(rawValue: sampleRateHz)
-          }
-
-          if let channelCount = prefs.channelCount {
-            do {
-              if channelCount > 1 {
-                try await applyStereo()
-              } else {
-                try await applyMono()
-              }
-            } catch {
-              errorManager.enqueue(error)
-            }
-          }
-
-          if let sourceId = prefs.sourceId {
-            let desired = _availableSources.first(where: { $0.id == sourceId })
-            if desired != nil {
-              selectedSource = desired
-            } else if inputHasStereoSource, shouldAutoSelectStereoWhenAvailable == false {
-              // Best-effort fallback: choose another stereo-capable source when the remembered one
-              // is no longer available.
-              do {
-                try await applyStereo()
-              } catch {
-                errorManager.enqueue(error)
-              }
-            }
-          }
-        } else {
-          log.info(
-            "Skipping input preference restore; audio session inactive (\(reason, privacy: .public))",
-          )
-        }
-      } else if canApplyPreferences {
-        // First-run default: prefer stereo if available.
-        if inputHasStereoSource {
-          do {
-            try await applyStereo()
-          } catch {
-            errorManager.enqueue(error)
-          }
-        }
-      } else {
-        log.info(
-          "Skipping input preference defaults; audio session inactive (\(reason, privacy: .public))",
-        )
-      }
-
-      log.info(
-        "Restored audio environment preferences (\(reason, privacy: .public); \(modeStatus, privacy: .public))",
-      )
-    }
-
-    private func persistInputPreferencesIfNeeded(
-      _ update: (inout PersistedInputPreferences) -> Void,
-    ) {
-      guard !isRestoringFromDefaults else { return }
-
-      let inputId = env.input?.id ?? "_default"
-      preferenceStore.update(
-        inputId: inputId,
-        currentSampleRate: env.sampleRate,
-        isConfiguredForStereo: isConfiguredForStereo,
-        currentSourceId: env.source?.id,
-        update,
-      )
-    }
-
-    private func preferredStereoCandidates(from stereoSources: [AudioSource]) -> [AudioSource] {
-      guard !stereoSources.isEmpty else { return [] }
-
-      let inputId = env.input?.id ?? "_default"
-      let preferredSourceId = preferenceStore.preferences(for: inputId)?.sourceId
-
-      var ordered: [AudioSource] = []
-      ordered.reserveCapacity(stereoSources.count)
-
-      if let preferredSourceId,
-        let preferred = stereoSources.first(where: { $0.id == preferredSourceId })
-      {
-        ordered.append(preferred)
-      }
-
-      if let current = selectedSource, stereoSources.contains(current), !ordered.contains(current) {
-        ordered.append(current)
-      }
-
-      let remaining =
-        stereoSources
-        .filter { !ordered.contains($0) }
-        .sorted { lhs, rhs in
-          let l = stereoPreferenceRank(lhs)
-          let r = stereoPreferenceRank(rhs)
-          if l != r { return l < r }
-          return lhs.name < rhs.name
-        }
-      ordered.append(contentsOf: remaining)
-      return ordered
+      await inputPreferenceRestorer.restorePreferredInputAndConfigurationIfPossible(reason: reason)
     }
 
     private func stereoPreferenceRank(_ source: AudioSource) -> Int {
@@ -1449,6 +1065,442 @@
       if raw.contains("back") { return 2 }
       if raw.contains("top") || raw.contains("upper") { return 3 }
       return 9
+    }
+  }
+
+  extension AudioEnvironmentManager {
+    private struct AudioSessionBootstrap {
+      let owner: AudioEnvironmentManager
+
+      @MainActor
+      func configureInitialSession(configuration: AudioSessionConfiguration) async throws(ManagerError)
+      {
+        let env = owner.env
+        try AudioEnvironmentManager.configureAudioSessionCategory(
+          env.session,
+          configuration: configuration,
+        )
+
+        do {
+          try await withThrowingTaskGroup(of: Void.self) { group in
+            group.addTask {
+              do {
+                try env.request(
+                  input: env.input
+                    ?? env.availableInputs.first(where: { $0.platform.portType == .builtInMic }),
+                )
+              } catch let error as AudioEnvironment.RequestError {
+                throw ManagerError.audioEnvironment(error)
+              }
+            }
+            try await group.waitForAll()
+          }
+
+          await owner.restorePreferredInputAndConfigurationIfPossible(reason: "run() startup")
+          logConfiguredSession(for: env)
+        } catch let error as ManagerError {
+          logFailedSession(for: env, error: error)
+          throw error
+        } catch {
+          let mapped = ManagerError.unexpected(ErrorContext(error))
+          logFailedSession(for: env, error: mapped)
+          throw mapped
+        }
+      }
+
+      @MainActor
+      private func logConfiguredSession(for env: AudioEnvironment) {
+        log.info(
+          """
+          🔊 AudioEnvironmentManager.run() configured AudioSession (inactive) with base settings:
+          category: \(env.session.category.rawValue, privacy: .public)
+          options: \(env.session.categoryOptions.description, privacy: .public)
+          allowHapticsAndSystemSoundsDuringRecording: \(env.session.allowHapticsAndSystemSoundsDuringRecording, privacy: .public)
+          prefersNoInterruptionsFromSystemAlerts: \(env.session.prefersNoInterruptionsFromSystemAlerts, privacy: .public)
+          prefersInterruptionOnRouteDisconnect: \(env.session.prefersInterruptionOnRouteDisconnect, privacy: .public)
+          """,
+        )
+      }
+
+      @MainActor
+      private func logFailedSession(for env: AudioEnvironment, error: ManagerError) {
+        log.error(
+          """
+          🔊 AudioEnvironmentManager.run() failed:
+          category: \(env.session.category.rawValue, privacy: .public)
+          options: \(env.session.categoryOptions.description, privacy: .public)
+          allowHapticsAndSystemSoundsDuringRecording: \(env.session.allowHapticsAndSystemSoundsDuringRecording, privacy: .public)
+          prefersNoInterruptionsFromSystemAlerts: \(env.session.prefersNoInterruptionsFromSystemAlerts, privacy: .public)
+          prefersInterruptionOnRouteDisconnect: \(env.session.prefersInterruptionOnRouteDisconnect, privacy: .public)
+          error: \(error, privacy: .public)
+          """,
+        )
+      }
+    }
+
+    private struct AudioSessionController {
+      let owner: AudioEnvironmentManager
+
+      @MainActor
+      func setAudioSessionActive(_ active: Bool) throws(ManagerError) {
+        guard owner.isRunning else {
+          log.warning("Cannot set audio session active state when manager is not running")
+          return
+        }
+        do {
+          try owner.env.session.setActive(active, options: .notifyOthersOnDeactivation)
+        } catch {
+          throw .audioSessionFailed(operation: .setActive, error: ErrorContext(error))
+        }
+        owner.isAudioSessionActive = active
+        log.info(
+          "🔊 Audio session manually set to \(active ? "active" : "inactive", privacy: .public)",
+        )
+        if active {
+          Task { @MainActor [weak owner] in
+            await owner?.restorePreferredInputAndConfigurationIfPossible(
+              reason: "audio session activated",
+            )
+          }
+        }
+      }
+    }
+
+    private struct AudioInputPreferenceController {
+      let owner: AudioEnvironmentManager
+
+      @MainActor
+      func applyMono(persistPreference: Bool) async throws(ManagerError) {
+        if persistPreference {
+          persistInputPreferencesIfNeeded { prefs in
+            prefs.channelCount = ChannelCount.mono.count
+          }
+        }
+
+        var plan = InputConfigurationPlan()
+        plan.channelCount = 1
+
+        if let input = owner.env.input {
+          let allSources: [AudioSource] = input.availableSources
+          let current = owner.env.source
+
+          var didApply = false
+          if let current,
+            let pattern = current.supportedPolarPatterns.first(where: { $0 != .stereo })
+          {
+            plan.polarPatternSource = current
+            plan.polarPattern = pattern
+            plan.preferredInput = input
+            plan.preferredSource = current
+            didApply = true
+          }
+          if !didApply,
+            let monoCapable = allSources.first(where: { !$0.supportedPolarPatterns.contains(.stereo) }
+            )
+          {
+            plan.preferredInput = input
+            plan.preferredSource = monoCapable
+            didApply = true
+          }
+          if !didApply,
+            let fallback = allSources.first,
+            let pattern = fallback.supportedPolarPatterns.first(where: { $0 != .stereo })
+          {
+            plan.polarPatternSource = fallback
+            plan.polarPattern = pattern
+            plan.preferredInput = input
+            plan.preferredSource = fallback
+          }
+        }
+
+        defer {
+          owner.state = AudioEnvironmentState.mirrored(
+            env: owner.env,
+            sourceFilter: owner.filterSources,
+          )
+        }
+
+        try await AudioEnvironmentManager.executeInputConfiguration(plan, session: owner.session)
+
+        if persistPreference {
+          persistInputPreferencesIfNeeded { prefs in
+            prefs.sourceId = owner.env.source?.id
+          }
+        }
+      }
+
+      @MainActor
+      func applyStereo(persistPreference: Bool) async throws(ManagerError) {
+        if persistPreference {
+          persistInputPreferencesIfNeeded { prefs in
+            prefs.channelCount = ChannelCount.stereo.count
+          }
+        }
+        do {
+          if let input = owner.env.input {
+            let allDataSources: [AudioSource] = input.availableSources
+            let stereoCapableSources = allDataSources.filter {
+              $0.supportedPolarPatterns.contains(.stereo)
+            }
+
+            let candidates = preferredStereoCandidates(from: stereoCapableSources)
+            let session = owner.session
+            let currentOrientation = owner.orientation
+
+            try await Task.detached {
+              var lastError: (any Error)?
+              for stereoSource in candidates {
+                do {
+                  try stereoSource.set(preferredPolarPattern: .stereo)
+                  try input.set(preferredSource: stereoSource)
+                  if currentOrientation != .none {
+                    try session.setPreferredInputOrientation(currentOrientation)
+                  }
+                  lastError = nil
+                  break
+                } catch {
+                  lastError = error
+                  continue
+                }
+              }
+              if let lastError { throw lastError }
+            }.value
+          }
+
+          owner.state = AudioEnvironmentState.mirrored(
+            env: owner.env,
+            sourceFilter: owner.filterSources,
+          )
+          if persistPreference {
+            persistInputPreferencesIfNeeded { prefs in
+              prefs.sourceId = owner.env.source?.id
+            }
+          }
+        } catch let error as AudioSource.PreferenceError {
+          try await applyMono(persistPreference: false)
+          throw .audioSource(error)
+        } catch let error as AudioInput.PreferenceError {
+          try await applyMono(persistPreference: false)
+          throw .audioInput(error)
+        } catch let error as ManagerError {
+          try await applyMono(persistPreference: false)
+          throw error
+        } catch {
+          let mapped = ManagerError.unexpected(ErrorContext(error))
+          try await applyMono(persistPreference: false)
+          throw mapped
+        }
+      }
+
+      @discardableResult
+      @MainActor
+      func updateAudioInputs(reason: String) -> AudioDeviceChangeSummary? {
+        let previousState = owner.state
+        let nextState = AudioEnvironmentState.mirrored(
+          env: owner.env,
+          sourceFilter: owner.filterSources,
+        )
+        guard nextState.availableInputs != previousState.availableInputs
+          || nextState.availableSources != previousState.availableSources
+        else {
+          return nil
+        }
+
+        owner.state = nextState
+        let summary = AudioDeviceChangeSummary(
+          previousInputs: previousState.availableInputs,
+          currentInputs: nextState.availableInputs,
+          previousSources: previousState.availableSources,
+          currentSources: nextState.availableSources,
+        )
+        log.info("\(reason, privacy: .public): \(summary.description, privacy: .public)")
+        return summary
+      }
+
+      private func persistInputPreferencesIfNeeded(
+        _ update: (inout PersistedInputPreferences) -> Void,
+      ) {
+        guard !owner.isRestoringFromDefaults else { return }
+
+        let inputId = owner.env.input?.id ?? "_default"
+        owner.preferenceStore.update(
+          inputId: inputId,
+          currentSampleRate: owner.env.sampleRate,
+          isConfiguredForStereo: owner.isConfiguredForStereo,
+          currentSourceId: owner.env.source?.id,
+          update,
+        )
+      }
+
+      private func preferredStereoCandidates(from stereoSources: [AudioSource]) -> [AudioSource] {
+        guard !stereoSources.isEmpty else { return [] }
+
+        let inputId = owner.env.input?.id ?? "_default"
+        let preferredSourceId = owner.preferenceStore.preferences(for: inputId)?.sourceId
+
+        var ordered: [AudioSource] = []
+        ordered.reserveCapacity(stereoSources.count)
+
+        if let preferredSourceId,
+          let preferred = stereoSources.first(where: { $0.id == preferredSourceId })
+        {
+          ordered.append(preferred)
+        }
+
+        if let current = owner.selectedSource, stereoSources.contains(current), !ordered.contains(current)
+        {
+          ordered.append(current)
+        }
+
+        let remaining =
+          stereoSources
+          .filter { !ordered.contains($0) }
+          .sorted { lhs, rhs in
+            let l = owner.stereoPreferenceRank(lhs)
+            let r = owner.stereoPreferenceRank(rhs)
+            if l != r { return l < r }
+            return lhs.name < rhs.name
+          }
+        ordered.append(contentsOf: remaining)
+        return ordered
+      }
+    }
+
+    private struct AudioInputPreferenceRestorer {
+      let owner: AudioEnvironmentManager
+
+      @MainActor
+      func restorePreferredInputAndConfigurationIfPossible(reason: String) async {
+        guard !owner.isRestoringFromDefaults else { return }
+        owner.isRestoringFromDefaults = true
+        defer { owner.isRestoringFromDefaults = false }
+
+        owner.preferenceStore.reload()
+
+        if !owner.isAudioSessionActive,
+          let preferredInputId = owner.preferenceStore.preferredInputId,
+          let preferredInput = owner.env.availableInputs.first(where: { $0.id == preferredInputId }),
+          owner.env.input?.id != preferredInputId
+        {
+          do {
+            try owner.env.request(input: preferredInput)
+          } catch {
+            owner.errorManager.enqueue(error)
+          }
+        }
+
+        owner.state = AudioEnvironmentState.mirrored(
+          env: owner.env,
+          sourceFilter: owner.filterSources,
+        )
+
+        let inputId = owner.env.input?.id ?? "_default"
+        let canApplyPreferences = owner.isAudioSessionActive
+        let modeStatus = canApplyPreferences ? "applied" : "deferred"
+        if let prefs = owner.preferenceStore.preferences(for: inputId) {
+          if canApplyPreferences {
+            if let sampleRateHz = prefs.sampleRateHz {
+              owner.sampleRate = SampleRate(rawValue: sampleRateHz)
+            }
+
+            if let channelCount = prefs.channelCount {
+              do {
+                if channelCount > 1 {
+                  try await owner.applyStereo()
+                } else {
+                  try await owner.applyMono()
+                }
+              } catch {
+                owner.errorManager.enqueue(error)
+              }
+            }
+
+            if let sourceId = prefs.sourceId {
+              let desired = owner.availableSources.first(where: { $0.id == sourceId })
+              if desired != nil {
+                owner.selectedSource = desired
+              } else if owner.inputHasStereoSource, owner.shouldAutoSelectStereoWhenAvailable == false {
+                do {
+                  try await owner.applyStereo()
+                } catch {
+                  owner.errorManager.enqueue(error)
+                }
+              }
+            }
+          } else {
+            log.info(
+              "Skipping input preference restore; audio session inactive (\(reason, privacy: .public))",
+            )
+          }
+        } else if canApplyPreferences {
+          if owner.inputHasStereoSource {
+            do {
+              try await owner.applyStereo()
+            } catch {
+              owner.errorManager.enqueue(error)
+            }
+          }
+        } else {
+          log.info(
+            "Skipping input preference defaults; audio session inactive (\(reason, privacy: .public))",
+          )
+        }
+
+        log.info(
+          "Restored audio environment preferences (\(reason, privacy: .public); \(modeStatus, privacy: .public))",
+        )
+      }
+    }
+
+    private struct AudioRouteObserver {
+      let owner: AudioEnvironmentManager
+
+      func addTasks(to group: inout TaskGroup<Void>) {
+        let env = owner.env
+        group.addTask { [weak owner] in
+          for await _ in env.notifications.availableInputsChanged {
+            guard let owner else { return }
+            await owner.updateAudioInputs(reason: "availableInputsChanged notification")
+          }
+        }
+        group.addTask { [weak owner] in
+          for await notification in env.notifications.routeChange {
+            log.info(
+              "Route change notification: \(String(describing: notification), privacy: .public)",
+            )
+            if Task.isCancelled { return }
+            guard let owner else { return }
+            let reasonMsg =
+              switch notification.reason {
+              case .oldDeviceUnavailable: "oldDeviceUnavailable"
+              case .categoryChange: "categoryChange"
+              case .newDeviceAvailable: "newDeviceAvailable"
+              case .noSuitableRouteForCategory: "noSuitableRouteForCategory"
+              case .override: "override"
+              case .routeConfigurationChange: "routeConfigurationChange"
+              case .wakeFromSleep: "wakeFromSleep"
+              case .unknown: "unknown"
+              @unknown default: "unknowndefault"
+              }
+            await owner.updateAudioInputs(reason: "routeChange notification: .\(reasonMsg)")
+            if await !owner.isAudioSessionActive,
+              notification.reason == .newDeviceAvailable
+                || notification.reason == .oldDeviceUnavailable
+            {
+              await owner.restorePreferredInputAndConfigurationIfPossible(
+                reason: "routeChange notification: .\(reasonMsg)",
+              )
+            }
+
+            let event = AudioRouteChangeEvent(
+              reason: notification.reason,
+              previousRoute: notification.previous,
+              session: env.session,
+            )
+            await owner.dispatchRouteChange(event)
+          }
+        }
+      }
     }
   }
 
