@@ -467,60 +467,7 @@
     }
 
     public func setSampleRate(_ newValue: SampleRate, persistPreference: Bool) {
-      errorManager.report {
-        try env.request(sampleRate: newValue)
-        _selectedSampleRate = newValue
-        Task { @MainActor in
-          let actual = env.sampleRate
-          if actual == newValue {
-            log.info("􁐚 Sample rate set to requested value: \(newValue, privacy: .public)")
-
-          } else {
-            log
-              .info(
-                """
-                􁐚 Sample rate \(newValue, privacy: .public) rejected. \
-                Set to \(actual, privacy: .public)
-                """,
-              )
-            if persistPreference {
-              persistInputPreferencesIfNeeded { prefs in
-                var rejected = Set(prefs.rejectedSampleRatesHz ?? [])
-                rejected.insert(newValue.rawValue)
-                rejected.remove(actual.rawValue)
-                prefs.rejectedSampleRatesHz = rejected.sorted()
-              }
-            }
-            _selectedSampleRate = actual
-          }
-          if persistPreference {
-            persistInputPreferencesIfNeeded { prefs in
-              prefs.sampleRateHz = actual.rawValue
-            }
-          }
-        }
-      } catch: { error in
-        let actual = env.sampleRate
-        _selectedSampleRate = env.sampleRate
-        log
-          .error(
-            """
-            􁐚 Sample rate \(newValue, privacy: .public) failed with: \(error, privacy: .public) \
-            Rate is \(actual, privacy: .public).
-            """,
-          )
-        if persistPreference {
-          // Persist the actual device rate on failure so we don't repeatedly retry
-          // an unsupported preference for this input across route changes.
-          persistInputPreferencesIfNeeded { prefs in
-            prefs.sampleRateHz = actual.rawValue
-            var rejected = Set(prefs.rejectedSampleRatesHz ?? [])
-            rejected.insert(newValue.rawValue)
-            rejected.remove(actual.rawValue)
-            prefs.rejectedSampleRatesHz = rejected.sorted()
-          }
-        }
-      }
+      inputPreferenceController.setSampleRate(newValue, persistPreference: persistPreference)
     }
 
     /// The currently selected audio input.
@@ -529,39 +476,7 @@
         _input ?? env.input ?? env.availableInputs.first
       }
       set {
-        do {
-          try env.request(input: newValue)
-          _input = env.input
-          _selectedSampleRate = env.sampleRate
-          _selectedNumberOfChannels = (env.input?.channelCount) ?? .mono
-          _availableInputs = env.availableInputs
-          let validSources = env.input?.availableSources ?? []
-          _availableSources = validSources
-          let currentSource = env.source
-          if let currentSource, validSources.contains(currentSource) {
-            _selectedSource = currentSource
-          } else {
-            _selectedSource = nil
-            do {
-              if let fallback = validSources.first {
-                try env.request(source: fallback)
-                _selectedSource = env.source
-              } else {
-                try env.request(source: nil)
-              }
-            } catch {
-              errorManager.enqueue(error)
-            }
-          }
-          _availableSources = env.input?.availableSources ?? validSources
-          persistInputPreferencesIfNeeded { prefs in
-            prefs.sampleRateHz = env.sampleRate.rawValue
-            prefs.channelCount = _selectedNumberOfChannels.count
-            prefs.sourceId = env.source?.id
-          }
-        } catch {
-          errorManager.enqueue(error)
-        }
+        inputPreferenceController.setSelectedInput(newValue)
       }
     }
 
@@ -571,33 +486,7 @@
         _selectedSource
       }
       set {
-        if let newValue, !_availableSources.contains(newValue) {
-          _selectedSource = env.source
-          return
-        }
-        do {
-          try env.request(source: newValue)
-          _input = env.input
-          _selectedSampleRate = env.sampleRate
-          _selectedNumberOfChannels = (env.input?.channelCount) ?? .mono
-          _availableInputs = env.availableInputs
-          _selectedSource = env.source
-          _availableSources = env.availableSources
-          persistInputPreferencesIfNeeded { prefs in
-            prefs.sourceId = env.source?.id
-          }
-        } catch {
-          _input = env.input
-          _selectedSampleRate = env.sampleRate
-          _selectedNumberOfChannels = (env.input?.channelCount) ?? .mono
-          _availableInputs = env.availableInputs
-          _selectedSource = env.source
-          _availableSources = env.input?.availableSources ?? []
-          errorManager.enqueue(error)
-          persistInputPreferencesIfNeeded { prefs in
-            prefs.sourceId = env.source?.id
-          }
-        }
+        inputPreferenceController.setSelectedSource(newValue)
       }
     }
 
@@ -870,6 +759,21 @@
           selectedNumberOfChannels: selectedNumberOfChannels,
         )
       }
+
+      static func current(
+        env: AudioEnvironment,
+        availableSources: [AudioSource]? = nil,
+        selectedSource: AudioSource? = nil,
+      ) -> Self {
+        .init(
+          input: env.input,
+          selectedSource: selectedSource ?? env.source,
+          selectedSampleRate: env.sampleRate,
+          availableInputs: env.availableInputs,
+          availableSources: availableSources ?? env.availableSources,
+          selectedNumberOfChannels: env.input?.channelCount ?? .mono,
+        )
+      }
     }
 
     private func filterSources(
@@ -1033,10 +937,7 @@
       log.warning("mediaServicesReset notification: rebuilding audio session configuration")
       isAudioSessionActive = false
       do {
-        try Self.configureAudioSessionCategory(
-          env.session,
-          configuration: sessionConfiguration,
-        )
+        try sessionBootstrap.rebuildSessionConfiguration(configuration: sessionConfiguration)
       } catch {
         errorManager.enqueue(error)
       }
@@ -1073,13 +974,18 @@
       let owner: AudioEnvironmentManager
 
       @MainActor
+      func rebuildSessionConfiguration(configuration: AudioSessionConfiguration) throws(ManagerError) {
+        try AudioEnvironmentManager.configureAudioSessionCategory(
+          owner.env.session,
+          configuration: configuration,
+        )
+      }
+
+      @MainActor
       func configureInitialSession(configuration: AudioSessionConfiguration) async throws(ManagerError)
       {
         let env = owner.env
-        try AudioEnvironmentManager.configureAudioSessionCategory(
-          env.session,
-          configuration: configuration,
-        )
+        try rebuildSessionConfiguration(configuration: configuration)
 
         do {
           try await withThrowingTaskGroup(of: Void.self) { group in
@@ -1168,6 +1074,123 @@
 
     private struct AudioInputPreferenceController {
       let owner: AudioEnvironmentManager
+
+      @MainActor
+      func setSampleRate(_ newValue: SampleRate, persistPreference: Bool) {
+        owner.errorManager.report {
+          try owner.env.request(sampleRate: newValue)
+          owner._selectedSampleRate = newValue
+          Task { @MainActor [weak owner] in
+            guard let owner else { return }
+            let actual = owner.env.sampleRate
+            if actual == newValue {
+              log.info("􁐚 Sample rate set to requested value: \(newValue, privacy: .public)")
+            } else {
+              log.info(
+                """
+                􁐚 Sample rate \(newValue, privacy: .public) rejected. \
+                Set to \(actual, privacy: .public)
+                """,
+              )
+              if persistPreference {
+                persistInputPreferencesIfNeeded { prefs in
+                  var rejected = Set(prefs.rejectedSampleRatesHz ?? [])
+                  rejected.insert(newValue.rawValue)
+                  rejected.remove(actual.rawValue)
+                  prefs.rejectedSampleRatesHz = rejected.sorted()
+                }
+              }
+              owner._selectedSampleRate = actual
+            }
+            if persistPreference {
+              persistInputPreferencesIfNeeded { prefs in
+                prefs.sampleRateHz = actual.rawValue
+              }
+            }
+          }
+        } catch: { error in
+          let actual = owner.env.sampleRate
+          owner._selectedSampleRate = owner.env.sampleRate
+          log.error(
+            """
+            􁐚 Sample rate \(newValue, privacy: .public) failed with: \(error, privacy: .public) \
+            Rate is \(actual, privacy: .public).
+            """,
+          )
+          if persistPreference {
+            persistInputPreferencesIfNeeded { prefs in
+              prefs.sampleRateHz = actual.rawValue
+              var rejected = Set(prefs.rejectedSampleRatesHz ?? [])
+              rejected.insert(newValue.rawValue)
+              rejected.remove(actual.rawValue)
+              prefs.rejectedSampleRatesHz = rejected.sorted()
+            }
+          }
+        }
+      }
+
+      @MainActor
+      func setSelectedInput(_ newValue: AudioInput?) {
+        do {
+          try owner.env.request(input: newValue)
+
+          var validSources = owner.env.input?.availableSources ?? []
+          var selectedSource = owner.env.source
+          if let currentSource = selectedSource, validSources.contains(currentSource) {
+            selectedSource = currentSource
+          } else {
+            selectedSource = nil
+            do {
+              if let fallback = validSources.first {
+                try owner.env.request(source: fallback)
+                selectedSource = owner.env.source
+              } else {
+                try owner.env.request(source: nil)
+              }
+            } catch {
+              owner.errorManager.enqueue(error)
+            }
+          }
+
+          validSources = owner.env.input?.availableSources ?? validSources
+          owner.state = AudioEnvironmentState.current(
+            env: owner.env,
+            availableSources: validSources,
+            selectedSource: selectedSource,
+          )
+          persistInputPreferencesIfNeeded { prefs in
+            prefs.sampleRateHz = owner.env.sampleRate.rawValue
+            prefs.channelCount = owner.channels.count
+            prefs.sourceId = owner.env.source?.id
+          }
+        } catch {
+          owner.errorManager.enqueue(error)
+        }
+      }
+
+      @MainActor
+      func setSelectedSource(_ newValue: AudioSource?) {
+        if let newValue, !owner.availableSources.contains(newValue) {
+          owner._selectedSource = owner.env.source
+          return
+        }
+        do {
+          try owner.env.request(source: newValue)
+          owner.state = AudioEnvironmentState.current(env: owner.env)
+          persistInputPreferencesIfNeeded { prefs in
+            prefs.sourceId = owner.env.source?.id
+          }
+        } catch {
+          owner.state = AudioEnvironmentState.current(
+            env: owner.env,
+            availableSources: owner.env.input?.availableSources ?? [],
+          )
+          owner.errorManager.enqueue(error)
+          persistInputPreferencesIfNeeded { prefs in
+            prefs.sourceId = owner.env.source?.id
+          }
+        }
+      }
 
       @MainActor
       func applyMono(persistPreference: Bool) async throws(ManagerError) {
