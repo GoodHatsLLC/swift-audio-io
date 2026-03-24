@@ -33,28 +33,7 @@
       _ desiredState: Bool,
       configuration: RecordingConfiguration? = nil,
     ) {
-      wantsRecording = desiredState
-      lastRecordingStartFailure = nil
-      reconciliationTask = nil
-
-      if desiredState {
-        guard let configuration else {
-          log.error("Cannot start recording without configuration")
-          wantsRecording = false
-          return
-        }
-        lastRecordingConfiguration = configuration
-        reconciliationTask = Task { @MainActor [weak self] in
-          await self?.reconcileRecordingState(desiredState: true, configuration: configuration)
-        }
-      } else {
-        // Stop immediately
-        if isRecording {
-          Task { @MainActor [weak self] in
-            _ = try? await self?.stopRecording()
-          }
-        }
-      }
+      recordingRuntime.setDesiredRecordingState(desiredState, configuration: configuration)
     }
 
     /// Starts recording with automatic reconciliation and returns when complete.
@@ -70,12 +49,7 @@
     public func startRecordingWithReconciliation(
       configuration: RecordingConfiguration,
     ) async -> Bool {
-      wantsRecording = true
-      lastRecordingStartFailure = nil
-      reconciliationTask = nil
-      lastRecordingConfiguration = configuration
-      await reconcileRecordingState(desiredState: true, configuration: configuration)
-      return isRecording
+      await recordingRuntime.startRecordingWithReconciliation(configuration: configuration)
     }
 
     /// Stops recording.
@@ -86,10 +60,7 @@
     /// - Returns: The URL of the recorded file, or `nil` if not recording.
     @MainActor
     public func stopRecordingWithReconciliation() async -> URL? {
-      wantsRecording = false
-      reconciliationTask = nil
-      guard isRecording else { return nil }
-      return try? await stopRecording()
+      await recordingRuntime.stopRecordingWithReconciliation()
     }
 
     /// Attempts to reconcile the desired recording state with the actual state.
@@ -98,65 +69,10 @@
       desiredState: Bool,
       configuration: RecordingConfiguration,
     ) async {
-      guard desiredState else { return }
-
-      let startTime = ContinuousClock.now
-      let timeout = reconciliationConfiguration.timeout
-      let retryInterval = reconciliationConfiguration.retryInterval
-
-      log.info(
-        "Starting recording reconciliation (timeout: \(timeout, privacy: .public), interval: \(retryInterval, privacy: .public))",
+      await recordingRuntime.reconcileRecordingState(
+        desiredState: desiredState,
+        configuration: configuration,
       )
-
-      var lastError: AIOError?
-
-      while !Task.isCancelled, wantsRecording {
-        let elapsed = ContinuousClock.now - startTime
-
-        // Check if we've exceeded the timeout
-        if elapsed >= timeout {
-          log.warning(
-            "Recording reconciliation timed out after \(elapsed, privacy: .public)",
-          )
-          break
-        }
-
-        do {
-          // Attempt to start recording
-          try await startRecording(configuration: configuration)
-
-          // Success!
-          log.info("Recording started successfully after \(elapsed, privacy: .public)")
-          lastRecordingStartFailure = nil
-          return
-        } catch let error where error.isTransient {
-          // Transient error - wait and retry
-          lastError = error
-          lastRecordingStartFailure = error
-          log.info(
-            "Transient error during reconciliation: \(error, privacy: .public), retrying...",
-          )
-          try? await Task.sleep(for: retryInterval)
-          continue
-        } catch {
-          // Non-transient error - give up immediately
-          log.error(
-            "Non-transient error during reconciliation: \(error, privacy: .public)",
-          )
-          lastError = error
-          lastRecordingStartFailure = error
-          break
-        }
-      }
-
-      // Reconciliation failed - reset desired state to match actual
-      if wantsRecording, !isRecording {
-        log.warning(
-          "Reconciliation failed, resetting wantsRecording to false. Last error: \(lastError?.localizedDescription ?? "none", privacy: .public)",
-        )
-        wantsRecording = false
-        onReconciliationFailed?(true)
-      }
     }
 
     /// Starts recording audio with the specified configuration.
@@ -169,70 +85,7 @@
     public nonisolated func startRecording(
       configuration: RecordingConfiguration,
     ) async throws(AIOError) {
-      do {
-        let shouldStopPlayer = await withEngineControlQueue { [weak self] in
-          guard let self else { return false }
-          return unsafe player.isPlaying
-        }
-        if shouldStopPlayer {
-          await stopPlayerIfNeeded()
-        }
-        try await MainActor.run {
-          // Clear any lingering playback state before recording.
-          // When shouldStopPlayer is true the player was still active and
-          // we already stopped it above.  But playback can also be stale after
-          // natural completion — the player has stopped yet the playback
-          // struct hasn't been nilled out because cleanupPlaybackInstance's
-          // MainActor Task hasn't run yet.  Clearing unconditionally prevents
-          // warm()'s `!isPlaying` guard from returning early on stale state.
-          if shouldStopPlayer || playback != nil {
-            placeState(\.playbackInstance, nil)
-            playback = nil
-            onPlaybackUpdated?(nil)
-          }
-          lastWriteFailure = nil
-          lastRecordingConfiguration = configuration
-          try warm(configuration: configuration)
-
-          let (buffers, writer, url, receiverBuffers, receiverTiming) = state {
-            (
-              $0.audioBuffers, $0.recordingWriter, $0.recordingURL, $0.receiverBuffers,
-              $0.receiverTiming,
-            )
-          }
-          guard let buffers,
-            let processingFormat = configuration.processingFormat,
-            let writeWriter = writer,
-            let url
-          else {
-            throw AIOError.invalidRecordingConfiguration(
-              details: "state after warm(configuration:) was invalid",
-            )
-          }
-          let startResult = runOnEngineControlQueueResult { [weak self] in
-            guard let self else { return }
-            try unsafe engine.start()
-          }
-          if case .failure(let error) = startResult {
-            throw AIOError.engineStartFailed(error: ErrorContext(error))
-          }
-          let fileFormat = configuration.outputConfiguration.fileFormat.rawValue
-          onRecordingStarted?(url, fileFormat)
-          startFileWriteLoop(flushing: buffers, of: processingFormat, to: writeWriter)
-          if let receiverBuffers, let receiverTiming {
-            startReceiverLoop(
-              buffers: receiverBuffers,
-              timing: receiverTiming,
-              processingFormat: processingFormat,
-            )
-          }
-          self.isRecording = true
-        }
-      } catch let error as AIOError {
-        throw error
-      } catch {
-        throw .engineStartFailed(error: ErrorContext(error))
-      }
+      try await recordingRuntime.startRecording(configuration: configuration)
     }
 
     @MainActor func startFileWriteLoop(
@@ -620,45 +473,11 @@
 
     @MainActor
     public func updateRecordingTapInterval(_ interval: Duration) {
-      guard interval > .zero else { return }
-
-      guard let currentConfig = state.withLock({ $0.recordingConfiguration }) else {
-        lastRecordingConfiguration = lastRecordingConfiguration.map {
-          RecordingConfiguration(
-            inputConfiguration: $0.inputConfiguration,
-            outputConfiguration: $0.outputConfiguration,
-            tapInterval: interval,
-            outputDestination: $0.outputDestination,
-          )
-        }
-        return
-      }
-
-      let updated = RecordingConfiguration(
-        inputConfiguration: currentConfig.inputConfiguration,
-        outputConfiguration: currentConfig.outputConfiguration,
-        tapInterval: interval,
-        outputDestination: currentConfig.outputDestination,
-      )
-
-      guard updated.tapInterval != currentConfig.tapInterval else { return }
-
-      state.withLock { $0.recordingConfiguration = updated }
-      lastRecordingConfiguration = updated
-
-      guard isRecording else { return }
-
-      do {
-        try reconfigureTapForIntervalChange(configuration: updated)
-      } catch {
-        log.warning(
-          "Failed to update tap interval to \(interval, privacy: .public): \(error, privacy: .public)",
-        )
-      }
+      recordingRuntime.updateRecordingTapInterval(interval)
     }
 
     @MainActor
-    private func reconfigureTapForIntervalChange(
+    func reconfigureTapForIntervalChange(
       configuration: RecordingConfiguration,
     ) throws(AIOError) {
       guard let processingFormat = state.withLock({ $0.tapConverterOutputFormat }) else {
@@ -1364,42 +1183,7 @@
     /// - Throws: An `AIOError.notRecording` error if the engine is not currently recording.
     @MainActor
     public func stopRecording() async throws(AIOError) -> URL {
-      guard let url = state[locked: \.recordingURL], isRecording else {
-        throw AIOError.notRecording
-      }
-      await gracefulStop()
-      let fileExists = FileManager.default.fileExists(atPath: url.path)
-      let fileSize = fileSizeValue(for: url)
-      let failure = consumeWriteFailure()
-      if !fileExists {
-        throw AIOError.audioFileFailed(
-          operation: .write,
-          url: url,
-          error: ErrorContext(MissingAudioFileError(url: url)),
-        )
-      }
-      if let size = fileSize, size == 0 {
-        throw AIOError.audioFileFailed(
-          operation: .write,
-          url: url,
-          error: ErrorContext(EmptyAudioFileError(url: url)),
-        )
-      }
-      if let failure {
-        if isWriterDrainTimeout(failure), fileExists, (fileSize ?? 0) > 0 {
-          log.warning(
-            "⚠️ Writer drain timed out but file exists with data; continuing stop for \(url.lastPathComponent, privacy: .public)",
-          )
-        } else {
-          throw AIOError.audioFileFailed(operation: .write, url: failure.url, error: failure.error)
-        }
-      }
-      let finalSize = fileSizeDescription(for: url)
-      log.info(
-        "✅ Recording stopped: \(url.lastPathComponent, privacy: .public) size=\(finalSize, privacy: .public)",
-      )
-      onRecordingCompleted?()
-      return url
+      try await recordingRuntime.stopRecording()
     }
 
     nonisolated func isWriterDrainTimeout(_ failure: WriteFailure) -> Bool {
@@ -1424,76 +1208,7 @@
     /// - Throws: `AIOError.notRecording` if not currently recording
     @MainActor
     public func rotateRecordingFile() async throws(AIOError) -> URL {
-      guard isRecording,
-        let (currentURL, configuration, format): (URL, RecordingConfiguration, AVAudioFormat) =
-          state.withLock({
-            guard let url = $0.recordingURL,
-              let config = $0.recordingConfiguration,
-              let format = config.processingFormat
-            else {
-              return Optional.none
-            }
-            return Optional((url, config, format))
-          })
-      else {
-        throw AIOError.notRecording
-      }
-
-      // Create new file with fresh filename
-      let (newURL, protection): (URL, OutputFileProtection?) = try resolveOutputURL(
-        for: configuration,
-        allowExplicitFile: false,
-      )
-      let newWriter = try makeRecordingWriter(url: newURL, configuration: configuration)
-      applyFileProtectionIfNeeded(protection, to: newURL)
-
-      let sampleRate = Int(format.sampleRate)
-      let channelCount = Int(format.channelCount)
-      guard sampleRate > 0, channelCount > 0 else {
-        throw AIOError.invalidRecordingConfiguration(details: "Invalid processing format")
-      }
-
-      let newBuffers = makeAudioBuffers(
-        sampleRate: sampleRate,
-        channelCount: channelCount,
-      )
-
-      if let currentWriter = writerSession {
-        enqueueDrain(for: currentWriter)
-      } else {
-        state[locked: \.recordingWriter]?.close()
-      }
-
-      // Update state with new file and refresh the cached tap snapshot so the
-      // tap thread sees the new ring buffers on its next fallback read.
-      let wrapped = state { state -> Transferring<TapSnapshot> in
-        state.recordingWriter = newWriter
-        state.recordingURL = newURL
-        state.audioBuffers = newBuffers
-        return Transferring(
-          TapSnapshot(
-            audioBuffers: state.audioBuffers,
-            receiverBuffers: state.receiverBuffers,
-            receiverTiming: state.receiverTiming,
-            converter: state.tapConverter,
-            converterInputFormat: state.tapConverterInputFormat,
-            converterOutputFormat: state.tapConverterOutputFormat,
-            convertedBuffer: state.tapConvertedBuffer,
-          ),
-        )
-      }
-      tapSnapshotLock.withLock { $0 = wrapped.value }
-
-      // Start new writer loop for the new file
-      startFileWriteLoop(flushing: newBuffers, of: format, to: newWriter)
-
-      // Notify of new file (for crash detection tracking)
-      let fileFormat = configuration.outputConfiguration.fileFormat.rawValue
-      onRecordingStarted?(newURL, fileFormat)
-
-      log.info("📼 Rotated recording file to: \(newURL.lastPathComponent, privacy: .public)")
-
-      return currentURL
+      try await recordingRuntime.rotateRecordingFile()
     }
   }
 #endif
