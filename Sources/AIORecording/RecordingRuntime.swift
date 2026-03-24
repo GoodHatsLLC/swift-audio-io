@@ -4,6 +4,7 @@
   import AIOAudioSession
   import AIOSupport
   import AIOEngineCore
+  import AIORecordingSupport
   import AVFoundation
   import Foundation
   import os
@@ -334,7 +335,7 @@
           ),
         )
       }
-      owner.tapSnapshotLock.withLock { $0 = wrapped.value }
+      owner.recordingInfrastructure.tapSnapshotLock.withLock { $0 = wrapped.value }
 
       owner.startFileWriteLoop(flushing: newBuffers, of: format, to: newWriter)
 

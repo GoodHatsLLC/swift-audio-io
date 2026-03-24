@@ -4,6 +4,7 @@
   package import AIOAudioSession
   import AIOSupport
   package import AIOEngineCore
+  package import AIORecordingSupport
   package import AVFoundation
   import os
   import Tools
@@ -189,7 +190,7 @@
           ),
         )
       }
-      tapSnapshotLock.withLock { $0 = wrapped.value }
+      recordingInfrastructure.tapSnapshotLock.withLock { $0 = wrapped.value }
     }
   }
 #endif

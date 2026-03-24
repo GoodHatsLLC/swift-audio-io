@@ -52,7 +52,7 @@ For each interrupted recording, the recovery service:
 - Validates file recoverability based on format
 - Main method: `performStartupRecovery()`
 
-#### 5. AIOEngine Callbacks (`AIO/Sources/AIOEngine/AIOEngine.swift`)
+#### 5. AIOEngine Callbacks (`AIO/Sources/AIOEngineCore/AIOEngine.swift`)
 - `onRecordingStarted`: Called when recording file is about to be created
 - `onRecordingCompleted`: Called when recording stops successfully
 - `onRecordingFailed`: Called when recording is interrupted

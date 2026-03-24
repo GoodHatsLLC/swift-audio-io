@@ -4,6 +4,7 @@
   public import AIOAudioSession
   public import AIOContracts
   import AIOSupport
+  package import AIORecordingSupport
   import AsyncAlgorithms
   package import Atomics
   package import AVFoundation
@@ -343,19 +344,10 @@
     package nonisolated(unsafe) let engine = AVAudioEngine()
     package nonisolated(unsafe) let player = AVAudioPlayerNode()
     package let engineControlQueue = DispatchQueue(label: "AIOEngine.engine-control", qos: .default)
-    package let writerQueue = DispatchQueue(label: "AIOEngine.writer", qos: .userInitiated)
-    package let receiverQueue = DispatchQueue(label: "AIOEngine.receiver", qos: .userInitiated)
+    package let recordingInfrastructure = RecordingInfrastructure()
+    @MainActor package var recordingRuntimeContext = RecordingRuntimeState()
+    @MainActor package var playbackRuntimeContext = PlaybackRuntimeContext()
 
-    package let recordingSampleTimeAtomic = ManagedAtomic<Int64>(0)
-    package let writerDrainTimeout: Duration = .seconds(5)
-    package let stopDrainTimeout: Duration = .seconds(6)
-    package let receiverPollingInterval: Duration = .milliseconds(20)
-    package let maxBufferSeconds: Double = 2.0
-    package let tapErrorCode = ManagedAtomic<Int>(0)
-    package let tapResizeRequestedFrames = ManagedAtomic<Int>(0)
-    package let metrics = EngineMetrics()
-
-    package let state: Synchronized<RecordingState> = .init(.init())
     package let playbackState: Synchronized<PlaybackRuntimeState> = .init(.init())
 
     // MARK: - Tap Snapshot Lock
@@ -374,7 +366,49 @@
     /// The brief staleness window (one or two tap callbacks using the previous snapshot
     /// if the lock is contended during a write) is safe because the old converter
     /// remains valid until the engine is stopped and restarted.
-    package let tapSnapshotLock = Mut<TapSnapshot>(.empty)
+    package var writerQueue: DispatchQueue {
+      recordingInfrastructure.writerQueue
+    }
+
+    package var receiverQueue: DispatchQueue {
+      recordingInfrastructure.receiverQueue
+    }
+
+    package var recordingSampleTimeAtomic: ManagedAtomic<Int64> {
+      recordingInfrastructure.recordingSampleTimeAtomic
+    }
+
+    package var writerDrainTimeout: Duration {
+      recordingInfrastructure.writerDrainTimeout
+    }
+
+    package var stopDrainTimeout: Duration {
+      recordingInfrastructure.stopDrainTimeout
+    }
+
+    package var receiverPollingInterval: Duration {
+      recordingInfrastructure.receiverPollingInterval
+    }
+
+    package var maxBufferSeconds: Double {
+      recordingInfrastructure.maxBufferSeconds
+    }
+
+    package var tapErrorCode: ManagedAtomic<Int> {
+      recordingInfrastructure.tapErrorCode
+    }
+
+    package var tapResizeRequestedFrames: ManagedAtomic<Int> {
+      recordingInfrastructure.tapResizeRequestedFrames
+    }
+
+    package var metrics: EngineMetrics {
+      recordingInfrastructure.metrics
+    }
+
+    package var state: Synchronized<RecordingState> {
+      recordingInfrastructure.state
+    }
 
     /// A Boolean value that indicates whether the engine is currently recording.
     @MainActor public package(set) var isRecording: Bool = false
@@ -383,11 +417,16 @@
     @MainActor public package(set) var wantsRecording: Bool = false
 
     /// Configuration for state reconciliation attempts.
-    @MainActor public var reconciliationConfiguration: ReconciliationConfiguration = .default
+    @MainActor public var reconciliationConfiguration: ReconciliationConfiguration {
+      get { recordingRuntimeContext.reconciliationConfiguration }
+      set { recordingRuntimeContext.reconciliationConfiguration = newValue }
+    }
 
     /// Preferred audio session category/mode/options for this engine.
-    @MainActor public var recordingSessionConfiguration: AudioSessionConfiguration =
-      .recordingConfiguration
+    @MainActor public var recordingSessionConfiguration: AudioSessionConfiguration {
+      get { recordingRuntimeContext.recordingSessionConfiguration }
+      set { recordingRuntimeContext.recordingSessionConfiguration = newValue }
+    }
     /// Policy controlling whether the engine mutates `AVAudioSession` directly
     /// or delegates activation to a higher-level session authority.
     @MainActor public var audioSessionDelegate: (any AudioSessionDelegate)?
@@ -397,22 +436,43 @@
     }
 
     /// Backend used for audio file writing.
-    @MainActor package var writerBackend: WriterBackend = .extAudioFile
+    @MainActor package var writerBackend: WriterBackend {
+      get { recordingRuntimeContext.writerBackend }
+      set { recordingRuntimeContext.writerBackend = newValue }
+    }
     /// Whether the engine should deactivate the audio session when it becomes idle.
     ///
     /// Leave this `false` when a higher-level manager owns session lifecycle.
-    @MainActor public var deactivateAudioSessionOnStop: Bool = false
+    @MainActor public var deactivateAudioSessionOnStop: Bool {
+      get { recordingRuntimeContext.deactivateAudioSessionOnStop }
+      set { recordingRuntimeContext.deactivateAudioSessionOnStop = newValue }
+    }
 
-    @MainActor package var lastRecordingConfiguration: RecordingConfiguration?
-    @MainActor package var pendingRecordingRestart: RecordingConfiguration?
-    @MainActor package var pendingPlaybackResume: PlaybackResume?
-    @MainActor package var receiverSession: ReceiverSession?
+    @MainActor package var lastRecordingConfiguration: RecordingConfiguration? {
+      get { recordingRuntimeContext.lastRecordingConfiguration }
+      set { recordingRuntimeContext.lastRecordingConfiguration = newValue }
+    }
+
+    @MainActor package var pendingRecordingRestart: RecordingConfiguration? {
+      get { recordingRuntimeContext.pendingRecordingRestart }
+      set { recordingRuntimeContext.pendingRecordingRestart = newValue }
+    }
+
+    @MainActor package var pendingPlaybackResume: PlaybackResume? {
+      get { playbackRuntimeContext.pendingPlaybackResume }
+      set { playbackRuntimeContext.pendingPlaybackResume = newValue }
+    }
+
+    @MainActor package var receiverSession: ReceiverSession? {
+      get { recordingRuntimeContext.receiverSession }
+      set { recordingRuntimeContext.receiverSession = newValue }
+    }
 
     @MainActor package var reconciliationTask: Task<Void, Never>? {
-      willSet {
-        if reconciliationTask != newValue {
-          reconciliationTask?.cancel()
-        }
+      get { recordingRuntimeContext.reconciliationTask }
+      set {
+        recordingRuntimeContext.reconciliationTask?.cancel()
+        recordingRuntimeContext.reconciliationTask = newValue
       }
     }
 
@@ -426,8 +486,15 @@
     /// and `playSegment(..., playbackPollingInterval:)`.
     ///
     /// Values `<= .zero` are treated as `.seconds(0.5)`.
-    @MainActor public var defaultPlaybackPollingInterval: Duration = .seconds(0.5)
-    @MainActor var lastPlaybackStateSignature: PlaybackStateSignature?
+    @MainActor public var defaultPlaybackPollingInterval: Duration {
+      get { playbackRuntimeContext.defaultPlaybackPollingInterval }
+      set { playbackRuntimeContext.defaultPlaybackPollingInterval = newValue }
+    }
+
+    @MainActor var lastPlaybackStateSignature: PlaybackStateSignature? {
+      get { playbackRuntimeContext.lastPlaybackStateSignature }
+      set { playbackRuntimeContext.lastPlaybackStateSignature = newValue }
+    }
     /// A Boolean value that indicates whether the engine is currently playing back audio.
     @MainActor public var isPlayback: Bool {
       playback != nil
@@ -438,10 +505,25 @@
       playback?.isPlaying == true
     }
 
-    @MainActor package var writerSession: WriterSession?
-    @MainActor package var drainingWriterSessions: [WriterSession] = []
-    @MainActor package var lastWriteFailure: WriteFailure?
-    @MainActor package var lastRecordingStartFailure: AIOError?
+    @MainActor package var writerSession: WriterSession? {
+      get { recordingRuntimeContext.writerSession }
+      set { recordingRuntimeContext.writerSession = newValue }
+    }
+
+    @MainActor package var drainingWriterSessions: [WriterSession] {
+      get { recordingRuntimeContext.drainingWriterSessions }
+      set { recordingRuntimeContext.drainingWriterSessions = newValue }
+    }
+
+    @MainActor package var lastWriteFailure: WriteFailure? {
+      get { recordingRuntimeContext.lastWriteFailure }
+      set { recordingRuntimeContext.lastWriteFailure = newValue }
+    }
+
+    @MainActor package var lastRecordingStartFailure: AIOError? {
+      get { recordingRuntimeContext.lastRecordingStartFailure as? AIOError }
+      set { recordingRuntimeContext.lastRecordingStartFailure = newValue }
+    }
 
     #if DEBUG
       /// Test hook: when set, `reinstallTap()` calls this instead of touching AVAudioEngine.
@@ -452,18 +534,18 @@
     #endif
 
     @MainActor package var playbackTask: Task<Void, Never>? {
-      willSet {
-        if playbackTask != newValue {
-          playbackTask?.cancel()
-        }
+      get { playbackRuntimeContext.playbackTask }
+      set {
+        playbackRuntimeContext.playbackTask?.cancel()
+        playbackRuntimeContext.playbackTask = newValue
       }
     }
 
     @MainActor package var scrubTask: Task<Void, Never>? {
-      willSet {
-        if scrubTask != newValue {
-          scrubTask?.cancel()
-        }
+      get { playbackRuntimeContext.scrubTask }
+      set {
+        playbackRuntimeContext.scrubTask?.cancel()
+        playbackRuntimeContext.scrubTask = newValue
       }
     }
 
@@ -630,12 +712,12 @@
 
     // MARK: - Playback State Helpers
 
-    struct PlaybackStateSignature: Equatable {
-      let id: UUID?
-      let file: URL?
-      let isPlaying: Bool
+    package struct PlaybackStateSignature: Equatable {
+      package let id: UUID?
+      package let file: URL?
+      package let isPlaying: Bool
 
-      init(playback: Playback?) {
+      package init(playback: Playback?) {
         id = playback?.id
         file = playback?.file
         isPlaying = playback?.isPlaying ?? false
@@ -741,7 +823,7 @@
           ),
         )
       }
-      tapSnapshotLock.withLock { $0 = wrapped.value }
+      recordingInfrastructure.tapSnapshotLock.withLock { $0 = wrapped.value }
       log.warning(
         "Resized tap buffer to \(requested, privacy: .public) frames",
       )

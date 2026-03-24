@@ -29,18 +29,38 @@ The application's architecture is based on the **MVVM (Model-View-ViewModel)** d
 - <doc:Architecture>
 - <doc:Features>
 
+## Package Structure
+
+The AIO package ships three public products:
+
+*   **Tools** — shared async/data-structure utilities.
+*   **AudioSignals** — waveform/LOD data processing with no UI dependencies.
+*   **AIOEngine** — the public compatibility facade and re-export surface used by AppLibrary.
+
+Internally, the implementation is split by runtime ownership:
+
+*   **AIOContracts** — `BufferReceiver`, `AudioSessionDelegate`, and related engine-facing contracts.
+*   **AIOAudioSession** — `AudioEnvironmentManager`, `OutputConfigurationManager`, input/output/session types, and `ErrorManaging`.
+*   **AIOEngineCore** — the core `AIOEngine` type, shared state, audio-session bridge, and file I/O helpers.
+*   **AIORecording** — `RecordingRuntime` and recording/tap lifecycle code.
+*   **AIOPlayback** — `PlaybackRuntime` and playback/scrub ownership.
+*   **AIOVisualization** — `AudioVisualizationEngine`, `VisualizationProcessor`, and `VisualizationHub`.
+
 ## AIOEngine
 
-`AIOEngine` is a Swift 6 concurrency-safe audio recording and playback engine built on AVFoundation. It provides low-level audio I/O primitives with real-time buffer streaming, leaving higher-level concerns like file management, UI, and data persistence to consuming applications.
+`AIOEngine` remains the source-compatible public entry point for recording, playback, and live
+visualization. Internally, it now re-exports the session/recording/playback/visualization targets
+listed above instead of being the only meaningful implementation target.
 
-### What AIOEngine Provides
+### What The AIO Package Provides
 
 *   **Core Audio I/O:** Real-time recording and playback with support for multiple formats, sample rates, and bit depths.
-*   **Audio Session Management:** A thin wrapper around `AVAudioSession` for hardware monitoring and configuration.
+*   **Audio Session Management:** `AudioEnvironmentManager` and `OutputConfigurationManager` in `AIOAudioSession`.
 *   **Interruption Handling:** Graceful handling of audio session disruptions like phone calls or route changes.
-*   **Real-time Visualization:** FFT-based spectrum analysis and waveform amplitude tracking.
+*   **Real-time Visualization:** `AudioVisualizationEngine` in `AIOVisualization`, backed by `VisualizationProcessor` and `VisualizationHub`.
 *   **Error Management:** A robust error handling system with an observable error queue.
 *   **Concurrency Primitives:** Reusable utilities for concurrent programming.
+*   **AIO-Owned Runtime Contracts:** `RecordingDriving`, `AudioEnvironmentDriving`, and `OutputConfigurationProviding`, which AppLibrary now depends on directly.
 
 ### Design Philosophy
 

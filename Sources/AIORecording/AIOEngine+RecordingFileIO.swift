@@ -4,6 +4,8 @@
   package import AIOAudioSession
   public import AIOContracts
   import AIOSupport
+  public import AIOEngineCore
+  package import AIORecordingSupport
   import AudioToolbox
   import AVFoundation
   package import Foundation
@@ -15,22 +17,16 @@
   extension AIOEngine: BufferEmitter {
     public typealias T = Float
 
-    /// Attaches a buffer receiver to the engine.
-    ///
-    /// The receiver will receive real-time audio data while recording.
-    ///
-    /// - Parameter receiver: The buffer receiver to attach.
     public nonisolated func attachBufferReceiver(_ receiver: consuming some BufferReceiver<Float>)
       async
     {
       bufferReceivers { $0.append(receiver) }
     }
 
-    /// Detaches all buffer receivers from the engine.
     public nonisolated func detachBufferReceivers() async {
-      for receiver in bufferReceivers({ b in
-        defer { b = [] }
-        return b
+      for receiver in bufferReceivers({ receivers in
+        defer { receivers = [] }
+        return receivers
       }) {
         receiver.endBufferTask()
       }
@@ -181,8 +177,6 @@
         guard let outputFormat = AVAudioFormat(settings: fileSettings) else {
           throw AIOError.invalidRecordingConfiguration(details: "file format settings")
         }
-        // ExtAudioFile ASBD describes the on-disk format, which must be interleaved
-        // for multi-channel audio. The client format (processing) stays non-interleaved.
         let diskFormat: AVAudioFormat
         if !outputFormat.isInterleaved, outputFormat.channelCount > 1 {
           guard
@@ -259,9 +253,6 @@
       )
     }
 
-    // MARK: - Filename Generation
-
-    /// Generates a semantic filename for recordings.
     static func generateRecordingFilename(extension ext: String) -> String {
       RecordingFilename(fileExtension: ext).filename
     }

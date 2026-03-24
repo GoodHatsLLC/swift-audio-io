@@ -111,11 +111,15 @@ Where practical, AIO uses typed throws (e.g. `throws(AIOError)` / `throws(Manage
 
 ---
 
-## 5. Core Types and Contracts (AIOEngine)
+## 5. Core Types and Contracts (AIO Package)
+
+The public `AIOEngine` product now re-exports the internal `AIOAudioSession`, `AIOEngineCore`,
+`AIORecording`, `AIOPlayback`, and `AIOVisualization` targets. The source-of-truth files below use
+their current post-refactor locations.
 
 ### 5.1 `RecordingConfiguration`
 
-**File**: `Packages/AIO/Sources/AIOEngine/Env/RecordingConfiguration.swift`
+**File**: `Packages/AIO/Sources/AIOAudioSession/Env/RecordingConfiguration.swift`
 
 `RecordingConfiguration` is the single “recording recipe” value used to:
 
@@ -138,9 +142,9 @@ It also provides derived formats:
 
 **Files**:
 
-- `Packages/AIO/Sources/AIOEngine/Input/InputConfiguration.swift`
-- `Packages/AIO/Sources/AIOEngine/Input/SampleRate.swift`
-- `Packages/AIO/Sources/AIOEngine/Input/ChannelCount.swift`
+- `Packages/AIO/Sources/AIOAudioSession/Input/InputConfiguration.swift`
+- `Packages/AIO/Sources/AIOAudioSession/Input/SampleRate.swift`
+- `Packages/AIO/Sources/AIOAudioSession/Input/ChannelCount.swift`
 
 `InputConfiguration` is a lightweight value type: sample rate + channel count.
 
@@ -155,10 +159,10 @@ It also provides derived formats:
 
 **Files**:
 
-- `Packages/AIO/Sources/AIOEngine/Input/OutputConfiguration.swift`
-- `Packages/AIO/Sources/AIOEngine/Env/Output/FileFormat.swift`
-- `Packages/AIO/Sources/AIOEngine/Env/Output/BitDepth.swift`
-- `Packages/AIO/Sources/AIOEngine/Env/Output/EncodingQuality.swift`
+- `Packages/AIO/Sources/AIOAudioSession/Input/OutputConfiguration.swift`
+- `Packages/AIO/Sources/AIOAudioSession/Env/Output/FileFormat.swift`
+- `Packages/AIO/Sources/AIOAudioSession/Env/Output/BitDepth.swift`
+- `Packages/AIO/Sources/AIOAudioSession/Env/Output/EncodingQuality.swift`
 
 `OutputConfiguration` selects:
 
@@ -173,7 +177,7 @@ It also provides derived formats:
 
 ### 5.4 `AIOEngine`
 
-**File**: `Packages/AIO/Sources/AIOEngine/AIOEngine.swift`
+**File**: `Packages/AIO/Sources/AIOEngineCore/AIOEngine.swift`
 
 #### 5.4.1 Public state
 
@@ -210,8 +214,8 @@ It also provides derived formats:
 
 **Files**:
 
-- `Packages/AIO/Sources/AIOEngine/Env/AudioEnvironment.swift`
-- `Packages/AIO/Sources/AIOEngine/Env/AudioEnvironmentManager.swift`
+- `Packages/AIO/Sources/AIOAudioSession/Env/AudioEnvironment.swift`
+- `Packages/AIO/Sources/AIOAudioSession/Env/AudioEnvironmentManager.swift`
 
 `AudioEnvironment` is a small wrapper around `AVAudioSession` providing:
 
@@ -235,7 +239,7 @@ It also provides derived formats:
 
 ### 5.6 Error reporting (`ErrorManaging`)
 
-**File**: `Packages/AIO/Sources/AIOEngine/Env/ErrorManaging.swift`
+**File**: `Packages/AIO/Sources/AIOAudioSession/Env/ErrorManaging.swift`
 
 `ErrorManaging` is the narrow protocol used by “business logic” code to report errors without depending on SwiftUI/UI types. It supports:
 
