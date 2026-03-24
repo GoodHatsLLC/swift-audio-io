@@ -64,6 +64,8 @@
     private let errorManager: any ErrorManaging
     private let defaults: UserDefaults
     private let platformAudioBackend: any PlatformAudioBackend
+    private var sessionController: AudioSessionController { .init(owner: self) }
+    private var routeObserver: AudioRouteObserver { .init(owner: self) }
     private var backendRouteTask: Task<Void, Never>?
 
     private enum StorageKey {
@@ -251,10 +253,7 @@
     }
 
     public func setAudioSessionActive(_ active: Bool) throws(ManagerError) {
-      guard isRunning else {
-        return
-      }
-      isAudioSessionActive = active
+      try sessionController.setAudioSessionActive(active)
     }
 
     public func run() async throws(ManagerError) {
@@ -266,13 +265,7 @@
       isReady = true
 
       backendRouteTask?.cancel()
-      backendRouteTask = Task { @MainActor [weak self] in
-        guard let self else { return }
-        for await _ in platformAudioBackend.routeChanges() {
-          await refreshInputsFromPlatform()
-          await notifyRouteChangeSubscribers()
-        }
-      }
+      backendRouteTask = routeObserver.makeRouteTask()
 
       // Keep parity with iOS semantics: `run()` represents a long-lived manager loop
       // and only returns after cancellation.
@@ -321,6 +314,36 @@
     private func notifyRouteChangeSubscribers() async {
       let event = AudioRouteChangeEvent(userMessage: "Audio route changed")
       await eventHub.dispatchRouteChange(event)
+    }
+  }
+
+  extension AudioEnvironmentManager {
+    private struct AudioSessionController {
+      let owner: AudioEnvironmentManager
+
+      @MainActor
+      func setAudioSessionActive(_ active: Bool) throws(ManagerError) {
+        guard owner.isRunning else {
+          return
+        }
+        owner.isAudioSessionActive = active
+      }
+    }
+
+    private struct AudioRouteObserver {
+      let owner: AudioEnvironmentManager
+
+      @MainActor
+      func makeRouteTask() -> Task<Void, Never> {
+        let backend = owner.platformAudioBackend
+        return Task { @MainActor [weak owner] in
+          guard let owner else { return }
+          for await _ in backend.routeChanges() {
+            await owner.refreshInputsFromPlatform()
+            await owner.notifyRouteChangeSubscribers()
+          }
+        }
+      }
     }
   }
 #endif
