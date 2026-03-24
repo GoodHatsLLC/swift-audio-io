@@ -1,9 +1,12 @@
 // © GoodHatsLLC
 
 #if canImport(AVFoundation)
+  package import AIOAudioSession
+  public import AIOContracts
+  import AIOSupport
   import AudioToolbox
   import AVFoundation
-  import Foundation
+  package import Foundation
   import os
   import Tools
 
@@ -34,7 +37,7 @@
     }
 
     @MainActor
-    func resolveOutputURL(
+    package func resolveOutputURL(
       for configuration: RecordingConfiguration,
       allowExplicitFile: Bool,
     ) throws(AIOError) -> (url: URL, protection: OutputFileProtection?) {
@@ -154,7 +157,7 @@
     }
 
     @MainActor
-    func makeRecordingWriter(
+    package func makeRecordingWriter(
       url: URL,
       configuration: RecordingConfiguration,
     ) throws(AIOError) -> any RecordingFileWriter {
@@ -214,7 +217,7 @@
     }
 
     @MainActor
-    func applyFileProtectionIfNeeded(
+    package func applyFileProtectionIfNeeded(
       _ protection: OutputFileProtection?,
       to url: URL,
     ) {
@@ -236,14 +239,14 @@
       #endif
     }
 
-    nonisolated func fileSizeDescription(for url: URL) -> String {
+    package nonisolated func fileSizeDescription(for url: URL) -> String {
       if let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize {
         return "\(size)"
       }
       return "unknown"
     }
 
-    nonisolated func fileSizeValue(for url: URL) -> Int? {
+    package nonisolated func fileSizeValue(for url: URL) -> Int? {
       (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize)
     }
 

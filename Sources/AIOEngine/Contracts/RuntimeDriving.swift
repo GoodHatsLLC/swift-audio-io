@@ -1,6 +1,10 @@
 // © GoodHatsLLC
 
 #if canImport(AVFoundation)
+  public import AIOAudioSession
+  public import AIOContracts
+  public import AIOEngineCore
+  import AIORecording
   public import Foundation
   public import Tools
 

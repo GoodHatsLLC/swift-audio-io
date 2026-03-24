@@ -1,6 +1,7 @@
 // © GoodHatsLLC
 
 #if canImport(AVFAudio)
+  import AIOSupport
   import AudioSignals
   import Foundation
   import os

@@ -1,12 +1,16 @@
 // © GoodHatsLLC
 
 #if canImport(AVFoundation)
+  public import AIOAudioSession
+  import AIOContracts
+  import AIOSupport
+  public import AIOEngineCore
   import AsyncAlgorithms
   import Atomics
-  import AVFoundation
+  package import AVFoundation
   public import Foundation
   import os
-  import Tools
+  package import Tools
 
   private let log = SystemLog.make()
 
@@ -88,7 +92,7 @@
       try await recordingRuntime.startRecording(configuration: configuration)
     }
 
-    @MainActor func startFileWriteLoop(
+    @MainActor package func startFileWriteLoop(
       flushing buffers: [SPSCRingBuffer<Float>],
       of processingFormat: AVAudioFormat,
       to writer: any RecordingFileWriter,
@@ -139,7 +143,7 @@
       log.info("📝 Writer started for \(writer.fileURL.lastPathComponent, privacy: .public)")
     }
 
-    @MainActor func startReceiverLoop(
+    @MainActor package func startReceiverLoop(
       buffers: [SPSCRingBuffer<Float>],
       timing: SPSCRingBuffer<TimingPacket>,
       processingFormat: AVAudioFormat,
@@ -526,7 +530,7 @@
 
     /// Thread Domain: MainActor (entry point), engineControl (graph mutations).
     @MainActor
-    func gracefulStop() async {
+    package func gracefulStop() async {
       log.info("gracefulStop requested")
       let tapBus = state.consume(\.installedTapBus)
       let busesToRemove = Array(Set([tapBus, 0].compactMap(\.self)))
@@ -811,47 +815,6 @@
         && lhs.sampleRate == rhs.sampleRate
         && lhs.channelCount == rhs.channelCount
         && lhs.isInterleaved == rhs.isInterleaved
-    }
-
-    func resizeTapConvertedBufferIfNeeded() {
-      let requested = consumeTapResizeRequest()
-      guard requested > 0 else { return }
-      let (existingCapacity, processingFormat) = state.withLock { state in
-        (state.tapConvertedBuffer?.frameCapacity, state.tapConverterOutputFormat)
-      }
-      guard let processingFormat else { return }
-      let current = Int(existingCapacity ?? 0)
-      guard requested > current else { return }
-      let targetCapacity = AVAudioFrameCount(requested)
-      guard
-        let buffer = AVAudioPCMBuffer(
-          pcmFormat: processingFormat,
-          frameCapacity: targetCapacity,
-        )
-      else {
-        log.error(
-          "Failed to resize tap buffer to \(requested, privacy: .public) frames",
-        )
-        return
-      }
-      let wrapped = state.withLock { state -> Transferring<TapSnapshot> in
-        state.tapConvertedBuffer = buffer
-        return Transferring(
-          TapSnapshot(
-            audioBuffers: state.audioBuffers,
-            receiverBuffers: state.receiverBuffers,
-            receiverTiming: state.receiverTiming,
-            converter: state.tapConverter,
-            converterInputFormat: state.tapConverterInputFormat,
-            converterOutputFormat: state.tapConverterOutputFormat,
-            convertedBuffer: state.tapConvertedBuffer,
-          ),
-        )
-      }
-      tapSnapshotLock.withLock { $0 = wrapped.value }
-      log.warning(
-        "Resized tap buffer to \(requested, privacy: .public) frames",
-      )
     }
 
     /// Thread Domain: writerQueue

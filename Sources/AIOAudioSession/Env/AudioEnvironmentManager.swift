@@ -1,6 +1,8 @@
 // © GoodHatsLLC
 
 #if os(iOS)
+  public import AIOContracts
+  import AIOSupport
   public import AVFAudio
   import Combine
   import Foundation

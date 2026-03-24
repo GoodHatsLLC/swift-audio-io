@@ -5,6 +5,7 @@
   import Foundation
   import Testing
 
+  @testable import AIOAudioSession
   @_spi(TESTING) import AIOEngine
   import Tools
 

@@ -1,10 +1,10 @@
 // © GoodHatsLLC
 
 import Foundation
-import os
+package import os
 
-enum SystemLog {
-  static func make(
+package enum SystemLog {
+  package static func make(
     subsystem: String = defaultSubsystem,
     category: String = #fileID,
   ) -> Logger {

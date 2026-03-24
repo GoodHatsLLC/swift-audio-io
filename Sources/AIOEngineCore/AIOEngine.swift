@@ -1,9 +1,12 @@
 // © GoodHatsLLC
 
 #if canImport(AVFoundation)
+  public import AIOAudioSession
+  public import AIOContracts
+  import AIOSupport
   import AsyncAlgorithms
-  import Atomics
-  import AVFoundation
+  package import Atomics
+  package import AVFoundation
   import Dispatch
   public import Foundation
   public import Observation
@@ -12,9 +15,9 @@
 
   private let log = SystemLog.make()
   #if DEBUG
-    let rtLoggingEnabled: Bool = ProcessInfo.processInfo.environment["AIO_RT_LOGS"] == "1"
+    package let rtLoggingEnabled: Bool = ProcessInfo.processInfo.environment["AIO_RT_LOGS"] == "1"
   #else
-    let rtLoggingEnabled = false
+    package let rtLoggingEnabled = false
   #endif
 
   /// The core audio recording and playback engine.
@@ -337,23 +340,23 @@
 
     // MARK: - Stored Properties
 
-    nonisolated(unsafe) let engine = AVAudioEngine()
-    nonisolated(unsafe) let player = AVAudioPlayerNode()
-    let engineControlQueue = DispatchQueue(label: "AIOEngine.engine-control", qos: .default)
-    let writerQueue = DispatchQueue(label: "AIOEngine.writer", qos: .userInitiated)
-    let receiverQueue = DispatchQueue(label: "AIOEngine.receiver", qos: .userInitiated)
+    package nonisolated(unsafe) let engine = AVAudioEngine()
+    package nonisolated(unsafe) let player = AVAudioPlayerNode()
+    package let engineControlQueue = DispatchQueue(label: "AIOEngine.engine-control", qos: .default)
+    package let writerQueue = DispatchQueue(label: "AIOEngine.writer", qos: .userInitiated)
+    package let receiverQueue = DispatchQueue(label: "AIOEngine.receiver", qos: .userInitiated)
 
-    let recordingSampleTimeAtomic = ManagedAtomic<Int64>(0)
-    let writerDrainTimeout: Duration = .seconds(5)
-    let stopDrainTimeout: Duration = .seconds(6)
-    let receiverPollingInterval: Duration = .milliseconds(20)
-    let maxBufferSeconds: Double = 2.0
-    let tapErrorCode = ManagedAtomic<Int>(0)
-    let tapResizeRequestedFrames = ManagedAtomic<Int>(0)
-    let metrics = EngineMetrics()
+    package let recordingSampleTimeAtomic = ManagedAtomic<Int64>(0)
+    package let writerDrainTimeout: Duration = .seconds(5)
+    package let stopDrainTimeout: Duration = .seconds(6)
+    package let receiverPollingInterval: Duration = .milliseconds(20)
+    package let maxBufferSeconds: Double = 2.0
+    package let tapErrorCode = ManagedAtomic<Int>(0)
+    package let tapResizeRequestedFrames = ManagedAtomic<Int>(0)
+    package let metrics = EngineMetrics()
 
-    let state: Synchronized<RecordingState> = .init(.init())
-    let playbackState: Synchronized<PlaybackRuntimeState> = .init(.init())
+    package let state: Synchronized<RecordingState> = .init(.init())
+    package let playbackState: Synchronized<PlaybackRuntimeState> = .init(.init())
 
     // MARK: - Tap Snapshot Lock
 
@@ -371,13 +374,13 @@
     /// The brief staleness window (one or two tap callbacks using the previous snapshot
     /// if the lock is contended during a write) is safe because the old converter
     /// remains valid until the engine is stopped and restarted.
-    let tapSnapshotLock = Mut<TapSnapshot>(.empty)
+    package let tapSnapshotLock = Mut<TapSnapshot>(.empty)
 
     /// A Boolean value that indicates whether the engine is currently recording.
-    @MainActor public internal(set) var isRecording: Bool = false
+    @MainActor public package(set) var isRecording: Bool = false
 
     /// The user's desired recording state.
-    @MainActor public internal(set) var wantsRecording: Bool = false
+    @MainActor public package(set) var wantsRecording: Bool = false
 
     /// Configuration for state reconciliation attempts.
     @MainActor public var reconciliationConfiguration: ReconciliationConfiguration = .default
@@ -394,18 +397,18 @@
     }
 
     /// Backend used for audio file writing.
-    @MainActor var writerBackend: WriterBackend = .extAudioFile
+    @MainActor package var writerBackend: WriterBackend = .extAudioFile
     /// Whether the engine should deactivate the audio session when it becomes idle.
     ///
     /// Leave this `false` when a higher-level manager owns session lifecycle.
     @MainActor public var deactivateAudioSessionOnStop: Bool = false
 
-    @MainActor var lastRecordingConfiguration: RecordingConfiguration?
-    @MainActor var pendingRecordingRestart: RecordingConfiguration?
-    @MainActor var pendingPlaybackResume: PlaybackResume?
-    @MainActor var receiverSession: ReceiverSession?
+    @MainActor package var lastRecordingConfiguration: RecordingConfiguration?
+    @MainActor package var pendingRecordingRestart: RecordingConfiguration?
+    @MainActor package var pendingPlaybackResume: PlaybackResume?
+    @MainActor package var receiverSession: ReceiverSession?
 
-    @MainActor var reconciliationTask: Task<Void, Never>? {
+    @MainActor package var reconciliationTask: Task<Void, Never>? {
       willSet {
         if reconciliationTask != newValue {
           reconciliationTask?.cancel()
@@ -435,20 +438,20 @@
       playback?.isPlaying == true
     }
 
-    @MainActor var writerSession: WriterSession?
-    @MainActor var drainingWriterSessions: [WriterSession] = []
-    @MainActor var lastWriteFailure: WriteFailure?
-    @MainActor var lastRecordingStartFailure: AIOError?
+    @MainActor package var writerSession: WriterSession?
+    @MainActor package var drainingWriterSessions: [WriterSession] = []
+    @MainActor package var lastWriteFailure: WriteFailure?
+    @MainActor package var lastRecordingStartFailure: AIOError?
 
     #if DEBUG
       /// Test hook: when set, `reinstallTap()` calls this instead of touching AVAudioEngine.
-      @MainActor var testReinstallTapOverride:
+      @MainActor package var testReinstallTapOverride:
         (
           @MainActor (RecordingConfiguration, AVAudioFormat) throws(AIOError) -> TapInstallResult
         )?
     #endif
 
-    @MainActor var playbackTask: Task<Void, Never>? {
+    @MainActor package var playbackTask: Task<Void, Never>? {
       willSet {
         if playbackTask != newValue {
           playbackTask?.cancel()
@@ -456,7 +459,7 @@
       }
     }
 
-    @MainActor var scrubTask: Task<Void, Never>? {
+    @MainActor package var scrubTask: Task<Void, Never>? {
       willSet {
         if scrubTask != newValue {
           scrubTask?.cancel()
@@ -466,9 +469,9 @@
 
     public let bufferReceivers: Synchronized<[any BufferReceiver<Float>]> = .init([])
 
-    let clock = ContinuousClock()
+    package let clock = ContinuousClock()
 
-    let errorSubject: Subject<any Error> = .init()
+    package let errorSubject: Subject<any Error> = .init()
 
     /// An asynchronous stream of errors that occur in the audio engine.
     public var errors: AsyncBroadcaster<any Error> {
@@ -506,11 +509,11 @@
     /// Thread Domain: engineControl
     /// All AVAudioEngine graph mutations must go through these helpers.
     ///
-    nonisolated func runOnEngineControlQueue<T>(_ work: () -> T) -> T {
+    package nonisolated func runOnEngineControlQueue<T>(_ work: () -> T) -> T {
       engineControlQueue.sync(execute: work)
     }
 
-    nonisolated func runOnEngineControlQueueResult<T>(
+    package nonisolated func runOnEngineControlQueueResult<T>(
       _ work: () throws -> T,
     ) -> Result<T, any Error> {
       engineControlQueue.sync {
@@ -518,7 +521,7 @@
       }
     }
 
-    nonisolated func withEngineControlQueue<T>(
+    package nonisolated func withEngineControlQueue<T>(
       _ work: @escaping @Sendable () -> T,
     ) async -> T {
       await withCheckedContinuation { continuation in
@@ -529,7 +532,7 @@
       }
     }
 
-    nonisolated func withEngineControlQueueResult<T>(
+    package nonisolated func withEngineControlQueueResult<T>(
       _ work: @escaping @Sendable () throws -> T,
     ) async -> Result<T, any Error> {
       await withCheckedContinuation { continuation in
@@ -542,11 +545,11 @@
 
     // MARK: - Atomic State Helpers
 
-    nonisolated func recordTapError(_ code: TapErrorCode) {
+    package nonisolated func recordTapError(_ code: TapErrorCode) {
       tapErrorCode.store(code.rawValue, ordering: .relaxed)
     }
 
-    nonisolated func requestTapResize(frames: Int) {
+    package nonisolated func requestTapResize(frames: Int) {
       guard frames > 0 else { return }
       var current = tapResizeRequestedFrames.load(ordering: .relaxed)
       while frames > current {
@@ -560,25 +563,25 @@
       }
     }
 
-    nonisolated func consumeTapError() -> TapErrorCode? {
+    package nonisolated func consumeTapError() -> TapErrorCode? {
       let raw = tapErrorCode.load(ordering: .relaxed)
       guard raw != 0, let code = TapErrorCode(rawValue: raw) else { return nil }
       tapErrorCode.store(0, ordering: .relaxed)
       return code
     }
 
-    nonisolated func consumeTapResizeRequest() -> Int {
+    package nonisolated func consumeTapResizeRequest() -> Int {
       tapResizeRequestedFrames.exchange(0, ordering: .acquiringAndReleasing)
     }
 
-    nonisolated func isDrainSatisfiedByTarget(_ session: WriterSession) -> Bool {
+    package nonisolated func isDrainSatisfiedByTarget(_ session: WriterSession) -> Bool {
       let target = session.control.targetSampleTime.load(ordering: .relaxed)
       let written = session.control.writtenSampleTime.load(ordering: .relaxed)
       let stopRequested = session.control.stopRequested.load(ordering: .relaxed)
       return stopRequested && written >= target
     }
 
-    nonisolated func awaitWriterDrainOutcome(_ session: WriterSession) async
+    package nonisolated func awaitWriterDrainOutcome(_ session: WriterSession) async
       -> WriterDrainOutcome
     {
       log.info(
@@ -640,7 +643,7 @@
     }
 
     @MainActor
-    func setPlayback(_ new: Playback?) {
+    package func setPlayback(_ new: Playback?) {
       let previousSignature = PlaybackStateSignature(playback: playback)
 
       let updated: Playback? =
@@ -665,12 +668,12 @@
       onPlaybackUpdated?(playback)
     }
 
-    func getPlayback() -> Playback? {
+    package func getPlayback() -> Playback? {
       guard let playbackInstance = playbackState[locked: \.playbackInstance] else { return nil }
       return getPlayback(for: playbackInstance)
     }
 
-    func getPlayback(for instance: PlaybackInstance) -> Playback {
+    package func getPlayback(for instance: PlaybackInstance) -> Playback {
       let startOffset =
         Double(instance.startFrame) / instance.file.processingFormat.sampleRate
 
@@ -703,8 +706,49 @@
 
     // MARK: - Tap Error Handler Factory
 
+    package func resizeTapConvertedBufferIfNeeded() {
+      let requested = consumeTapResizeRequest()
+      guard requested > 0 else { return }
+      let (existingCapacity, processingFormat) = state.withLock { state in
+        (state.tapConvertedBuffer?.frameCapacity, state.tapConverterOutputFormat)
+      }
+      guard let processingFormat else { return }
+      let current = Int(existingCapacity ?? 0)
+      guard requested > current else { return }
+      let targetCapacity = AVAudioFrameCount(requested)
+      guard
+        let buffer = AVAudioPCMBuffer(
+          pcmFormat: processingFormat,
+          frameCapacity: targetCapacity,
+        )
+      else {
+        log.error(
+          "Failed to resize tap buffer to \(requested, privacy: .public) frames",
+        )
+        return
+      }
+      let wrapped = state.withLock { state -> Transferring<TapSnapshot> in
+        state.tapConvertedBuffer = buffer
+        return Transferring(
+          TapSnapshot(
+            audioBuffers: state.audioBuffers,
+            receiverBuffers: state.receiverBuffers,
+            receiverTiming: state.receiverTiming,
+            converter: state.tapConverter,
+            converterInputFormat: state.tapConverterInputFormat,
+            converterOutputFormat: state.tapConverterOutputFormat,
+            convertedBuffer: state.tapConvertedBuffer,
+          ),
+        )
+      }
+      tapSnapshotLock.withLock { $0 = wrapped.value }
+      log.warning(
+        "Resized tap buffer to \(requested, privacy: .public) frames",
+      )
+    }
+
     /// Creates a matched pair of tap-error poll/handler closures for writer and receiver loops.
-    func makeTapErrorHandlers() -> (
+    package func makeTapErrorHandlers() -> (
       poll: @Sendable () -> TapErrorCode?,
       handler: @Sendable (TapErrorCode) -> Void,
     ) {

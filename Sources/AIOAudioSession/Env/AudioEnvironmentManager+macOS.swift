@@ -1,6 +1,7 @@
 // © GoodHatsLLC
 
 #if os(macOS)
+  public import AIOContracts
   public import Foundation
   public import Observation
   public import Tools

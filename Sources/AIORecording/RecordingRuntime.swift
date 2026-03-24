@@ -1,6 +1,9 @@
 // © GoodHatsLLC
 
 #if canImport(AVFoundation)
+  import AIOAudioSession
+  import AIOSupport
+  import AIOEngineCore
   import AVFoundation
   import Foundation
   import os
@@ -136,13 +139,15 @@
           return unsafe owner.player.isPlaying
         }
         if shouldStopPlayer {
-          await owner.stopPlayerIfNeeded()
+          await owner.withEngineControlQueue { [weak owner] in
+            guard let owner, unsafe owner.player.isPlaying else { return }
+            unsafe owner.player.stop()
+          }
         }
         try await MainActor.run {
           if shouldStopPlayer || owner.playback != nil {
             owner.playbackState[locked: \.playbackInstance] = nil
-            owner.playback = nil
-            owner.onPlaybackUpdated?(nil)
+            owner.setPlayback(nil)
           }
           owner.lastWriteFailure = nil
           owner.lastRecordingConfiguration = configuration

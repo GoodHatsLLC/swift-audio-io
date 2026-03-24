@@ -3,6 +3,7 @@
 #if os(macOS)
   import Foundation
   import Testing
+  @testable import AIOAudioSession
   @testable import AIOEngine
 
   struct PlatformAudioBackendContractTests {

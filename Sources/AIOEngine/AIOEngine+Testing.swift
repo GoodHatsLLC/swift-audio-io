@@ -2,6 +2,9 @@
 
 #if os(iOS)
   #if DEBUG
+    import AIOAudioSession
+    public import AIOEngineCore
+    import AIORecording
     import Atomics
     public import AVFoundation
     import Tools

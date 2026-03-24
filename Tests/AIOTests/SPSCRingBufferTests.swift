@@ -5,6 +5,7 @@
   import AVFoundation
   import Testing
   import Tools
+  @testable import AIOAudioSession
   @testable import AIOEngine
 
   struct SPSCRingBufferTests {

@@ -5,6 +5,7 @@
   import Testing
   import UIKit
   import XCTest
+  @testable import AIOAudioSession
   @testable import AIOEngine
 
   struct AIOEngineTests {

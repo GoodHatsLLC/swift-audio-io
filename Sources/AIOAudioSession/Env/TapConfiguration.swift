@@ -1,9 +1,9 @@
 // © GoodHatsLLC
 
 #if canImport(AVFoundation)
-  import AVFoundation
+  package import AVFoundation
 
-  struct TapConfiguration: Hashable {
+  package struct TapConfiguration: Hashable {
     private static func normalizedBufferSize(
       sampleRate: Double,
       tapReadSeconds: Double,
@@ -27,7 +27,7 @@
       return AVAudioFrameCount(chosen)
     }
 
-    init(
+    package init(
       bus: Int,
       channelCount _: Int,
       inputFormat: AVAudioFormat,  // inputNode.outputFormat(forBus: 0)
@@ -45,7 +45,7 @@
       )
     }
 
-    init(
+    package init(
       bus: Int,
       inputFormat: AVAudioFormat,
       outputFormat: AVAudioFormat,
@@ -58,16 +58,16 @@
       self.bufferSize = bufferSize
     }
 
-    let bus: Int
-    let inputFormat: CMFormatDescription
-    let outputFormat: CMFormatDescription
-    let bufferSize: AVAudioFrameCount
+    package let bus: Int
+    package let inputFormat: CMFormatDescription
+    package let outputFormat: CMFormatDescription
+    package let bufferSize: AVAudioFrameCount
 
-    var inputAVAudioFormat: AVAudioFormat {
+    package var inputAVAudioFormat: AVAudioFormat {
       AVAudioFormat(cmAudioFormatDescription: inputFormat)
     }
 
-    var outputAVAudioFormat: AVAudioFormat {
+    package var outputAVAudioFormat: AVAudioFormat {
       AVAudioFormat(cmAudioFormatDescription: outputFormat)
     }
   }
