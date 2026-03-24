@@ -5,6 +5,7 @@
   import AIOContracts
   import AIOSupport
   public import AIOEngineCore
+  package import AIORecordingSupport
   import AsyncAlgorithms
   import Atomics
   package import AVFoundation
@@ -97,50 +98,11 @@
       of processingFormat: AVAudioFormat,
       to writer: any RecordingFileWriter,
     ) {
-      let control = WriterControl()
-      let localMetrics = metrics
-      let (tapErrorPoll, onTapError) = makeTapErrorHandlers()
-      let errorHandler: @Sendable (ErrorContext) -> Void = { [weak self] error in
-        guard let self else { return }
-        Task { @MainActor in
-          self.recordWriteFailure(error, url: writer.fileURL)
-          self.errorSubject.send(
-            AIOError.audioFileFailed(operation: .write, url: writer.fileURL, error: error),
-          )
-          self.onRecordingFailed?()
-        }
-      }
-      let session = WriterSession(
-        id: UUID(),
-        control: control,
-        writer: writer,
-        fileURL: writer.fileURL,
+      recordingEngineRuntime.startFileWriteLoop(
+        flushing: buffers,
+        of: processingFormat,
+        to: writer,
       )
-      writerSession = session
-      let writeBufferSize = 1024
-      let preAllocatedBuffer = Transferring(
-        AVAudioPCMBuffer(
-          pcmFormat: processingFormat,
-          frameCapacity: AVAudioFrameCount(writeBufferSize),
-        ),
-      )
-      writerQueue.async { [control, localMetrics] in
-        AIOEngine.writerLoopSync(
-          writer: writer,
-          format: processingFormat,
-          audioBuffers: buffers,
-          writeBuffer: preAllocatedBuffer.value,
-          control: control,
-          metrics: localMetrics,
-          shouldCancel: { [control] in
-            control.cancelRequested.load(ordering: .relaxed)
-          },
-          errorHandler: errorHandler,
-          tapErrorPoll: tapErrorPoll,
-          onTapError: onTapError,
-        )
-      }
-      log.info("📝 Writer started for \(writer.fileURL.lastPathComponent, privacy: .public)")
     }
 
     @MainActor package func startReceiverLoop(
@@ -148,194 +110,59 @@
       timing: SPSCRingBuffer<TimingPacket>,
       processingFormat: AVAudioFormat,
     ) {
-      stopReceiverLoop()
-      let control = ReceiverControl()
-      let session = ReceiverSession(
-        id: UUID(),
-        control: control,
+      recordingEngineRuntime.startReceiverLoop(
         buffers: buffers,
         timing: timing,
         processingFormat: processingFormat,
       )
-      receiverSession = session
-      #if DEBUG
-        let onUnderrun: @Sendable () -> Void = { [metrics] in
-          metrics.receiverUnderruns.wrappingIncrement(ordering: .relaxed)
-        }
-        let onDrop: @Sendable () -> Void = { [metrics] in
-          metrics.receiverDrops.wrappingIncrement(ordering: .relaxed)
-        }
-      #else
-        let onUnderrun: (@Sendable () -> Void)? = nil
-        let onDrop: (@Sendable () -> Void)? = nil
-      #endif
-      let (tapErrorPoll, onTapError) = makeTapErrorHandlers()
-      let cadence = receiverPollingInterval
-      receiverQueue.async { [control, buffers, timing, processingFormat, bufferReceivers] in
-        AIOEngine.receiverLoopSync(
-          buffers: buffers,
-          timing: timing,
-          processingFormat: processingFormat,
-          bufferReceivers: bufferReceivers,
-          control: control,
-          cadence: cadence,
-          onUnderrun: onUnderrun,
-          onDrop: onDrop,
-          tapErrorPoll: tapErrorPoll,
-          onTapError: onTapError,
-        )
-      }
     }
 
     @MainActor func stopReceiverLoop() {
-      guard let session = receiverSession else { return }
-      session.control.cancelRequested.store(true, ordering: .relaxed)
-      receiverSession = nil
+      recordingEngineRuntime.stopReceiverLoop()
     }
 
     @MainActor
     func prepareDrain(for session: WriterSession, targetSampleTime: Int64, logBuffers: Bool) {
-      session.control.stopRequested.store(true, ordering: .relaxed)
-      session.control.targetSampleTime.store(targetSampleTime, ordering: .relaxed)
-      let written = session.control.writtenSampleTime.load(ordering: .relaxed)
-      if written >= targetSampleTime {
-        Task { await session.control.targetSatisfiedSignal.signal() }
-      }
-      if logBuffers {
-        let counts = state.withLock { $0.audioBuffers?.map(\.availableToRead) ?? [] }
-        log.info(
-          "🧹 Stop target set: target=\(targetSampleTime, privacy: .public) written=\(written, privacy: .public) buffers=\(counts, privacy: .public)",
-        )
-      } else {
-        log.info(
-          "🧹 Stop target set: target=\(targetSampleTime, privacy: .public) (non-current session)",
-        )
-      }
+      recordingEngineRuntime.prepareDrain(
+        for: session,
+        targetSampleTime: targetSampleTime,
+        logBuffers: logBuffers,
+      )
     }
 
     @MainActor
     func drainWriterSession(_ session: WriterSession, notifyOnFailure: Bool) async {
-      let start = clock.now
-      log.info("🧹 Drain start for \(session.fileURL.lastPathComponent, privacy: .public)")
-      let outcome = await awaitWriterDrainOutcome(session)
-      let elapsed = start.duration(to: clock.now)
-      switch outcome {
-      case .signaled:
-        session.writer.close()
-        let size = fileSizeDescription(for: session.fileURL)
-        log.info(
-          "🧹 Writer drained for \(session.fileURL.lastPathComponent, privacy: .public) (size=\(size, privacy: .public), elapsed=\(elapsed, privacy: .public))",
-        )
-      case .targetSatisfied:
-        session.control.cancelRequested.store(true, ordering: .relaxed)
-        session.writer.close()
-        let target = session.control.targetSampleTime.load(ordering: .relaxed)
-        let written = session.control.writtenSampleTime.load(ordering: .relaxed)
-        log.info(
-          "🧹 Drain short-circuit: target satisfied for \(session.fileURL.lastPathComponent, privacy: .public) target=\(target, privacy: .public) written=\(written, privacy: .public) elapsed=\(elapsed, privacy: .public)",
-        )
-      case .timedOut:
-        let error = WriterDrainTimeoutError(url: session.fileURL, timeout: writerDrainTimeout)
-        session.control.cancelRequested.store(true, ordering: .relaxed)
-        session.writer.close()
-        let target = session.control.targetSampleTime.load(ordering: .relaxed)
-        let written = session.control.writtenSampleTime.load(ordering: .relaxed)
-        log.error(
-          "⏱️ Writer drain timed out for \(session.fileURL.lastPathComponent, privacy: .public) after \(elapsed, privacy: .public): \(error, privacy: .public) target=\(target, privacy: .public) written=\(written, privacy: .public)",
-        )
-        recordWriteFailure(ErrorContext(error), url: session.fileURL)
-        if notifyOnFailure {
-          errorSubject.send(
-            AIOError.audioFileFailed(
-              operation: .write,
-              url: session.fileURL,
-              error: ErrorContext(error),
-            ),
-          )
-          onRecordingFailed?()
-        }
-      }
+      await recordingEngineRuntime.drainWriterSession(
+        session,
+        notifyOnFailure: notifyOnFailure,
+      )
     }
 
     @MainActor
     func enqueueDrain(for session: WriterSession) {
-      let target = recordingSampleTimeAtomic.load(ordering: .relaxed)
-      prepareDrain(
-        for: session, targetSampleTime: target, logBuffers: session.id == writerSession?.id,
-      )
-      drainingWriterSessions.append(session)
-      Task { [weak self] in
-        guard let self else { return }
-        await drainWriterSession(session, notifyOnFailure: true)
-        await MainActor.run { self.drainingWriterSessions.removeAll { $0.id == session.id } }
-      }
+      recordingEngineRuntime.enqueueDrain(for: session)
     }
 
     @MainActor
     func stopAndDrainAllWriterSessions(notifyOnFailure: Bool) async {
-      if Task.isCancelled {
-        log.warning("🧹 stopAndDrainAllWriterSessions cancelled before start")
-        return
-      }
-      var sessions: [WriterSession] = []
-      if let current = writerSession {
-        sessions.append(current)
-      }
-      sessions.append(contentsOf: drainingWriterSessions)
-
-      let target = recordingSampleTimeAtomic.load(ordering: .relaxed)
-      for session in sessions {
-        if Task.isCancelled {
-          log.warning("🧹 stopAndDrainAllWriterSessions cancelled before stop request")
-          return
-        }
-        log.info(
-          "🧹 Stop requested for writer \(session.fileURL.lastPathComponent, privacy: .public)",
-        )
-        prepareDrain(
-          for: session, targetSampleTime: target, logBuffers: session.id == writerSession?.id,
-        )
-      }
-      for session in sessions {
-        if Task.isCancelled {
-          log.warning("🧹 stopAndDrainAllWriterSessions cancelled before drain wait")
-          return
-        }
-        log.info("🧹 Drain wait start for \(session.fileURL.lastPathComponent, privacy: .public)")
-        await drainWriterSession(session, notifyOnFailure: notifyOnFailure)
-      }
-
-      writerSession = nil
-      drainingWriterSessions.removeAll()
-      log.info("🧹 stopAndDrainAllWriterSessions completed")
-    }
-
-    @MainActor
-    func cancelAllWriterSessions() {
-      if let current = writerSession {
-        current.control.cancelRequested.store(true, ordering: .relaxed)
-      }
-      for session in drainingWriterSessions {
-        session.control.cancelRequested.store(true, ordering: .relaxed)
-      }
-      writerSession = nil
-      drainingWriterSessions.removeAll()
-      log.info("🧹 cancelAllWriterSessions completed")
-    }
-
-    @MainActor
-    func recordWriteFailure(_ error: ErrorContext, url: URL?) {
-      guard lastWriteFailure == nil else { return }
-      lastWriteFailure = WriteFailure(url: url, error: error)
-      log.error(
-        "🛑 Recording write failed for \(url?.lastPathComponent ?? "missing URL", privacy: .public): \(error, privacy: .public)",
+      await recordingEngineRuntime.stopAndDrainAllWriterSessions(
+        notifyOnFailure: notifyOnFailure,
       )
     }
 
     @MainActor
+    func cancelAllWriterSessions() {
+      recordingEngineRuntime.cancelAllWriterSessions()
+    }
+
+    @MainActor
+    func recordWriteFailure(_ error: ErrorContext, url: URL?) {
+      recordingEngineRuntime.recordWriteFailure(error, url: url)
+    }
+
+    @MainActor
     func consumeWriteFailure() -> WriteFailure? {
-      defer { lastWriteFailure = nil }
-      return lastWriteFailure
+      recordingEngineRuntime.consumeWriteFailure()
     }
 
     /// Warms up the audio engine with the specified configuration.
@@ -347,132 +174,24 @@
     /// - Throws: An `AIOError` if the configuration is invalid or if the engine fails to warm up.
     @MainActor
     public func warm(configuration: RecordingConfiguration) throws(AIOError) {
-      guard !isRecording, !isPlaying else {
-        return
-      }
-      try validateEncoderCompatibility(for: configuration)
-      log.info("warming with config: \(configuration, privacy: .public)")
-
-      if let existing = state[locked: \.recordingConfiguration] {
-        if configuration == existing {
-          log.info("engine already warmed")
-          recordingSampleTimeAtomic.store(0, ordering: .relaxed)
-          return
-        } else {
-          hardStop()
-        }
-      }
-
-      // Reset engine to clean state unconditionally. After playback the engine
-      // may have a stale graph that prevents prepare() from initialising the
-      // input node correctly.
-      runOnEngineControlQueue { [weak self] in
-        guard let self else { return }
-        unsafe player.stop()
-        unsafe engine.stop()
-        unsafe engine.reset()
-        if unsafe !engine.attachedNodes.contains(player) {
-          unsafe engine.attach(player)
-        }
-      }
-
-      do {
-        try configureAudioSession(for: configuration)
-
-        guard let processingFormat = configuration.processingFormat else {
-          throw AIOError.invalidRecordingConfiguration(details: "(processing format)")
-        }
-
-        let sampleRate = Int(processingFormat.sampleRate)
-        let channelCount = Int(processingFormat.channelCount)
-        guard sampleRate > 0, channelCount > 0 else {
-          throw AIOError.audioSessionNotReady(
-            details: "Invalid format: \(sampleRate)Hz, \(channelCount)ch",
-          )
-        }
-        guard sampleRate < Int.max / channelCount / 2 else {
-          throw AIOError.hardwareNotSupported
-        }
-
-        recordingSampleTimeAtomic.store(0, ordering: .relaxed)
-
-        // Single call installs the tap — handles prepare(), format validation,
-        // converter creation, all on the engine control queue.
-        let tapResult = try reinstallTap(
-          configuration: configuration,
-          processingFormat: processingFormat,
-          stopEngine: false,
-        )
-
-        let audioBuffers = makeAudioBuffers(sampleRate: sampleRate, channelCount: channelCount)
-        let receiverBuffers = makeAudioBuffers(sampleRate: sampleRate, channelCount: channelCount)
-        let timingCapacity = max(
-          64,
-          Int(ceil(Double(sampleRate) / Double(tapResult.tapConfiguration.bufferSize))) * 4,
-        )
-        let receiverTiming = SPSCRingBuffer<TimingPacket>(capacity: timingCapacity)
-
-        let (url, protection): (URL, OutputFileProtection?) = try resolveOutputURL(
-          for: configuration,
-          allowExplicitFile: true,
-        )
-        let writer = try makeRecordingWriter(url: url, configuration: configuration)
-        applyFileProtectionIfNeeded(protection, to: url)
-
-        state {
-          $0.recordingWriter = writer
-          $0.recordingURL = url
-          $0.audioBuffers = audioBuffers
-          $0.receiverBuffers = receiverBuffers
-          $0.receiverTiming = receiverTiming
-          $0.recordingConfiguration = configuration
-        }
-        applyTapInstallResult(tapResult, processingFormat: processingFormat)
-      } catch let error as AIOError {
-        log.error("Failed to warm engine: \(error, privacy: .public)")
-        hardStop()
-        onRecordingFailed?()
-        throw error
-      } catch {
-        let mapped = AIOError.engineStartFailed(error: ErrorContext(error))
-        log.error("Failed to warm engine: \(mapped, privacy: .public)")
-        hardStop()
-        onRecordingFailed?()
-        throw mapped
-      }
+      try recordingEngineRuntime.warm(configuration: configuration)
     }
 
     func makeAudioBuffers(
       sampleRate: Int,
       channelCount: Int,
     ) -> [SPSCRingBuffer<Float>] {
-      let cappedChannels = min(channelCount, 2)
-      if channelCount > cappedChannels {
-        log.warning(
-          "Clamping channel count from \(channelCount, privacy: .public) to \(cappedChannels, privacy: .public)",
-        )
-      }
-      let capacity = max(1, Int(Double(sampleRate) * maxBufferSeconds))
-      return (0..<cappedChannels).map { _ in
-        SPSCRingBuffer<Float>(capacity: capacity)
-      }
+      recordingEngineRuntime.makeAudioBuffers(
+        sampleRate: sampleRate,
+        channelCount: channelCount,
+      )
     }
 
     @MainActor
     func validateEncoderCompatibility(
       for configuration: RecordingConfiguration,
     ) throws(AIOError) {
-      let fileFormat = configuration.outputConfiguration.fileFormat
-      guard fileFormat == .aac || fileFormat == .adts else { return }
-
-      let sampleRate = configuration.inputConfiguration.sampleRate.rawValue
-      guard fileFormat.supportsEncodedSampleRate(sampleRate) else {
-        throw AIOError.unsupportedEncodedSampleRate(
-          fileFormat: fileFormat,
-          sampleRate: sampleRate,
-          supportedSampleRates: FileFormat.aacCompatibleSampleRates,
-        )
-      }
+      try recordingEngineRuntime.validateEncoderCompatibility(for: configuration)
     }
 
     @MainActor
@@ -484,118 +203,22 @@
     func reconfigureTapForIntervalChange(
       configuration: RecordingConfiguration,
     ) throws(AIOError) {
-      guard let processingFormat = state.withLock({ $0.tapConverterOutputFormat }) else {
-        return
-      }
-
-      let result = try reinstallTap(
-        configuration: configuration,
-        processingFormat: processingFormat,
-        stopEngine: false,
-      )
-      applyTapInstallResult(result, processingFormat: processingFormat)
-
-      log.info(
-        "Updated tap interval to \(configuration.tapInterval, privacy: .public) (bufferSize: \(result.tapConfiguration.bufferSize, privacy: .public) frames)",
-      )
+      try recordingEngineRuntime.reconfigureTapForIntervalChange(configuration: configuration)
     }
 
     /// Thread Domain: MainActor (entry point), engineControl (graph mutations).
     @MainActor func hardStop() {
-      let tapBus = state.consume(\.installedTapBus)
-      let busesToRemove = Array(Set([tapBus, 0].compactMap(\.self)))
-      runOnEngineControlQueue { [weak self] in
-        guard let self else { return }
-        dispatchPrecondition(condition: .onQueue(engineControlQueue))
-        for bus in busesToRemove {
-          unsafe engine.inputNode.removeTap(onBus: bus)
-        }
-        if unsafe engine.isRunning {
-          unsafe engine.stop()
-        }
-        if unsafe player.isPlaying {
-          unsafe player.stop()
-        }
-        // On iOS 26.x, explicit `disconnectNodeOutput(_:)` has been observed to occasionally
-        // raise an uncatchable NSException after background transitions; prefer `reset()`.
-        unsafe engine.reset()
-      }
-      let hasActiveWriter = writerSession != nil || !drainingWriterSessions.isEmpty
-      if let current = writerSession {
-        enqueueDrain(for: current)
-        writerSession = nil
-      }
-      cleanUp(closeFile: !hasActiveWriter)
+      recordingEngineRuntime.hardStop()
     }
 
     /// Thread Domain: MainActor (entry point), engineControl (graph mutations).
     @MainActor
     package func gracefulStop() async {
-      log.info("gracefulStop requested")
-      let tapBus = state.consume(\.installedTapBus)
-      let busesToRemove = Array(Set([tapBus, 0].compactMap(\.self)))
-      log.info("gracefulStop starting (tapBus=\(String(describing: tapBus), privacy: .public))")
-      engineControlQueue.async { [weak self] in
-        guard let self else { return }
-        dispatchPrecondition(condition: .onQueue(engineControlQueue))
-        for bus in busesToRemove {
-          unsafe engine.inputNode.removeTap(onBus: bus)
-        }
-        unsafe engine.stop()
-      }
-      log.info("gracefulStop draining writer sessions")
-      let drainCompleted = await withTaskGroup(of: Bool.self) { group in
-        group.addTask { [self] in
-          await stopAndDrainAllWriterSessions(notifyOnFailure: false)
-          return true
-        }
-        group.addTask { [self] in
-          try? await Task.sleep(for: stopDrainTimeout)
-          return false
-        }
-        let result = await group.next() ?? false
-        group.cancelAll()
-        return result
-      }
-      if !drainCompleted {
-        let url = state[locked: \.recordingURL]
-        let error = WriterDrainTimeoutError(url: url, timeout: stopDrainTimeout)
-        log.error("stopAndDrainAllWriterSessions timed out: \(error, privacy: .public)")
-        cancelAllWriterSessions()
-        recordWriteFailure(ErrorContext(error), url: url)
-      }
-      cleanUp()
-      isRecording = false
-      wantsRecording = false
-      reconciliationTask = nil
-      log.info("gracefulStop completed")
-      deactivateAudioSessionIfNeeded(reason: "recording stopped")
+      await recordingEngineRuntime.gracefulStop()
     }
 
     @MainActor func cleanUp(closeFile: Bool = true) {
-      stopReceiverLoop()
-      tapErrorCode.store(0, ordering: .relaxed)
-      let writer = state { state in
-        defer {
-          state.recordingWriter = nil
-          state.recordingURL = nil
-          state.recordingConfiguration = nil
-          state.audioBuffers = nil
-          state.receiverBuffers = nil
-          state.receiverTiming = nil
-          state.tapConverter = nil
-          state.tapConverterInputFormat = nil
-          state.tapConverterOutputFormat = nil
-          state.tapConvertedBuffer = nil
-        }
-        return state.recordingWriter
-      }
-      // Reset the cached tap snapshot so stale references are released.
-      tapSnapshotLock.withLock { $0 = .empty }
-      if closeFile {
-        writer?.close()
-      }
-      playbackTask = nil
+      recordingEngineRuntime.cleanUp(closeFile: closeFile)
     }
 
     // MARK: - Thread Domain: tapCallback
@@ -616,205 +239,14 @@
       time: AVAudioTime?,
       to processingFormat: AVAudioFormat,
     ) {
-      #if DEBUG
-        //        tapThreadChecker.checkThread()
-        let tapStart = DispatchTime.now().uptimeNanoseconds
-      #endif
-      let frameLength = buffer.frameLength
-      guard frameLength > 0 else { return }
-
-      // Try non-blocking lock on the main state first to get a fresh snapshot.
-      // This eliminates priority inversion risk on the tap thread when the
-      // MainActor or engineControlQueue holds the lock during route changes
-      // or recording start/stop.
-      let snapshot: TapSnapshot
-      if let locked = state.withLockIfAvailable({ state in
-        Transferring(
-          TapSnapshot(
-            audioBuffers: state.audioBuffers,
-            receiverBuffers: state.receiverBuffers,
-            receiverTiming: state.receiverTiming,
-            converter: state.tapConverter,
-            converterInputFormat: state.tapConverterInputFormat,
-            converterOutputFormat: state.tapConverterOutputFormat,
-            convertedBuffer: state.tapConvertedBuffer,
-          ),
-        )
-      }) {
-        snapshot = locked.value
-        // Update the cached copy for future fallback reads.
-        // Uses withLockIfAvailable — if the snapshot lock is contended
-        // (a writer is updating), skip the cache update. The write path
-        // will set the authoritative value anyway.
-        tapSnapshotLock.withLockIfAvailable { $0 = locked.value }
-      } else {
-        // Main state lock contended — read the last-known-good snapshot
-        // from the dedicated snapshot lock (nanosecond hold time).
-        if let cached = tapSnapshotLock.withLockIfAvailable({ Transferring($0) }) {
-          snapshot = cached.value
-        } else {
-          // Both locks contended simultaneously (vanishingly rare).
-          // Skip this tap callback entirely rather than risk blocking.
-          return
-        }
-      }
-
-      let audioBuffers = snapshot.audioBuffers
-      let receiverBuffers = snapshot.receiverBuffers
-      let timingBuffer = snapshot.receiverTiming
-      let converter = snapshot.converter
-      let converterInputFormat = snapshot.converterInputFormat
-      let converterOutputFormat = snapshot.converterOutputFormat
-      let convertedBuffer = snapshot.convertedBuffer
-      guard let converter,
-        let converterInputFormat,
-        let converterOutputFormat,
-        formatsCompatible(converterInputFormat, buffer.format),
-        formatsCompatible(converterOutputFormat, processingFormat)
-      else {
-        recordTapError(.converterMissing)
-        return
-      }
-
-      // When the hardware sample rate differs from our processing format, the converter
-      // needs enough output capacity to perform the resampling. Using the input frame
-      // length here starves up/downsampling (e.g., 28kHz→48kHz) and produces distorted
-      // audio. Calculate the required frames based on the sample-rate ratio instead.
-      let frameRatio = processingFormat.sampleRate / buffer.format.sampleRate
-      let requestedCapacity = max(
-        AVAudioFrameCount(ceil(Double(frameLength) * frameRatio)),
-        1,
-      )
-      guard let convertedBuffer else {
-        recordTapError(.converterMissing)
-        return
-      }
-      guard convertedBuffer.frameCapacity >= requestedCapacity else {
-        requestTapResize(frames: Int(requestedCapacity))
-        recordTapError(.bufferTooSmall)
-        return
-      }
-      convertedBuffer.frameLength = requestedCapacity
-
-      var error: NSError? = nil
-      let b = Transferring(buffer)
-      let status = unsafe converter.convert(to: convertedBuffer, error: &error) { _, outStatus in
-        unsafe outStatus.pointee = .haveData
-        return b.value
-      }
-      guard status != .error else {
-        recordTapError(.conversionFailed)
-        return
-      }
-      guard let audioBuffers else {
-        return
-      }
-
-      // Enqueue to ring buffers
-      let channelCount = Int(convertedBuffer.format.channelCount)
-      let effectiveChannelCount = min(channelCount, audioBuffers.count)
-      guard effectiveChannelCount > 0 else { return }
-      if channelCount > audioBuffers.count, rtLoggingEnabled {
-        log.error(
-          "Channel count mismatch: \(channelCount, privacy: .public) vs \(audioBuffers.count, privacy: .public)",
-        )
-      }
-      let convertedFrameLength = Int(convertedBuffer.frameLength)
-      let writerAvailable = AIOEngine.minimumAvailableWriteFrames(
-        channelCount: effectiveChannelCount,
-        audioBuffers: audioBuffers,
-        limit: convertedFrameLength,
-      )
-      let writerCanWrite = writerAvailable >= convertedFrameLength
-      let receiverCanWrite: Bool
-      if let receiverBuffers, let timingBuffer {
-        let timingHasCapacity = timingBuffer.availableToWrite >= 1
-        receiverCanWrite =
-          timingHasCapacity
-          && AIOEngine.minimumAvailableWriteFrames(
-            channelCount: effectiveChannelCount,
-            audioBuffers: receiverBuffers,
-            limit: convertedFrameLength,
-          ) >= convertedFrameLength
-      } else {
-        receiverCanWrite = false
-      }
-      #if DEBUG
-        if !writerCanWrite {
-          metrics.writerDrops.wrappingIncrement(by: Int64(convertedFrameLength), ordering: .relaxed)
-        }
-        if receiverBuffers != nil, !receiverCanWrite {
-          metrics.receiverDrops.wrappingIncrement(
-            by: Int64(convertedFrameLength), ordering: .relaxed,
-          )
-        }
-      #endif
-
-      let processingStartSampleTime = recordingSampleTimeAtomic.load(ordering: .relaxed)
-      let sourceHostTime: UInt64? =
-        (time?.isHostTimeValid ?? false) ? time?.hostTime : nil
-      let sourceSampleTime: Int64? =
-        (time?.isSampleTimeValid ?? false) ? time.map { Int64($0.sampleTime) } : nil
-      let sourceSampleRate: Double? =
-        (time?.isSampleTimeValid ?? false) ? time?.sampleRate : nil
-      if writerCanWrite || receiverCanWrite {
-        for i in 0..<effectiveChannelCount {
-          guard let channelData = unsafe convertedBuffer.floatChannelData?[i] else {
-            if rtLoggingEnabled {
-              log.error(
-                "Failed to access channel data for channel \(i, privacy: .public)",
-              )
-            }
-            continue
-          }
-          if writerCanWrite {
-            unsafe audioBuffers[i].write(
-              UnsafeBufferPointer(start: channelData, count: convertedFrameLength),
-            )
-          }
-          if receiverCanWrite, let receiverBuffers, i < receiverBuffers.count {
-            unsafe receiverBuffers[i].write(
-              UnsafeBufferPointer(start: channelData, count: convertedFrameLength),
-            )
-          }
-        }
-      }
-
-      if receiverCanWrite, let receiverTimingBuffer = timingBuffer {
-        var packet = TimingPacket(
-          startSampleTime: processingStartSampleTime,
-          frameCount: convertedFrameLength,
-          hostTime: sourceHostTime,
-          sourceSampleTime: sourceSampleTime,
-          sourceSampleRate: sourceSampleRate,
-        )
-        _ = unsafe withUnsafePointer(to: &packet) { pointer in
-          unsafe receiverTimingBuffer.write(UnsafeBufferPointer(start: pointer, count: 1))
-        }
-      }
-
-      recordingSampleTimeAtomic.wrappingIncrement(
-        by: Int64(convertedBuffer.frameLength),
-        ordering: .relaxed,
-      )
-      #if DEBUG
-        metrics.tapCallbackCount.wrappingIncrement(ordering: .relaxed)
-        let tapElapsed = DispatchTime.now().uptimeNanoseconds &- tapStart
-        let previousMax = metrics.tapCallbackMaxNanos.load(ordering: .relaxed)
-        if tapElapsed > previousMax {
-          metrics.tapCallbackMaxNanos.store(tapElapsed, ordering: .relaxed)
-        }
-      #endif
+      recordingEngineRuntime.processAudio(buffer: buffer, time: time, to: processingFormat)
     }
 
     nonisolated func formatsCompatible(
       _ lhs: AVAudioFormat,
       _ rhs: AVAudioFormat,
     ) -> Bool {
-      lhs.commonFormat == rhs.commonFormat
-        && lhs.sampleRate == rhs.sampleRate
-        && lhs.channelCount == rhs.channelCount
-        && lhs.isInterleaved == rhs.isInterleaved
+      recordingEngineRuntime.formatsCompatible(lhs, rhs)
     }
 
     /// Thread Domain: writerQueue
@@ -831,102 +263,19 @@
       tapErrorPoll: (@Sendable () -> TapErrorCode?)?,
       onTapError: (@Sendable (TapErrorCode) -> Void)?,
     ) {
-      #if !DEBUG
-        _ = metrics
-      #endif
-      let bufferSize = 1024  // Write in chunks
-      var stopRequestedAt: ContinuousClock.Instant?
-      var lastStallLog = clock.now
-      var writtenSampleTime: Int64 = 0
-      var idleBackoffMillis: Double = 1
-
-      while true {
-        if shouldCancel() { break }
-        if let tapErrorPoll, let onTapError, let code = tapErrorPoll() {
-          onTapError(code)
-        }
-        let result = flushChunk(
-          size: bufferSize,
-          from: audioBuffers,
-          in: format,
-          to: writer,
-          using: writeBuffer,
-        )
-        switch result {
-        case .success(let writeResult):
-          let framesRead = writeResult.framesRead
-          let didWrite = writeResult.writeDuration != nil
-          if didWrite, framesRead > 0 {
-            writtenSampleTime &+= Int64(framesRead)
-            control.writtenSampleTime.store(writtenSampleTime, ordering: .relaxed)
-            idleBackoffMillis = 1
-          }
-          let stopRequested = control.stopRequested.load(ordering: .relaxed)
-          if stopRequested {
-            let target = control.targetSampleTime.load(ordering: .relaxed)
-            if writtenSampleTime >= target {
-              Task { await control.targetSatisfiedSignal.signal() }
-              break
-            }
-          }
-          if framesRead == 0 {
-            #if DEBUG
-              metrics.writerUnderruns.wrappingIncrement(ordering: .relaxed)
-            #endif
-            if stopRequested, stopRequestedAt == nil {
-              stopRequestedAt = clock.now
-              log.info(
-                "🧹 Writer stop requested: target=\(control.targetSampleTime.load(ordering: .relaxed), privacy: .public) written=\(writtenSampleTime, privacy: .public) file=\(writer.fileURL.lastPathComponent, privacy: .public)",
-              )
-            }
-            if stopRequested,
-              minimumAvailableFrames(
-                channelCount: Int(format.channelCount),
-                audioBuffers: audioBuffers,
-                limit: bufferSize,
-              ) == 0
-            {
-              break
-            }
-            if stopRequested {
-              let target = control.targetSampleTime.load(ordering: .relaxed)
-              if writtenSampleTime >= target {
-                Task { await control.targetSatisfiedSignal.signal() }
-                break
-              }
-            }
-            if stopRequested, let stopRequestedAt {
-              let elapsed = stopRequestedAt.duration(to: clock.now)
-              if elapsed > .seconds(1), lastStallLog.duration(to: clock.now) > .seconds(1) {
-                lastStallLog = clock.now
-                #if DEBUG
-                  metrics.writerStallCount.wrappingIncrement(ordering: .relaxed)
-                #endif
-                let counts = audioBuffers.map(\.availableToRead)
-                let minAvail = minimumAvailableFrames(
-                  channelCount: Int(format.channelCount),
-                  audioBuffers: audioBuffers,
-                  limit: bufferSize,
-                )
-                log.warning(
-                  "🧹 Writer stall after stop: elapsed=\(elapsed, privacy: .public) minAvail=\(minAvail, privacy: .public) counts=\(counts, privacy: .public)",
-                )
-              }
-            }
-            if shouldCancel() { break }
-            let sleepMillis = stopRequested ? 1.0 : idleBackoffMillis
-            Thread.sleep(forTimeInterval: sleepMillis / 1000.0)
-            if !stopRequested {
-              idleBackoffMillis = min(idleBackoffMillis * 2, 8)
-            }
-          }
-        case .failure(let error):
-          let context = ErrorContext(error)
-          errorHandler(context)
-        }
-      }
-      log.info("🧹 writerLoop exiting for \(writer.fileURL.lastPathComponent, privacy: .public)")
-      Task { await control.drainSignal.signal() }
+      RecordingEngineRuntime.writerLoopSync(
+        writer: writer,
+        format: format,
+        audioBuffers: audioBuffers,
+        writeBuffer: writeBuffer,
+        control: control,
+        metrics: metrics,
+        clock: clock,
+        shouldCancel: shouldCancel,
+        errorHandler: errorHandler,
+        tapErrorPoll: tapErrorPoll,
+        onTapError: onTapError,
+      )
     }
 
     /// Thread Domain: receiverQueue
@@ -943,97 +292,18 @@
       tapErrorPoll: (@Sendable () -> TapErrorCode?)?,
       onTapError: (@Sendable (TapErrorCode) -> Void)?,
     ) {
-      let channelCount = min(Int(processingFormat.channelCount), buffers.count)
-      guard channelCount > 0 else { return }
-
-      let timingScratch = UnsafeMutableBufferPointer<TimingPacket>.allocate(capacity: 1)
-      defer { unsafe timingScratch.deallocate() }
-
-      var scratchCapacity = 0
-      var scratchBuffers: [UnsafeMutableBufferPointer<Float>] = unsafe []
-      func ensureScratchCapacity(_ needed: Int) {
-        guard needed > scratchCapacity else { return }
-        unsafe scratchBuffers.forEach {
-          unsafe $0.baseAddress?.deallocate()
-        }
-        unsafe scratchBuffers = unsafe (0..<channelCount).map { _ in
-          let pointer = UnsafeMutablePointer<Float>.allocate(capacity: needed)
-          return unsafe UnsafeMutableBufferPointer(start: pointer, count: needed)
-        }
-        scratchCapacity = needed
-      }
-      defer {
-        unsafe scratchBuffers.forEach {
-          unsafe $0.baseAddress?.deallocate()
-        }
-      }
-
-      let sleepInterval = max(
-        0.001,
-        cadence / Duration.seconds(1.0),
+      RecordingEngineRuntime.receiverLoopSync(
+        buffers: buffers,
+        timing: timing,
+        processingFormat: processingFormat,
+        bufferReceivers: bufferReceivers,
+        control: control,
+        cadence: cadence,
+        onUnderrun: onUnderrun,
+        onDrop: onDrop,
+        tapErrorPoll: tapErrorPoll,
+        onTapError: onTapError,
       )
-
-      let maxBacklog = 4
-      while !control.cancelRequested.load(ordering: .relaxed) {
-        if let tapErrorPoll, let onTapError, let code = tapErrorPoll() {
-          onTapError(code)
-        }
-        var backlog = timing.availableToRead
-        while backlog > maxBacklog, !control.cancelRequested.load(ordering: .relaxed) {
-          let droppedTimingRead = unsafe timing.read(into: timingScratch)
-          guard droppedTimingRead > 0 else { break }
-          let droppedPacket = unsafe timingScratch[0]
-          guard droppedPacket.frameCount > 0 else {
-            backlog = timing.availableToRead
-            continue
-          }
-          ensureScratchCapacity(droppedPacket.frameCount)
-          for index in 0..<channelCount {
-            let destination = unsafe UnsafeMutableBufferPointer(
-              start: scratchBuffers[index].baseAddress,
-              count: droppedPacket.frameCount,
-            )
-            _ = unsafe buffers[index].read(into: destination)
-          }
-          onDrop?()
-          backlog = timing.availableToRead
-        }
-        let timingRead = unsafe timing.read(into: timingScratch)
-        guard timingRead > 0 else {
-          Thread.sleep(forTimeInterval: sleepInterval)
-          continue
-        }
-        let packet = unsafe timingScratch[0]
-        guard packet.frameCount > 0 else { continue }
-
-        ensureScratchCapacity(packet.frameCount)
-        var actualFrames = packet.frameCount
-        for index in 0..<channelCount {
-          let destination = unsafe UnsafeMutableBufferPointer(
-            start: scratchBuffers[index].baseAddress,
-            count: packet.frameCount,
-          )
-          let read = unsafe buffers[index].read(into: destination)
-          actualFrames = min(actualFrames, read)
-        }
-        guard actualFrames > 0, actualFrames == packet.frameCount else {
-          onUnderrun?()
-          continue
-        }
-        guard let base = unsafe scratchBuffers.first?.baseAddress else { continue }
-
-        let timing = BufferTiming(
-          sampleTime: packet.startSampleTime,
-          sampleRate: processingFormat.sampleRate,
-          hostTime: packet.hostTime,
-          sourceSampleTime: packet.sourceSampleTime,
-          sourceSampleRate: packet.sourceSampleRate,
-        )
-        let bufferPointer = unsafe UnsafeBufferPointer(start: base, count: actualFrames)
-        for bufferReceiver in bufferReceivers({ $0 }) {
-          unsafe bufferReceiver.processBuffer(bufferPointer, timing: timing)
-        }
-      }
     }
 
     /// Thread Domain: writerQueue
@@ -1049,65 +319,14 @@
       using reusableBuffer: AVAudioPCMBuffer? = nil,
       clock: ContinuousClock = .continuous,
     ) -> Result<WriteResult, any Error> {
-      let channelCount = Int(audioFormat.channelCount)
-      let framesToRead = minimumAvailableFrames(
-        channelCount: channelCount,
-        audioBuffers: audioBuffers,
-        limit: bufferSize,
+      RecordingEngineRuntime.flushChunk(
+        size: bufferSize,
+        from: audioBuffers,
+        in: audioFormat,
+        to: writer,
+        using: reusableBuffer,
+        clock: clock,
       )
-
-      guard framesToRead > 0 else {
-        return .success(.init(framesRead: 0, writeDuration: nil))
-      }
-
-      // Prefer the pre-allocated buffer; fall back to a fresh allocation.
-      let pcmBuffer: AVAudioPCMBuffer
-      if let reusableBuffer, reusableBuffer.frameCapacity >= AVAudioFrameCount(bufferSize) {
-        pcmBuffer = reusableBuffer
-      } else {
-        guard
-          let freshBuffer = AVAudioPCMBuffer(
-            pcmFormat: audioFormat,
-            frameCapacity: AVAudioFrameCount(bufferSize),
-          )
-        else {
-          return .success(.init(framesRead: 0, writeDuration: nil))
-        }
-        pcmBuffer = freshBuffer
-      }
-
-      var actualFrames = framesToRead
-      // Dequeue from ring buffers using a consistent frame count per channel
-      for i in 0..<channelCount {
-        guard let channelData = unsafe pcmBuffer.floatChannelData?[i] else {
-          actualFrames = 0
-          return .success(.init(framesRead: 0, writeDuration: nil))
-        }
-        let readSize = unsafe audioBuffers[i].read(
-          into: UnsafeMutableBufferPointer(start: channelData, count: framesToRead),
-        )
-        actualFrames = min(actualFrames, readSize)
-      }
-
-      guard actualFrames > 0 else {
-        return .success(.init(framesRead: 0, writeDuration: nil))
-      }
-      pcmBuffer.frameLength = AVAudioFrameCount(actualFrames)
-
-      do {
-        let start = clock.now
-        try writer.write(pcmBuffer)
-        let elapsed = start.duration(to: clock.now)
-        if elapsed > .milliseconds(200) {
-          log.warning(
-            "🐢 Slow write: \(elapsed, privacy: .public) frames=\(actualFrames, privacy: .public) file=\(writer.fileURL.lastPathComponent, privacy: .public)",
-          )
-        }
-        return .success(.init(framesRead: actualFrames, writeDuration: elapsed))
-      } catch {
-        log.error("error flushing chunk: \(error, privacy: .public)")
-        return .failure(error)
-      }
     }
 
     static func minimumAvailableFrames(
@@ -1115,14 +334,11 @@
       audioBuffers: [SPSCRingBuffer<Float>],
       limit: Int,
     ) -> Int {
-      guard channelCount > 0 else { return 0 }
-
-      var minimum = limit
-      for index in 0..<min(channelCount, audioBuffers.count) {
-        minimum = min(minimum, audioBuffers[index].availableToRead)
-        if minimum == 0 { break }
-      }
-      return minimum
+      RecordingEngineRuntime.minimumAvailableFrames(
+        channelCount: channelCount,
+        audioBuffers: audioBuffers,
+        limit: limit,
+      )
     }
 
     static func minimumAvailableWriteFrames(
@@ -1130,14 +346,11 @@
       audioBuffers: [SPSCRingBuffer<Float>],
       limit: Int,
     ) -> Int {
-      guard channelCount > 0 else { return 0 }
-
-      var minimum = limit
-      for index in 0..<min(channelCount, audioBuffers.count) {
-        minimum = min(minimum, audioBuffers[index].availableToWrite)
-        if minimum == 0 { break }
-      }
-      return minimum
+      RecordingEngineRuntime.minimumAvailableWriteFrames(
+        channelCount: channelCount,
+        audioBuffers: audioBuffers,
+        limit: limit,
+      )
     }
 
     /// Stops the current recording and returns the URL of the recorded file.
@@ -1150,8 +363,7 @@
     }
 
     nonisolated func isWriterDrainTimeout(_ failure: WriteFailure) -> Bool {
-      failure.error.domain.contains("WriterDrainTimeoutError")
-        || failure.error.message.localizedCaseInsensitiveContains("writer drain timed out")
+      recordingEngineRuntime.isWriterDrainTimeout(failure)
     }
 
     /// Rotates the recording to a new file without interrupting audio capture.

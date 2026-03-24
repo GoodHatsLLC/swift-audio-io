@@ -5,6 +5,7 @@
   import AIOPlayback
   import AIORecording
   public import AIOEngineCore
+  package import AIORecordingSupport
   public import AVFoundation
   import Foundation
   import os

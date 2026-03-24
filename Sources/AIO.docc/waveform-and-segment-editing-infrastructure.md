@@ -21,8 +21,8 @@ thumbnail). The three concrete pipelines are:
 1. **Metal pipeline** (`WaveformMetal/`)  
    Uses pre-rendered HEIC assets for cheap list/thumbnail rendering and Metal LOD for detail views.
    Key files:
-   - Snapshot generation: `Packages/AIO/Sources/AIOEngine/Visualization/MultiBandLODProcessor.swift`
-   - Snapshot data types: `Packages/AIO/Sources/AIOEngine/Visualization/MultiBandLODTypes.swift`
+   - Snapshot generation: `Packages/AIO/Sources/AudioSignals/MultiBandLODProcessor.swift`
+   - Snapshot data types: `Packages/AIO/Sources/AudioSignals/MultiBandLODTypes.swift`
    - Metal view: `Packages/AppLibrary/Sources/WaveformMetal/MetalWaveformView.swift`
    - Detail wrapper (playback-follow + scrub): `Packages/AppLibrary/Sources/WaveformMetal/MetalTrackPlaybackWaveformView.swift`
    - HEIC view: `Packages/AppLibrary/Sources/WaveformMetal/MetalWaveformImageView.swift`
@@ -103,7 +103,7 @@ Historically, offline generation could be inadvertently sized like a live ring b
 We add a configuration knob:
 
 - `MultiBandLODConfiguration.rawBufferLengthOverride`  
-  File: `Packages/AIO/Sources/AIOEngine/Visualization/MultiBandLODTypes.swift`
+  File: `Packages/AIO/Sources/AudioSignals/MultiBandLODTypes.swift`
 
 When present, `rawBufferLength` is driven by this override instead of `sampleRate * bufferSeconds`.
 

@@ -67,15 +67,21 @@ This spec does **not** cover:
 - `sampleTime` + `sampleRate` in the **receiver’s** sample domain.
 - Optional upstream tap timing (`hostTime`, `sourceSampleTime`, `sourceSampleRate`) when available.
 
-### 3) `AudioVisualizationEngine` (AIO’s live visualization hub)
+### 3) `AudioVisualizationEngine` (AIO’s live visualization facade)
 
-`AudioVisualizationEngine` lives in AIO (`Packages/AIO/Sources/AIOEngine/Visualization/AudioVisualizationEngine.swift`) and is:
+`AudioVisualizationEngine` lives in AIO
+(`Packages/AIO/Sources/AIOVisualization/Visualization/AudioVisualizationEngine.swift`) and is:
 
 - `@Observable` for SwiftUI-friendly state
 - a `BufferReceiver<Float>` for live tap consumption
 - `@unchecked Sendable` because it crosses concurrency boundaries and is called from the audio thread
 
-It has two broad responsibilities:
+It coordinates two extracted collaborators:
+
+1) `VisualizationProcessor` for RT-safe ingestion, analysis, and LOD snapshot production
+2) `VisualizationHub` for subscriber bookkeeping, demand aggregation, and event masking
+
+At the API level it still presents two broad responsibilities:
 
 1) **(Primary) Multi-band LOD pipeline** for waveform rendering
 2) **(Secondary) Time/frequency/beat analysis** for classic meters and spectrum views
@@ -265,11 +271,14 @@ Rendering policy:
 
 **AIO**
 
-- `Packages/AIO/Sources/AIOEngine/AIOEngine.swift` (tap install, conversion, buffer receiver fan-out)
-- `Packages/AIO/Sources/Tools/BufferReceiver.swift` (`BufferReceiver`, `BufferTiming`)
-- `Packages/AIO/Sources/AIOEngine/Visualization/AudioVisualizationEngine.swift` (live engine, LOD integration, consumer gating)
-- `Packages/AIO/Sources/AIOEngine/Visualization/MultiBandLODTypes.swift` (LOD types, `MultiBandLODSnapshot`, `LODSnapshot`)
-- `Packages/AIO/Sources/AIOEngine/Visualization/MultiBandLODProcessor.swift` (triple-buffered LOD generation, offline file generation)
+- `Packages/AIO/Sources/AIORecording/AIOEngine+TapSetup.swift` (tap install and conversion)
+- `Packages/AIO/Sources/AIORecording/AIOEngine+Recording.swift` (buffer receiver attach/detach and receiver loop fan-out)
+- `Packages/AIO/Sources/AIOContracts/BufferReceiver.swift` (`BufferReceiver`, `BufferTiming`)
+- `Packages/AIO/Sources/AIOVisualization/Visualization/AudioVisualizationEngine.swift` (facade, LOD integration, consumer gating)
+- `Packages/AIO/Sources/AIOVisualization/Visualization/VisualizationProcessor.swift` (RT-safe processing and snapshot production)
+- `Packages/AIO/Sources/AIOVisualization/Visualization/VisualizationHub.swift` (subscriber/event fan-out)
+- `Packages/AIO/Sources/AudioSignals/MultiBandLODTypes.swift` (LOD types, `MultiBandLODSnapshot`, `LODSnapshot`)
+- `Packages/AIO/Sources/AudioSignals/MultiBandLODProcessor.swift` (triple-buffered LOD generation, offline file generation)
 - `Packages/AIO/Sources/AIO.docc/MultiBandVisualization.md` (API documentation and usage notes)
 
 **Recorder / AppLibrary**

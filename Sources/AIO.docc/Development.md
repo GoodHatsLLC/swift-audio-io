@@ -95,7 +95,7 @@ This is required before committing any changes.
 *   Conform to Swift 6.2 idioms with 2-space indentation, 100-character lines, and trailing commas only in multiline argument lists.
 *   Name types in UpperCamelCase (`AIOEngine`), methods and variables in lowerCamelCase, and async APIs using verbs plus context (`startRecording`).
 *   Run `./bin/format.sh` (swift-format) before committing.
-*   Keep shared helpers in `Sources/AIOEngine/Utils` instead of scattering extensions.
+*   Keep shared helpers in the owning target (`AIOAudioSession`, `AIOEngineCore`, `AIORecording`, `AIOPlayback`, `AIOVisualization`, or `AIOSupport`) instead of scattering extensions across unrelated targets.
 
 ### Commit & Pull Request Guidelines
 

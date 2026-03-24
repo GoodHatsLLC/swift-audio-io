@@ -26,7 +26,7 @@ This document summarizes:
 
 ### 3) Recording + simple playback engine
 
-- File: `Packages/AIO/Sources/AIOEngine/AIOEngine.swift`
+- File: `Packages/AIO/Sources/AIOEngineCore/AIOEngine.swift` plus recording/playback extensions in `AIORecording/` and `AIOPlayback/`
 - Purpose: microphone capture (with file writing + buffer receiver fan-out) and single-file playback/scrubbing
 - Core idea: tap the input node, convert in-process, buffer into ring buffers, write from a non-real-time task
 
@@ -262,4 +262,3 @@ If the goal is to reduce future maintenance cost without destabilizing capture/p
 If later you want deeper consolidation (single engine / Core Audio):
 
 - Do it as a deliberate project: define a top-level “audio subsystem” state machine and migrate one mode at a time, keeping the “plan” as the stable contract between UI/editor semantics and the backend.
-

@@ -5,6 +5,7 @@
     import AIOAudioSession
     public import AIOEngineCore
     import AIORecording
+    package import AIORecordingSupport
     import Atomics
     public import AVFoundation
     import Tools

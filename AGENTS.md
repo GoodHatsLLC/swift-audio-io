@@ -1,7 +1,7 @@
 # AIO Package - Audio I/O Engine
 
 **Location**: `Packages/AIO/`
-**Last Updated**: 2026-02-16
+**Last Updated**: 2026-03-23
 
 This file consolidates the previous `CLAUDE.md` content for this directory. `CLAUDE.md` remains as a symlink for backwards compatibility.
 
@@ -11,45 +11,26 @@ AIO (Audio I/O) is the core audio recording and processing engine for Recorder�
 
 ## Architecture
 
-The package is split into multiple targets for modularity:
+The package still exposes three public library products, but the implementation is now split by
+runtime ownership rather than treating `AIOEngine` as the only meaningful target.
 
-### Tools
+### Public Products
+
+#### Tools
 **Location**: `Sources/Tools/`
-**Purpose**: Core audio types, utilities, and fundamental building blocks
+**Purpose**: Core async utilities and low-level primitives
 
 Contains:
-- Platform-independent audio types
-- Core data structures (RingBuffer, Synchronized, etc.)
-- Utility functions
-- No dependencies on AIOEngine
+- concurrency/data structures such as `Synchronized`, `Mut`, `SPSCRingBuffer`, and `AsyncBroadcaster`
+- general-purpose utilities shared by the rest of the package
+- no dependency on the engine/runtime layers
 
 **Dependencies**:
 - swift-atomics (Atomics)
-- swift-collections (OrderedCollections)
+- swift-collections (DequeModule, OrderedCollections)
 - swift-async-algorithms (AsyncAlgorithms)
 
-**Swift**: 6.2 with strict concurrency enabled
-
-### AIOEngine
-**Location**: `Sources/AIOEngine/`
-**Purpose**: Audio recording engine and processing pipeline
-
-Contains:
-- Audio recording logic
-- Real-time processing
-- Audio stream management
-- Visualization data generation
-
-**Dependencies**:
-- Tools (local)
-- SystemLog (external package: `Packages/SystemLog/`)
-- swift-atomics (Atomics)
-- swift-collections (Collections, DequeModule, OrderedCollections)
-- swift-async-algorithms (AsyncAlgorithms)
-
-**Swift**: 6.2 with strict concurrency enabled
-
-### AudioSignals
+#### AudioSignals
 **Location**: `Sources/AudioSignals/`
 **Purpose**: Visualization data layer — LOD extraction, offline processing, and heuristics for waveform rendering
 
@@ -63,14 +44,113 @@ Contains:
 **Dependencies**:
 - Tools (local)
 
-**Swift**: 6.2 with strict concurrency enabled
+#### AIOEngine
+**Location**: `Sources/AIOEngine/`
+**Purpose**: Source-compatible compatibility facade and re-export layer
+
+Contains:
+- `AIOEngineExports.swift` re-exporting the internal runtime targets
+- AIO-owned runtime contracts used by AppLibrary (`RecordingDriving`, `AudioEnvironmentDriving`, `OutputConfigurationProviding`)
+- interruption and testing facade extensions
+
+### Internal Runtime Targets
+
+#### AIOContracts
+**Location**: `Sources/AIOContracts/`
+**Purpose**: Shared engine-facing contracts
+
+Contains:
+- `BufferReceiver` / `BufferTiming`
+- `AudioSessionDelegate`
+
+#### AIOSupport
+**Location**: `Sources/AIOSupport/`
+**Purpose**: Shared package-internal support helpers
+
+Contains:
+- logging support and other internal helpers used across targets
+
+#### AIOAudioSession
+**Location**: `Sources/AIOAudioSession/`
+**Purpose**: Audio session, environment, input/output, and error-reporting runtime
+
+Contains:
+- `AudioEnvironmentManager`
+- `OutputConfigurationManager`
+- audio input/source/sample-rate/channel-count types
+- `ErrorManaging`, `AnyErrorManager`, and `MockErrorManager`
+
+#### AIOEngineCore
+**Location**: `Sources/AIOEngineCore/`
+**Purpose**: Core `AIOEngine` type, shared observable state, and audio-session/playback bridge
+
+Contains:
+- `AIOEngine.swift`
+- shared recording/playback state and queues
+- audio-session configuration helpers
+- playback state helpers
+
+#### AIORecording
+**Location**: `Sources/AIORecording/`
+**Purpose**: Recording runtime and tap lifecycle
+
+Contains:
+- `RecordingRuntime`
+- `RecordingEngineRuntime`
+- recording reconciliation
+- tap install/reinstall and receiver/writer/stop orchestration
+- recording-oriented facade shims for `AIOEngine`
+
+#### AIORecordingSupport
+**Location**: `Sources/AIORecordingSupport/`
+**Purpose**: Recording-only state/support substrate shared by core and runtime layers
+
+Contains:
+- `RecordingInfrastructure`
+- `RecordingRuntimeState`
+- `RecordingState`, `WriterSession`, `ReceiverSession`
+- tap snapshot, writer backend, and drain-support types
+
+#### AIOPlayback
+**Location**: `Sources/AIOPlayback/`
+**Purpose**: Playback runtime ownership
+
+Contains:
+- `PlaybackRuntime`
+- file/segment scheduling
+- scrub/reseek and playback polling
+
+#### AIOVisualization
+**Location**: `Sources/AIOVisualization/`
+**Purpose**: Live visualization runtime
+
+Contains:
+- `AudioVisualizationEngine`
+- `VisualizationProcessor` for RT-safe ingestion/snapshot work
+- `VisualizationHub` for subscriber bookkeeping and event masking
+
+## Refactor Status
+
+The AIO refactor proposed in `/Users/adamz/Developer/repos/audio/AIO_PROPOSAL.md` has landed
+substantially, but not every end-state goal is finished.
+
+Implemented:
+- AppLibrary now depends on AIO-owned runtime contracts.
+- Visualization processing and subscriber fan-out are split.
+- Internal package targets now reflect session, recording, playback, visualization, and contracts.
+- `AudioEnvironmentManager` is now a facade over extracted environment/session collaborators.
+- Recording implementation is split between `RecordingRuntime` and `RecordingEngineRuntime`, with `AIOEngine+Recording.swift` reduced to forwarding shims.
+
+Still active:
+- `AIOEngineCore` still owns the shared observable state spine and some cross-runtime helpers.
+- `AIOEngine` remains source-compatible, but the proposal’s final end state would push even more core-shell responsibility out of `AIOEngineCore`.
 
 ## Products
 
-The package exposes three library products:
+The package exposes three public library products:
 - **Tools**: Core utilities library (for standalone use)
-- **AIOEngine**: Full audio engine library (includes Tools)
 - **AudioSignals**: Visualization data layer (depends on Tools only)
+- **AIOEngine**: Public engine surface that re-exports the internal AIO runtime targets
 
 ## Testing
 
@@ -82,7 +162,7 @@ The package has comprehensive test coverage:
 
 ### AIOTests
 **Location**: `Tests/AIOTests/`
-**Tests**: Engine functionality (recording configuration, tap configuration)
+**Tests**: Engine/runtime functionality (route changes, interruptions, recording, receiver lifecycle, visualization fan-out)
 
 ### AudioVisualizationTests
 **Location**: `Tests/AudioVisualizationTests/`
@@ -130,7 +210,7 @@ The engine exports a narrow, injectable interface for error reporting:
 - `AnyErrorManager` (type erasure)
 - `MockErrorManager` (debug-only test double)
 
-**Location**: `Sources/AIOEngine/Env/ErrorManaging.swift`
+**Location**: `Sources/AIOAudioSession/Env/ErrorManaging.swift`
 
 Policy:
 - View/UI layers may keep a concrete `ErrorManager` via environment access.
@@ -214,6 +294,11 @@ The package is referenced via local path from AppLibrary:
 ```
 
 Changes to AIO require rebuilding AppLibrary.
+
+AppLibrary should prefer the AIO-owned runtime contracts re-exported from `AIOEngine`:
+- `RecordingDriving`
+- `AudioEnvironmentDriving`
+- `OutputConfigurationProviding`
 
 ## Performance Considerations
 
