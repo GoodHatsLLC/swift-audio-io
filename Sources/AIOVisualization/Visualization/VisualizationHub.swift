@@ -26,7 +26,8 @@
       }
 
       func deliver(_ event: VisualizationEvent) {
-        for subscriber in subscribers where Self.accepts(event, mask: subscriber.request.eventMask) {
+        for subscriber in subscribers where Self.accepts(event, mask: subscriber.request.eventMask)
+        {
           subscriber.eventHandler(event)
         }
       }

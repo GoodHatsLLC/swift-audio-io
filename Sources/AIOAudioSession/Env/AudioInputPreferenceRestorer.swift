@@ -21,7 +21,8 @@
 
         if !owner.isAudioSessionActive,
           let preferredInputId = owner.preferenceStore.preferredInputId,
-          let preferredInput = owner.env.availableInputs.first(where: { $0.id == preferredInputId }),
+          let preferredInput = owner.env.availableInputs.first(where: { $0.id == preferredInputId }
+          ),
           owner.env.input?.id != preferredInputId
         {
           do {
@@ -61,7 +62,9 @@
               let desired = owner.availableSources.first(where: { $0.id == sourceId })
               if desired != nil {
                 owner.selectedSource = desired
-              } else if owner.inputHasStereoSource, owner.shouldAutoSelectStereoWhenAvailable == false {
+              } else if owner.inputHasStereoSource,
+                owner.shouldAutoSelectStereoWhenAvailable == false
+              {
                 do {
                   try await owner.applyStereo()
                 } catch {
