@@ -262,8 +262,8 @@
         throw .alreadyRunning
       }
       isRunning = true
-      isReady = true
       await refreshInputsFromPlatform()
+      isReady = true
 
       backendRouteTask?.cancel()
       backendRouteTask = Task { @MainActor [weak self] in

@@ -375,8 +375,8 @@
       #expect(await waitUntil { lodMainCallbackCount > 0 })
       #expect(await waitForBackgroundCallbacks(backgroundCapture))
 
-      #expect(latestTimingThreadsAreMain.allSatisfy(\.self))
-      #expect(lodMainThreadsAreMain.allSatisfy(\.self))
+      #expect(latestTimingThreadsAreMain.allSatisfy { $0 })
+      #expect(lodMainThreadsAreMain.allSatisfy { $0 })
 
       let background = await backgroundCapture.snapshot()
       #expect(background.callbackCount > 0)

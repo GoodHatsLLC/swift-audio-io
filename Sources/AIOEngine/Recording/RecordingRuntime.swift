@@ -140,7 +140,7 @@
         }
         try await MainActor.run {
           if shouldStopPlayer || owner.playback != nil {
-            owner.placeState(\.playbackInstance, nil)
+            owner.playbackState[locked: \.playbackInstance] = nil
             owner.playback = nil
             owner.onPlaybackUpdated?(nil)
           }
