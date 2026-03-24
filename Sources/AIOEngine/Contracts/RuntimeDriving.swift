@@ -1,12 +1,12 @@
 // © GoodHatsLLC
 
 #if canImport(AVFoundation)
-  public import AIOAudioSession
-  public import AIOContracts
-  public import AIOEngineCore
+  import AIOAudioSession
+  import AIOContracts
+  import AIOEngineCore
   import AIORecording
-  public import Foundation
-  public import Tools
+  import Foundation
+  import Tools
 
   @MainActor
   public protocol AudioEnvironmentDriving: AnyObject, Sendable {

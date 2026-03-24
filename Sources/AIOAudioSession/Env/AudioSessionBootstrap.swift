@@ -2,6 +2,9 @@
 
 #if os(iOS)
   import AIOSupport
+  import AVFAudio
+  import Tools
+  import os
 
   private let audioSessionBootstrapLog = SystemLog.make()
 

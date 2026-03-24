@@ -1,18 +1,18 @@
 // © GoodHatsLLC
 
 #if canImport(AVFoundation)
-  public import AIOAudioSession
-  public import AIOContracts
+  import AIOAudioSession
+  import AIOContracts
   import AIOSupport
   package import AIORecordingSupport
   import AsyncAlgorithms
   package import Atomics
   package import AVFoundation
   import Dispatch
-  public import Foundation
-  public import Observation
+  import Foundation
+  import Observation
   import os
-  public import Tools
+  import Tools
 
   private let log = SystemLog.make()
   #if DEBUG
@@ -198,6 +198,20 @@
 
     /// An event representing a change in audio quality.
     public struct AudioQualityChange: Sendable {
+      public init(
+        reason: String,
+        previousChannels: UInt32,
+        currentChannels: UInt32,
+        previousSampleRate: Double,
+        currentSampleRate: Double,
+      ) {
+        self.reason = reason
+        self.previousChannels = previousChannels
+        self.currentChannels = currentChannels
+        self.previousSampleRate = previousSampleRate
+        self.currentSampleRate = currentSampleRate
+      }
+
       /// The reason for the quality change.
       public let reason: String
       /// The previous number of channels.

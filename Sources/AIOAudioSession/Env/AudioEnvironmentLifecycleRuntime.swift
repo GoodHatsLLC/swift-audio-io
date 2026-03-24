@@ -2,9 +2,10 @@
 
 #if os(iOS)
   import AIOSupport
-  public import AVFAudio
+  import AVFAudio
   import Foundation
-  public import Tools
+  import Tools
+  import os
 
   private let audioEnvironmentLifecycleLog = SystemLog.make()
 
@@ -122,21 +123,21 @@
               }
             }
           }
-          group.addTask { [weak self] in
+          group.addTask { [self] in
             for await _ in env.notifications.mediaServicesLost {
               if Task.isCancelled { return }
-              await self?.handleMediaServicesLost()
+              await handleMediaServicesLost()
             }
           }
-          group.addTask { [weak self] in
+          group.addTask { [self] in
             for await _ in env.notifications.mediaServicesReset {
               if Task.isCancelled { return }
-              await self?.handleMediaServicesReset()
+              await handleMediaServicesReset()
             }
           }
           owner.routeObserver.addTasks(to: &group)
-          group.addTask { [weak self] in
-            await self?.subscribeToOrientation { @MainActor [weak owner] orientation in
+          group.addTask { [self] in
+            await self.subscribeToOrientation { @MainActor [weak owner] orientation in
               guard let owner else { return }
               owner._orientation = orientation
               audioEnvironmentLifecycleLog.info(
@@ -171,19 +172,12 @@
             }
           }
 
-          group.addTask { [weak owner] in
-            Task { @MainActor in
-              owner?.isReady = true
-              audioEnvironmentLifecycleLog.info("🔊 AudioEnvironmentManager ready")
-            }
-            await withCancellationOperation {
-              Task { @MainActor in
-                owner?.isReady = false
-              }
-              audioEnvironmentLifecycleLog.info("🔇AudioEnvironmentManager cancelled")
-            }
+          owner.isReady = true
+          audioEnvironmentLifecycleLog.info("🔊 AudioEnvironmentManager ready")
+          defer {
+            owner.isReady = false
+            audioEnvironmentLifecycleLog.info("🔇AudioEnvironmentManager cancelled")
           }
-
           await group.waitForAll()
         }
       }

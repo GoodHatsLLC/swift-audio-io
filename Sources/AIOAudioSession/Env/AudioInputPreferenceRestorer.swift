@@ -2,6 +2,8 @@
 
 #if os(iOS)
   import AIOSupport
+  import os
+  import Tools
 
   private let audioInputPreferenceRestorerLog = SystemLog.make()
 
