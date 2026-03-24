@@ -195,7 +195,8 @@
           if Task.isCancelled { return }
           let playback = owner.getPlayback()
           if playback?.id == instance.id {
-            if owner.playback?.time != playback?.time || owner.playback?.isPlaying != playback?.isPlaying
+            if owner.playback?.time != playback?.time
+              || owner.playback?.isPlaying != playback?.isPlaying
             {
               owner.setPlayback(playback)
             }

@@ -171,7 +171,8 @@
     ///
     /// Thread Domain: engineControl (called from `reinstallTap` on the engine
     /// control queue, or from `warm()` on MainActor after the queue dispatch).
-    package func applyTapInstallResult(_ result: TapInstallResult, processingFormat: AVAudioFormat) {
+    package func applyTapInstallResult(_ result: TapInstallResult, processingFormat: AVAudioFormat)
+    {
       let wrapped = state { state -> Transferring<TapSnapshot> in
         state.tapConverter = result.artifacts.converter
         state.tapConverterInputFormat = result.artifacts.inputFormat

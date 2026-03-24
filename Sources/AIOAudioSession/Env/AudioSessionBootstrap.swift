@@ -13,7 +13,9 @@
       let owner: AudioEnvironmentManager
 
       @MainActor
-      func rebuildSessionConfiguration(configuration: AudioSessionConfiguration) throws(ManagerError) {
+      func rebuildSessionConfiguration(configuration: AudioSessionConfiguration)
+        throws(ManagerError)
+      {
         try AudioEnvironmentManager.configureAudioSessionCategory(
           owner.env.session,
           configuration: configuration,
@@ -21,7 +23,8 @@
       }
 
       @MainActor
-      func configureInitialSession(configuration: AudioSessionConfiguration) async throws(ManagerError)
+      func configureInitialSession(configuration: AudioSessionConfiguration)
+        async throws(ManagerError)
       {
         let env = owner.env
         try rebuildSessionConfiguration(configuration: configuration)

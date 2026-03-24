@@ -157,7 +157,9 @@
             didApply = true
           }
           if !didApply,
-            let monoCapable = allSources.first(where: { !$0.supportedPolarPatterns.contains(.stereo) }
+            let monoCapable = allSources.first(where: {
+              !$0.supportedPolarPatterns.contains(.stereo)
+            }
             )
           {
             plan.preferredInput = input
@@ -262,8 +264,9 @@
           env: owner.env,
           sourceFilter: owner.filterSources,
         )
-        guard nextState.availableInputs != previousState.availableInputs
-          || nextState.availableSources != previousState.availableSources
+        guard
+          nextState.availableInputs != previousState.availableInputs
+            || nextState.availableSources != previousState.availableSources
         else {
           return nil
         }
@@ -313,7 +316,8 @@
           ordered.append(preferred)
         }
 
-        if let current = owner.selectedSource, stereoSources.contains(current), !ordered.contains(current)
+        if let current = owner.selectedSource, stereoSources.contains(current),
+          !ordered.contains(current)
         {
           ordered.append(current)
         }

@@ -523,11 +523,12 @@
     }
 
     nonisolated
-    func processAudio(
-      buffer: AVAudioPCMBuffer,
-      time: AVAudioTime?,
-      to processingFormat: AVAudioFormat,
-    ) {
+      func processAudio(
+        buffer: AVAudioPCMBuffer,
+        time: AVAudioTime?,
+        to processingFormat: AVAudioFormat,
+      )
+    {
       #if DEBUG
         let tapStart = DispatchTime.now().uptimeNanoseconds
       #endif
@@ -706,10 +707,11 @@
     }
 
     nonisolated
-    func formatsCompatible(
-      _ lhs: AVAudioFormat,
-      _ rhs: AVAudioFormat,
-    ) -> Bool {
+      func formatsCompatible(
+        _ lhs: AVAudioFormat,
+        _ rhs: AVAudioFormat,
+      ) -> Bool
+    {
       lhs.commonFormat == rhs.commonFormat
         && lhs.sampleRate == rhs.sampleRate
         && lhs.channelCount == rhs.channelCount
@@ -1028,7 +1030,8 @@
     }
 
     nonisolated
-    func isWriterDrainTimeout(_ failure: WriteFailure) -> Bool {
+      func isWriterDrainTimeout(_ failure: WriteFailure) -> Bool
+    {
       failure.error.domain.contains("WriterDrainTimeoutError")
         || failure.error.message.localizedCaseInsensitiveContains("writer drain timed out")
     }
