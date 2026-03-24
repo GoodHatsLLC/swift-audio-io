@@ -10,7 +10,7 @@
       self.platform = platform
     }
 
-    let platform: AVAudioChannelCount
+    package let platform: AVAudioChannelCount
 
     public static let typeDescription: String = "Channel Count"
 

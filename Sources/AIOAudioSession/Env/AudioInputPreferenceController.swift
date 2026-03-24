@@ -2,6 +2,9 @@
 
 #if os(iOS)
   import AIOSupport
+  import AVFAudio
+  import os
+  import Tools
 
   private let audioInputPreferenceLog = SystemLog.make()
 
@@ -278,6 +281,7 @@
         return summary
       }
 
+      @MainActor
       private func persistInputPreferencesIfNeeded(
         _ update: (inout PersistedInputPreferences) -> Void,
       ) {
@@ -293,6 +297,7 @@
         )
       }
 
+      @MainActor
       private func preferredStereoCandidates(from stereoSources: [AudioSource]) -> [AudioSource] {
         guard !stereoSources.isEmpty else { return [] }
 

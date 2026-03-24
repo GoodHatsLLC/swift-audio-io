@@ -1,9 +1,9 @@
 // © GoodHatsLLC
 
 #if canImport(AVFoundation)
-  public import AIOEngineCore
+  import AIOEngineCore
   package import AVFoundation
-  public import Foundation
+  import Foundation
 
   extension AIOEngine {
     private var playbackRuntime: PlaybackRuntime {

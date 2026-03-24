@@ -1,15 +1,15 @@
 // © GoodHatsLLC
 
 #if canImport(AVFoundation)
-  public import AIOAudioSession
+  import AIOAudioSession
   import AIOContracts
   import AIOSupport
-  public import AIOEngineCore
+  import AIOEngineCore
   package import AIORecordingSupport
   import AsyncAlgorithms
   import Atomics
   package import AVFoundation
-  public import Foundation
+  import Foundation
   import os
   package import Tools
 
@@ -177,7 +177,7 @@
       try recordingEngineRuntime.warm(configuration: configuration)
     }
 
-    func makeAudioBuffers(
+    package func makeAudioBuffers(
       sampleRate: Int,
       channelCount: Int,
     ) -> [SPSCRingBuffer<Float>] {
@@ -234,7 +234,7 @@
     /// - Engine control: engineControlQueue (serial, .default) for all
     ///   AVAudioEngine graph mutations.
     /// - Receiver loop: receiverQueue (serial, .userInitiated), visualization.
-    nonisolated func processAudio(
+    package nonisolated func processAudio(
       buffer: AVAudioPCMBuffer,
       time: AVAudioTime?,
       to processingFormat: AVAudioFormat,
@@ -341,7 +341,7 @@
       )
     }
 
-    static func minimumAvailableWriteFrames(
+    package static func minimumAvailableWriteFrames(
       channelCount: Int,
       audioBuffers: [SPSCRingBuffer<Float>],
       limit: Int,

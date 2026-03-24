@@ -2,6 +2,8 @@
 
 #if os(iOS)
   import AIOSupport
+  import AVFAudio
+  import os
 
   private let audioRouteObserverLog = SystemLog.make()
 

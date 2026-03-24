@@ -2,7 +2,7 @@
 
 #if os(iOS)
   #if DEBUG
-    import AIOAudioSession
+    public import AIOAudioSession
     public import AIOEngineCore
     import AIORecording
     package import AIORecordingSupport

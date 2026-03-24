@@ -159,7 +159,7 @@
       _useMeasurement = preferenceStore.useMeasurement
     }
 
-    private let env: AudioEnvironment
+    let env: AudioEnvironment
     /// The underlying `AVAudioSession`.
     public var session: AVAudioSession {
       env.session
@@ -167,21 +167,21 @@
 
     /// The preferred category/mode/options for this environment.
     public var sessionConfiguration: AudioSessionConfiguration = .recordingConfiguration
-    private let errorManager: any ErrorManaging
-    private let preferenceStore: AudioEnvironmentPreferenceStore
-    private typealias PersistedInputPreferences = AudioEnvironmentPreferenceStore.InputPreferences
+    let errorManager: any ErrorManaging
+    let preferenceStore: AudioEnvironmentPreferenceStore
+    typealias PersistedInputPreferences = AudioEnvironmentPreferenceStore.InputPreferences
     private var lifecycleRuntime: AudioEnvironmentLifecycleRuntime { .init(owner: self) }
-    private var sessionBootstrap: AudioSessionBootstrap { .init(owner: self) }
-    private var sessionController: AudioSessionController { .init(owner: self) }
-    private var inputPreferenceController: AudioInputPreferenceController { .init(owner: self) }
+    var sessionBootstrap: AudioSessionBootstrap { .init(owner: self) }
+    var sessionController: AudioSessionController { .init(owner: self) }
+    var inputPreferenceController: AudioInputPreferenceController { .init(owner: self) }
     private var inputPreferenceRestorer: AudioInputPreferenceRestorer { .init(owner: self) }
-    private var routeObserver: AudioRouteObserver { .init(owner: self) }
+    var routeObserver: AudioRouteObserver { .init(owner: self) }
 
     /// Describes audio input configuration operations that require synchronous XPC
     /// round-trips to `mediaserverd`. Computed on MainActor (where cached state is
     /// readable) then executed off MainActor via ``executeInputConfiguration(_:session:)``
     /// to avoid run-loop hangs.
-    private struct InputConfigurationPlan {
+    struct InputConfigurationPlan {
       var channelCount: Int?
       var polarPatternSource: AudioSource?
       var polarPattern: PolarPattern?
@@ -209,7 +209,7 @@
     ///
     /// - Note: `setCategory` and `setActive` intentionally remain on MainActor per Apple
     ///   DTS guidance. Only input-preference calls are moved here.
-    private nonisolated static func executeInputConfiguration(
+    nonisolated static func executeInputConfiguration(
       _ plan: InputConfigurationPlan,
       session: AVAudioSession,
     ) async throws(ManagerError) {
@@ -264,7 +264,7 @@
       }
     }
 
-    private var isRestoringFromDefaults: Bool = false
+    var isRestoringFromDefaults: Bool = false
 
     public var shouldAutoSelectStereoWhenAvailable: Bool {
       let inputId = env.input?.id ?? "_default"
@@ -280,7 +280,7 @@
     }
 
     /// A Boolean value that indicates whether this `AudioEnvironmentManager` is fully primed and subscribed.
-    public private(set) var isReady: Bool = false {
+    public internal(set) var isReady: Bool = false {
       didSet {
         if isReady {
           try? readinessSignal.yield()
@@ -354,18 +354,18 @@
     private let eventHub = AudioEnvironmentEventHub()
 
     /// A Boolean value that indicates whether the manager is currently running.
-    public private(set) var isRunning: Bool = false
+    public internal(set) var isRunning: Bool = false
 
     /// A Boolean value that indicates whether the audio session is currently active.
-    public private(set) var isAudioSessionActive: Bool = false
-    private var _orientation: AVAudioSession.StereoOrientation
+    public internal(set) var isAudioSessionActive: Bool = false
+    var _orientation: AVAudioSession.StereoOrientation
     private var _selectedNumberOfChannels: ChannelCount
     private var _input: AudioInput?
-    private var _selectedSource: AudioSource?
-    private var _selectedSampleRate: SampleRate
+    var _selectedSource: AudioSource?
+    var _selectedSampleRate: SampleRate
     private var _availableInputs: [AudioInput]
     private var _availableSources: [AudioSource]
-    private var state: AudioEnvironmentState {
+    var state: AudioEnvironmentState {
       get {
         AudioEnvironmentState(
           input: _input,
@@ -626,11 +626,11 @@
   extension AudioEnvironmentManager {
     @discardableResult
     @MainActor
-    private func updateAudioInputs(reason: String) -> AudioDeviceChangeSummary? {
+    func updateAudioInputs(reason: String) -> AudioDeviceChangeSummary? {
       inputPreferenceController.updateAudioInputs(reason: reason)
     }
 
-    private func filterSources(
+    func filterSources(
       _ sources: [AudioSource],
       for channelCount: ChannelCount,
     ) -> [AudioSource] {
@@ -656,7 +656,7 @@
     }
 
     @MainActor
-    private func dispatchInterruption(
+    func dispatchInterruption(
       type: AudioInterruptionType,
       options: AudioInterruptionOptions?,
     ) async {
@@ -665,19 +665,19 @@
     }
 
     @MainActor
-    private func dispatchRouteChange(_ event: AudioRouteChangeEvent) async {
+    func dispatchRouteChange(_ event: AudioRouteChangeEvent) async {
       await onRouteChange?(event)
       await eventHub.dispatchRouteChange(event)
     }
 
     @MainActor
-    private func dispatchMediaServicesLost() async {
+    func dispatchMediaServicesLost() async {
       await onMediaServicesLost?()
       await eventHub.dispatchMediaServicesLost()
     }
 
     @MainActor
-    private func dispatchMediaServicesReset() async {
+    func dispatchMediaServicesReset() async {
       await onMediaServicesReset?()
       await eventHub.dispatchMediaServicesReset()
     }
@@ -685,11 +685,11 @@
 
   extension AudioEnvironmentManager {
     @MainActor
-    private func restorePreferredInputAndConfigurationIfPossible(reason: String) async {
+    func restorePreferredInputAndConfigurationIfPossible(reason: String) async {
       await inputPreferenceRestorer.restorePreferredInputAndConfigurationIfPossible(reason: reason)
     }
 
-    private func stereoPreferenceRank(_ source: AudioSource) -> Int {
+    func stereoPreferenceRank(_ source: AudioSource) -> Int {
       // Best-effort heuristic to pick a stable "good default" stereo mic when we can't restore
       // the exact prior data source. Tuned for built-in mic data sources.
       guard let raw = source.avAudio.location?.rawValue.lowercased() else { return 9 }

@@ -27,7 +27,7 @@
         removedSources = previousSourceSet.subtracting(currentSourceSet).sorted()
       }
 
-      var description: String {
+      package var description: String {
         let inputsDescription =
           "inputs + [\(addedInputs)], - [\(removedInputs)]"
         let sourcesDescription =

@@ -1,10 +1,10 @@
 // © GoodHatsLLC
 
 #if canImport(AVFoundation)
-  import AIOAudioSession
+  package import AIOAudioSession
   import AIOContracts
   import AIOSupport
-  import AVFoundation
+  package import AVFoundation
   import os
   import Tools
 
@@ -22,7 +22,7 @@
 
     #if os(iOS)
       @MainActor
-      func applyAudioSessionConfiguration(
+      package func applyAudioSessionConfiguration(
         _ session: AVAudioSession,
         configuration: AudioSessionConfiguration,
       ) throws(AIOError) {

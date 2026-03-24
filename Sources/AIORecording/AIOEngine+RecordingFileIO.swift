@@ -2,9 +2,9 @@
 
 #if canImport(AVFoundation)
   package import AIOAudioSession
-  public import AIOContracts
+  import AIOContracts
   import AIOSupport
-  public import AIOEngineCore
+  import AIOEngineCore
   package import AIORecordingSupport
   import AudioToolbox
   import AVFoundation
