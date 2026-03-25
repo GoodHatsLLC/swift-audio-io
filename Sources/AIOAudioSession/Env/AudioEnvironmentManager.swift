@@ -599,6 +599,20 @@
       try await inputPreferenceController.applyStereo(persistPreference: persistPreference)
     }
 
+    public func applySourceConfiguration(
+      source: AudioSource,
+      channelCount: ChannelCount,
+      polarPattern: PolarPattern? = nil,
+      persistPreference: Bool = true,
+    ) async throws(ManagerError) {
+      try await inputPreferenceController.applySourceConfiguration(
+        source: source,
+        channelCount: channelCount,
+        polarPattern: polarPattern,
+        persistPreference: persistPreference,
+      )
+    }
+
     /// Manually sets the audio session active state.
     ///
     /// This allows enabling or disabling the audio session independently of recording.

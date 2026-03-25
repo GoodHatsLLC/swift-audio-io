@@ -210,6 +210,31 @@
       try await applyStereo()
     }
 
+    public func applySourceConfiguration(
+      source: AudioSource,
+      channelCount: ChannelCount,
+      polarPattern: PolarPattern? = nil,
+      persistPreference: Bool = true,
+    ) async throws(ManagerError) {
+      _ = persistPreference
+      guard _availableSources.contains(source) else {
+        throw .unsupportedOperation
+      }
+      if let polarPattern, !source.supportedPolarPatterns.contains(polarPattern) {
+        throw .unsupportedOperation
+      }
+
+      _selectedSource = source
+      if channelCount == .stereo {
+        guard source.hasStereo else {
+          throw .unsupportedOperation
+        }
+        try await applyStereo()
+      } else {
+        try await applyMono()
+      }
+    }
+
     private let eventHub = AudioEnvironmentEventHub()
 
     @discardableResult
