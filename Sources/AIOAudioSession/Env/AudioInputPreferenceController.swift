@@ -256,6 +256,49 @@
         }
       }
 
+      @MainActor
+      func applySourceConfiguration(
+        source: AudioSource,
+        channelCount: ChannelCount,
+        polarPattern: PolarPattern?,
+        persistPreference: Bool,
+      ) async throws(ManagerError) {
+        if persistPreference {
+          persistInputPreferencesIfNeeded { prefs in
+            prefs.channelCount = channelCount.count
+          }
+        }
+
+        guard let input = owner.env.input else {
+          throw .audioEnvironment(.noActiveAudioInputForDataSource)
+        }
+
+        var plan = AudioEnvironmentManager.InputConfigurationPlan()
+        plan.channelCount = channelCount.count
+        plan.preferredInput = input
+        plan.preferredSource = source
+        plan.polarPatternSource = polarPattern == nil ? nil : source
+        plan.polarPattern = polarPattern
+        if channelCount.count > 1, owner.orientation != .none {
+          plan.inputOrientation = owner.orientation
+        }
+
+        defer {
+          owner.state = AudioEnvironmentState.mirrored(
+            env: owner.env,
+            sourceFilter: owner.filterSources,
+          )
+        }
+
+        try await AudioEnvironmentManager.executeInputConfiguration(plan, session: owner.session)
+
+        if persistPreference {
+          persistInputPreferencesIfNeeded { prefs in
+            prefs.sourceId = owner.env.source?.id
+          }
+        }
+      }
+
       @discardableResult
       @MainActor
       func updateAudioInputs(reason: String) -> AudioDeviceChangeSummary? {
