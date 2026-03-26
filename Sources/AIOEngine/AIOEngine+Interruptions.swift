@@ -4,9 +4,9 @@
   public import AIOAudioSession
   import AIOPlayback
   import AIORecording
-  package import AIOSupport
+  import AIOSupport
   public import AIOEngineCore
-  package import AIORecordingSupport
+  import AIORecordingSupport
   public import AVFoundation
   import Foundation
   import os
