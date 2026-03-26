@@ -767,6 +767,8 @@
       unsafe commitsSinceSlotSwap = 0
       unsafe deltaStartWriteIndex = unsafe bufferSlots[writeSlotIndex].writeIndex
       unsafe deltaWrittenCount = 0
+      unsafe previousDeltaStartWriteIndex = unsafe bufferSlots[writeSlotIndex].writeIndex
+      unsafe previousDeltaWrittenCount = 0
       unsafe writerWriteIndexAtomic.store(
         bufferSlots[writeSlotIndex].writeIndex, ordering: .relaxed,
       )

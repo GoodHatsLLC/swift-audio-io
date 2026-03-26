@@ -470,6 +470,32 @@
       }
     }
 
+    @Test
+    func `Reset clears previous delta history before the next slot swaps`() {
+      let config = MultiBandLODConfiguration(
+        bandCount: 1,
+        lodRatio: 1,
+        bufferSeconds: 2,
+        sampleRate: 4,
+        snapshotSwapInterval: 1,
+      )
+      let processor = unsafe MultiBandLODProcessor(configuration: config)
+
+      unsafe processor.process([1, 2, 3, 4])
+      unsafe processor.reset()
+      unsafe processor.process([9, 8])
+
+      let ref = unsafe processor.snapshotRef()
+      unsafe #expect(ref.writeIndex == 2)
+
+      unsafe ref.withContiguousLODChannel(band: 0, channel: .max) { buffer in
+        let values = unsafe Array(buffer)
+        #expect(values[0] == 9)
+        #expect(values[1] == 8)
+        #expect(values.dropFirst(2).allSatisfy { $0 == 0 })
+      }
+    }
+
     // MARK: - Helper Functions
 
     @Test
