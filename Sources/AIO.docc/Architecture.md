@@ -31,8 +31,7 @@ As of 2026-03-23:
 *   `AudioEnvironmentManager` now delegates session bootstrap/control, route observation, state projection, and preference restoration to focused collaborators.
 *   Recording behavior now lives behind `RecordingRuntime` plus `RecordingEngineRuntime`, with `AIOEngine+Recording` acting as a forwarding surface.
 
-Still in progress relative to `/Users/adamz/Developer/repos/audio/AIO_PROPOSAL.md` and
-`/Users/adamz/Developer/repos/audio/AIO_EXECUTION_PLAN.md`:
+Still in progress:
 
 *   `AIOEngineCore` still owns the shared observable state spine and some cross-runtime helpers.
 *   `AIOEngine` remains source-compatible, but it is not yet the near-zero-state facade described in the proposal’s final state.

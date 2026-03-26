@@ -131,8 +131,7 @@ Contains:
 
 ## Refactor Status
 
-The AIO refactor proposed in `/Users/adamz/Developer/repos/audio/AIO_PROPOSAL.md` has landed
-substantially, but not every end-state goal is finished.
+The AIO refactor has landed substantially, but not every end-state goal is finished.
 
 Implemented:
 - AppLibrary now depends on AIO-owned runtime contracts.
