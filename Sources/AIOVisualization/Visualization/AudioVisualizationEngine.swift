@@ -282,12 +282,12 @@
               dispatcher.deliver(.latestBufferTiming(timing))
             }
           },
-          onLODSnapshot: { [weak self] snapshot in
+          onLODSnapshot: { [weak self] in
             guard let self else { return }
             let dispatcher = self.hub.dispatcher()
-            dispatcher.deliver(.lodSnapshotBackground(snapshot))
+            dispatcher.deliver(.lodSnapshotBackground)
             DispatchQueue.main.async {
-              dispatcher.deliver(.lodSnapshot(snapshot))
+              dispatcher.deliver(.lodSnapshot)
             }
           },
           onFrequencyLabelsChanged: { [weak self] labels in
