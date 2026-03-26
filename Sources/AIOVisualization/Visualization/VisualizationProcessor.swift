@@ -16,7 +16,7 @@
     struct Callbacks {
       let onAnalysisFrame: @Sendable (AnalysisFrame) -> Void
       let onLatestBufferTiming: @Sendable (BufferTiming) -> Void
-      let onLODSnapshot: @Sendable (LODSnapshotRef?) -> Void
+      let onLODSnapshot: @Sendable () -> Void
       let onFrequencyLabelsChanged: @Sendable ([(frequency: Float, label: String)]) -> Void
     }
 
@@ -539,9 +539,8 @@
     }
 
     private func publishLODSnapshot() {
-      guard lodEnabledAtomic.load(ordering: .relaxed) else { return }
-      let snapshot = unsafe lodProcessor?.withCurrentLODSnapshotRef { $0 }
-      callbacks.onLODSnapshot(snapshot)
+      guard lodEnabledAtomic.load(ordering: .relaxed), unsafe lodProcessor != nil else { return }
+      callbacks.onLODSnapshot()
     }
 
     private func updateSpectrumPeaks(

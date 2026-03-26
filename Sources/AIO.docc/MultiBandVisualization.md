@@ -29,8 +29,10 @@ let request = VisualizationRequest(
 let subscription = vizEngine.subscribe(
     request: request,
     handler: { event in
-      if case let .lodSnapshot(snapshot) = event {
-        renderWaveform(snapshot)
+      if case .lodSnapshot = event {
+        vizEngine.withCurrentLODSnapshotRef { snapshot in
+          renderWaveform(snapshot)
+        }
       }
     }
 )
@@ -188,8 +190,11 @@ let request = VisualizationRequest(
     work: VisualizationWork(lod: LODWork(configuration: .default, publishRateHz: 60))
 )
 let subscription = vizEngine.subscribe(request: request) { event in
-    if case let .lodSnapshot(snapshot) = event {
-        // Cache or render snapshot
+    if case .lodSnapshot = event {
+        vizEngine.withCurrentLODSnapshotRef { snapshot in
+            // Render using the current frame-scoped snapshot
+            _ = snapshot
+        }
     }
 }
 vizEngine.startVisualization()
@@ -198,10 +203,6 @@ vizEngine.startVisualization()
 func audioCallback(samples: UnsafeBufferPointer<Float>) {
     vizEngine.processBuffer(samples)
 }
-
-// In UI (SwiftUI timer or display link)
-struct WaveformView: View {
-    @State private var snapshot: LODSnapshotRef?
 
     var body: some View {
         // Fetch a frame-scoped snapshot in your display-link/timer update path.

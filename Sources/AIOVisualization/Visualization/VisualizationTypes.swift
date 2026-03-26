@@ -12,8 +12,8 @@
     case timeDomain(TimeDomainData)
     case frequencyDomain(FrequencyDomainData)
     case beat(BeatInfo)
-    case lodSnapshot(LODSnapshotRef?)
-    case lodSnapshotBackground(LODSnapshotRef?)
+    case lodSnapshot
+    case lodSnapshotBackground
     case latestBufferTiming(BufferTiming?)
   }
 

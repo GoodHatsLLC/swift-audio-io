@@ -341,18 +341,19 @@
         request: VisualizationRequest(work: work),
         handler: { event in
           switch event {
-          case .lodSnapshot(let snapshot):
-            guard snapshot != nil else { return }
+          case .lodSnapshot:
+            guard engine.withCurrentLODSnapshotRef({ _ in true }) == true else { return }
             Task { @MainActor in
               lodMainCallbackCount += 1
               lodMainThreadsAreMain.append(true)
             }
-          case .lodSnapshotBackground(let snapshot):
+          case .lodSnapshotBackground:
             let isMainThread = Thread.isMainThread
+            let hasSnapshot = engine.withCurrentLODSnapshotRef { _ in true } ?? false
             Task {
               await backgroundCapture.record(
                 isMainThread: isMainThread,
-                hasSnapshot: snapshot != nil,
+                hasSnapshot: hasSnapshot,
               )
             }
           case .latestBufferTiming(let timing):

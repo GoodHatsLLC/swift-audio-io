@@ -33,8 +33,10 @@ let subscription = engine.subscribe(request: request) { event in
   switch event {
   case .timeDomain(let data):
     handleTime(data)
-  case .lodSnapshot(let snapshot):
-    render(snapshot)
+  case .lodSnapshot:
+    engine.withCurrentLODSnapshotRef { snapshot in
+      render(snapshot)
+    }
   default:
     break
   }
