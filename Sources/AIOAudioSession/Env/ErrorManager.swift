@@ -4,15 +4,18 @@ import AIOSupport
 public import Foundation
 public import Observation
 public import SwiftUI
+public import Tools
 import os
 
 private let log = SystemLog.make()
 
 @Observable
 public final class ErrorManager: Sendable {
+  @ObservationIgnored private let errorEventsSubject = Subject<ErrorEvent>()
+
   public nonisolated init() {}
 
-  public struct ErrorEvent: Identifiable, Hashable {
+  public struct ErrorEvent: Identifiable, Hashable, Sendable {
     public enum Visibility: Sendable {
       /// Visible only when debug toasts are enabled.
       case debug
@@ -58,6 +61,10 @@ public final class ErrorManager: Sendable {
   @MainActor
   public var errors: [ErrorEvent] = []
 
+  public var eventStream: AsyncBroadcaster<ErrorEvent> {
+    errorEventsSubject.broadcaster
+  }
+
   @MainActor
   public func popError() -> ErrorEvent? {
     if !errors.isEmpty {
@@ -86,15 +93,15 @@ public final class ErrorManager: Sendable {
       """,
     )
     Task { @MainActor in
-      errors.append(
-        ErrorEvent(
-          error: error,
-          visibility: visibility,
-          userMessage: userMessage,
-          context: context,
-          source: source,
-        ),
+      let event = ErrorEvent(
+        error: error,
+        visibility: visibility,
+        userMessage: userMessage,
+        context: context,
+        source: source,
       )
+      errors.append(event)
+      errorEventsSubject.send(event)
     }
   }
 
