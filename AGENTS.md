@@ -1,7 +1,7 @@
 # AIO Package - Audio I/O Engine
 
 **Location**: `Packages/AIO/`
-**Last Updated**: 2026-03-23
+**Last Updated**: 2026-04-06
 
 This file consolidates the previous `CLAUDE.md` content for this directory. `CLAUDE.md` remains as a symlink for backwards compatibility.
 
@@ -191,6 +191,11 @@ If you're using Claude Code in this repo, see `.claude/AGENTS.md` for the full s
 
 ### Test Framework
 Tests use **Swift Testing** framework (`@Test` macros, `@Suite`), not XCTest.
+
+## Agent Workflow
+
+- Always run the relevant AIO test suite before considering work complete. Prefer the narrowest meaningful suite first (`xcrun swift test --package-path Packages/AIO` when host-compatible, or the matching XcodeBuildMCP/Xcode test scheme when simulator coverage is needed), and report what you ran.
+- Always commit finished work on the current checked-out branch after tests pass. Do not create or switch branches unless the user explicitly asks.
 
 ## Key Features
 
