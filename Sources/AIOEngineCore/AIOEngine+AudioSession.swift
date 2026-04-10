@@ -1,10 +1,14 @@
 // © GoodHatsLLC
 
 #if canImport(AVFoundation)
-  package import AIOAudioSession
+  import AIOAudioSession
   import AIOContracts
   import AIOSupport
-  package import AVFoundation
+  #if os(iOS)
+    package import AVFoundation
+  #else
+    import AVFoundation
+  #endif
   import os
   import Tools
 
