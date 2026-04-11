@@ -137,6 +137,9 @@
     unsafe String(validatingCString: __dispatch_queue_get_label(nil)) ?? ""
   }
 
+  // SAFETY: Test fake. All mutation of `storedLabels` is guarded by the
+  // NSLock `lock`. BufferReceiver isn't Sendable by nature, so @unchecked is
+  // needed even though the internal state is locked.
   private final class QueueLabelReceiver: BufferReceiver, @unchecked Sendable {
     typealias T = Float
     private let lock = NSLock()
@@ -162,6 +165,8 @@
     nonisolated func endBufferTask() {}
   }
 
+  // SAFETY: Test fake. All mutation of `stored` is guarded by the NSLock
+  // `lock`. BufferReceiver isn't Sendable by nature.
   private final class OrderedReceiver: BufferReceiver, @unchecked Sendable {
     typealias T = Float
     private let lock = NSLock()
@@ -186,6 +191,9 @@
     nonisolated func endBufferTask() {}
   }
 
+  // SAFETY: Test fake. Only stored state is an immutable `let delay`;
+  // there is no mutable state to race on. @unchecked is required only
+  // because BufferReceiver isn't a Sendable protocol.
   private final class SlowReceiver: BufferReceiver, @unchecked Sendable {
     typealias T = Float
     private let delay: TimeInterval

@@ -112,6 +112,9 @@
     }
   }
 
+  // SAFETY: Test fake. All mutation of `storedValues` and `storedTiming` is
+  // guarded by the NSLock `lock`. `control` is a let. BufferReceiver isn't
+  // Sendable by nature.
   private final class CapturingReceiver: BufferReceiver, @unchecked Sendable {
     typealias T = Float
     private let control: ReceiverControl
