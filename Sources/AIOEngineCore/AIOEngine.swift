@@ -355,7 +355,20 @@
 
     // MARK: - Stored Properties
 
+    // SAFETY: AVAudioEngine and AVAudioPlayerNode are mutable Apple framework
+    // types that cannot adopt Sendable. All graph mutations go through
+    // `engineControlQueue` (a serial DispatchQueue) via the
+    // runOnEngineControlQueue / withEngineControlQueue helpers below. The
+    // real-time tap callback thread reads a reference captured at install
+    // time and communicates with the control thread via lock-free
+    // SPSCRingBuffers + ManagedAtomic. See the architecture block above for
+    // the full thread topology. Swift's type system cannot model dispatch
+    // queue serialization, so the `nonisolated(unsafe)` annotation tells it
+    // "trust me, this is covered by the queue invariant."
     package nonisolated(unsafe) let engine = AVAudioEngine()
+    // SAFETY: Same queue invariant as `engine` above — player is an
+    // AVAudioPlayerNode attached to the engine graph and mutated only from
+    // engineControlQueue.
     package nonisolated(unsafe) let player = AVAudioPlayerNode()
     package let engineControlQueue = DispatchQueue(label: "AIOEngine.engine-control", qos: .default)
     package let recordingInfrastructure = RecordingInfrastructure()
