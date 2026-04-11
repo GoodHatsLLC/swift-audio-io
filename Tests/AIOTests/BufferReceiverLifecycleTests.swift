@@ -12,6 +12,9 @@ struct BufferReceiverLifecycleTests {
   func `detach calls end buffer task and releases receiver`() async {
     let engine = AIOEngine()
 
+    // SAFETY: Test fake. The only mutable state is `endCount`, a
+    // ManagedAtomic which is thread-safe by construction. BufferReceiver
+    // isn't Sendable by nature.
     final class TestReceiver: BufferReceiver, @unchecked Sendable {
       typealias T = Float
       let endCount = ManagedAtomic<Int>(0)
