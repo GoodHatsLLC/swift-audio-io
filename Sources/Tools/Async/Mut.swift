@@ -29,12 +29,19 @@ extension Mut {
     do {
       #if canImport(Synchronization)
         return try lock.withLock { v -> Transferring<Result> in
+          // SAFETY: Function-local stack copy inside the Mutex critical
+          // section. `copy` is never captured by an escaping closure and
+          // is written back to `v` via defer before the critical section
+          // ends. The annotation is needed because Swift cannot prove
+          // that the inout-reborrow to `body` is confined to the lock.
           nonisolated(unsafe) var copy = v
           defer { v = unsafe copy }
           return try unsafe Transferring(body(&copy))
         }.value
       #else
         return try lock.withLockUnchecked { v -> Transferring<Result> in
+          // SAFETY: See withLock above — same pattern for the
+          // OSAllocatedUnfairLock fallback on pre-iOS 18 runtimes.
           nonisolated(unsafe) var copy = v
           defer { v = copy }
           return try Transferring(body(&copy))
@@ -53,12 +60,15 @@ extension Mut {
     do {
       #if canImport(Synchronization)
         return try lock.withLockIfAvailable { v -> Transferring<Result> in
+          // SAFETY: See withLock above — same pattern for the tryLock path.
           nonisolated(unsafe) var copy = v
           defer { v = unsafe copy }
           return try unsafe Transferring(body(&copy))
         }?.value
       #else
         return try lock.withLockIfAvailableUnchecked { v -> Transferring<Result> in
+          // SAFETY: See withLock above — same pattern for the
+          // OSAllocatedUnfairLock tryLock fallback.
           nonisolated(unsafe) var copy = v
           defer { v = copy }
           return try Transferring(body(&copy))
