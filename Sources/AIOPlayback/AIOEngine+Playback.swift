@@ -88,6 +88,11 @@
       playbackRuntime.resumePlayback()
     }
 
+    @MainActor
+    public func setPlaybackMixerAmplitude(_ amplitude: Float) {
+      playbackRuntime.setPlaybackMixerAmplitude(amplitude)
+    }
+
     package nonisolated func cleanupPlaybackInstance(_ instance: PlaybackInstance) {
       playbackRuntime.cleanupPlaybackInstance(instance)
     }

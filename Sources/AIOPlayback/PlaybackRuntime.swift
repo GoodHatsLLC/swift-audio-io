@@ -370,6 +370,13 @@
     }
 
     @MainActor
+    func setPlaybackMixerAmplitude(_ amplitude: Float) {
+      // Write directly to the mixer's output volume. Safe to call at any
+      // cadence; AVAudioMixerNode.outputVolume is thread-safe for writes.
+      unsafe owner.engine.mainMixerNode.outputVolume = amplitude
+    }
+
+    @MainActor
     func capturePlaybackResumeState() -> PlaybackResume? {
       guard let instance = owner.playbackState[locked: \.playbackInstance] else { return nil }
       let playback = owner.getPlayback(for: instance)
