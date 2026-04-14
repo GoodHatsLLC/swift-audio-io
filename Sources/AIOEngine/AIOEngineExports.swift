@@ -4,6 +4,7 @@
   @_exported import AIOAudioSession
   @_exported import AIOContracts
   @_exported import AIOEngineCore
+  @_exported import AIOMicHealth
   @_exported import AIOPlayback
   @_exported import AIORecording
   @_exported import AIOVisualization

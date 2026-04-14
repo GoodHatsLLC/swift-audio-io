@@ -151,11 +151,20 @@ let package = Package(
       swiftSettings: swiftSettings(),
     ),
     .target(
+      name: "AIOMicHealth",
+      dependencies: [
+        "AIOAudioSession",
+        "Tools",
+      ],
+      swiftSettings: swiftSettings(),
+    ),
+    .target(
       name: "AIOEngine",
       dependencies: [
         "AIOAudioSession",
         "AIOContracts",
         "AIOEngineCore",
+        "AIOMicHealth",
         "AIOPlayback",
         "AIORecording",
         "AIORecordingSupport",
@@ -175,6 +184,11 @@ let package = Package(
     .testTarget(
       name: "AudioVisualizationTests",
       dependencies: ["AIOEngine", "AudioSignals"],
+      swiftSettings: swiftSettings(),
+    ),
+    .testTarget(
+      name: "AIOMicHealthTests",
+      dependencies: ["AIOAudioSession", "AIOMicHealth"],
       swiftSettings: swiftSettings(),
     ),
   ],
