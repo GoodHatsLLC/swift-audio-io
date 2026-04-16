@@ -120,11 +120,23 @@
       let sampleRate = file.processingFormat.sampleRate
       let startFrame = AVAudioFramePosition(startTime * sampleRate)
       let duration = endTime - startTime
-      let frameCount = AVAudioFrameCount(duration * sampleRate)
 
-      guard startFrame >= 0, frameCount > 0,
-        AVAudioFramePosition(startFrame) + AVAudioFramePosition(frameCount) <= file.length
-      else {
+      // Guard hard invariants first: the start must be inside the file and the
+      // caller must have asked for a positive window.
+      guard startFrame >= 0, startFrame < file.length, duration > 0 else {
+        throw AIOEngine.AIOError.invalidTimeRange
+      }
+
+      // Clamp the requested frame count to fit within the file. Stored ranges
+      // frequently describe the nominal source duration, which — due to sample
+      // rate rounding and AAC/encoding padding — can land a frame or two past
+      // `file.length`. Treat that as "play to end of file" rather than
+      // rejecting the whole segment.
+      let requestedFrameCount = AVAudioFrameCount(duration * sampleRate)
+      let maxFrameCount = AVAudioFrameCount(file.length - startFrame)
+      let frameCount = min(requestedFrameCount, maxFrameCount)
+
+      guard frameCount > 0 else {
         throw AIOEngine.AIOError.invalidTimeRange
       }
 
