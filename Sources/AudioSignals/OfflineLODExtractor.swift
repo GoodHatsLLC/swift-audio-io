@@ -87,7 +87,7 @@
     }
 
     /// Extract LOD data from an entire audio file with explicit channel strategy.
-    public func extract(
+    @concurrent public func extract(
       from url: URL,
       channelStrategy: ChannelStrategy,
     ) async throws(MultiBandLODProcessor.LODGenerationError) -> OfflineLODResult {
