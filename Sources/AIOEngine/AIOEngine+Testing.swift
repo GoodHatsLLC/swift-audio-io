@@ -12,6 +12,45 @@
 
     @_spi(TESTING)
     extension AIOEngine {
+      public struct WriterDrainTestHandle: Sendable {
+        public let id: UUID
+        public let fileURL: URL
+        private let control: WriterControl
+        private let closeCountValue: @Sendable () -> Int
+
+        fileprivate init(
+          id: UUID,
+          fileURL: URL,
+          control: WriterControl,
+          closeCountValue: @escaping @Sendable () -> Int,
+        ) {
+          self.id = id
+          self.fileURL = fileURL
+          self.control = control
+          self.closeCountValue = closeCountValue
+        }
+
+        public var stopRequested: Bool {
+          control.stopRequested.load(ordering: .relaxed)
+        }
+
+        public var targetSampleTime: Int64 {
+          control.targetSampleTime.load(ordering: .relaxed)
+        }
+
+        public var writtenSampleTime: Int64 {
+          control.writtenSampleTime.load(ordering: .relaxed)
+        }
+
+        public func closeCount() -> Int {
+          closeCountValue()
+        }
+
+        public func signalDrain() async {
+          await control.drainSignal.signal()
+        }
+      }
+
       public struct EngineMetricsSnapshot: Sendable {
         public let tapCallbackCount: Int64
         public let tapCallbackMaxNanos: UInt64
@@ -52,6 +91,36 @@
       @MainActor
       public func debugCurrentRecordingURL() -> URL? {
         state[locked: \.recordingURL]
+      }
+
+      @MainActor
+      public func debugStartQueuedWriterDrainForTesting(
+        fileURL: URL,
+        targetSampleTime: Int64 = 1,
+        writtenSampleTime: Int64 = 0,
+      ) -> WriterDrainTestHandle {
+        recordingSampleTimeAtomic.store(targetSampleTime, ordering: .relaxed)
+        let control = WriterControl()
+        control.writtenSampleTime.store(writtenSampleTime, ordering: .relaxed)
+        let writer = TestingRecordingFileWriter(fileURL: fileURL)
+        let session = WriterSession(
+          id: UUID(),
+          control: control,
+          writer: writer,
+          fileURL: fileURL,
+        )
+        enqueueDrain(for: session)
+        return WriterDrainTestHandle(
+          id: session.id,
+          fileURL: fileURL,
+          control: control,
+          closeCountValue: { writer.closeCount() },
+        )
+      }
+
+      @MainActor
+      public func debugDrainingWriterSessionIDsForTesting() -> [UUID] {
+        drainingWriterSessions.map(\.id)
       }
 
       @MainActor
@@ -261,6 +330,25 @@
 
         await handleUnrecoverableInterruption(reason: "No suitable audio route available")
         return false
+      }
+    }
+
+    private final class TestingRecordingFileWriter: RecordingFileWriter {
+      let fileURL: URL
+      private let closeCountStorage = ManagedAtomic<Int>(0)
+
+      init(fileURL: URL) {
+        self.fileURL = fileURL
+      }
+
+      func write(_ buffer: AVAudioPCMBuffer) throws {}
+
+      func close() {
+        closeCountStorage.wrappingIncrement(ordering: .relaxed)
+      }
+
+      func closeCount() -> Int {
+        closeCountStorage.load(ordering: .relaxed)
       }
     }
   #endif

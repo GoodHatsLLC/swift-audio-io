@@ -139,7 +139,9 @@
     }
 
     @MainActor
-    func enqueueDrain(for session: WriterSession) {
+    package
+      func enqueueDrain(for session: WriterSession)
+    {
       recordingEngineRuntime.enqueueDrain(for: session)
     }
 
