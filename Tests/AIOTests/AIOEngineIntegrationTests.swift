@@ -135,6 +135,72 @@
     }
 
     @Test
+    func `queued writer drain stays in draining queue until drain task completes`()
+      async throws
+    {
+      let engine = AIOEngine()
+      let url = FileManager.default.temporaryDirectory
+        .appendingPathComponent("queued-writer-drain-\(UUID().uuidString).caf")
+
+      let handle = await MainActor.run {
+        engine.debugStartQueuedWriterDrainForTesting(
+          fileURL: url,
+          targetSampleTime: 256,
+          writtenSampleTime: 0,
+        )
+      }
+
+      let queuedIDs = await MainActor.run {
+        engine.debugDrainingWriterSessionIDsForTesting()
+      }
+      #expect(queuedIDs == [handle.id])
+      #expect(handle.stopRequested == true)
+      #expect(handle.targetSampleTime == 256)
+      #expect(handle.closeCount() == 0)
+
+      await handle.signalDrain()
+
+      let removedFromQueue = await waitUntil(timeout: .seconds(1)) {
+        await MainActor.run {
+          !engine.debugDrainingWriterSessionIDsForTesting().contains(handle.id)
+        }
+      }
+
+      #expect(removedFromQueue == true)
+      #expect(handle.closeCount() == 1)
+    }
+
+    @Test
+    func `queued writer drain completes when target sample time is already written`()
+      async throws
+    {
+      let engine = AIOEngine()
+      let url = FileManager.default.temporaryDirectory
+        .appendingPathComponent("target-satisfied-writer-drain-\(UUID().uuidString).caf")
+
+      let handle = await MainActor.run {
+        engine.debugStartQueuedWriterDrainForTesting(
+          fileURL: url,
+          targetSampleTime: 128,
+          writtenSampleTime: 128,
+        )
+      }
+
+      #expect(handle.stopRequested == true)
+      #expect(handle.targetSampleTime == 128)
+      #expect(handle.writtenSampleTime == 128)
+
+      let removedFromQueue = await waitUntil(timeout: .seconds(1)) {
+        await MainActor.run {
+          !engine.debugDrainingWriterSessionIDsForTesting().contains(handle.id)
+        }
+      }
+
+      #expect(removedFromQueue == true)
+      #expect(handle.closeCount() == 1)
+    }
+
+    @Test
     func `stereo recording writes file`() async throws {
       let engine = AIOEngine()
       let configuration = makeStereoConfiguration()
