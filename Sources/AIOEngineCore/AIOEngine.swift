@@ -124,7 +124,7 @@
       case audioSessionNotReady(details: String)
       /// The recording configuration is invalid.
       case invalidRecordingConfiguration(details: String)
-      /// The requested recording channel count exceeds the current runtime capacity.
+      /// The requested recording channel count exceeds the selected format/runtime capacity.
       case unsupportedRecordingChannelCount(requested: Int, maximum: Int)
       /// The selected output encoder does not support the requested sample rate.
       case unsupportedEncodedSampleRate(
@@ -160,7 +160,7 @@
           return "The recording configuration was not valid. \(details)"
         case .unsupportedRecordingChannelCount(let requested, let maximum):
           return
-            "Recording \(requested)-channel audio is not supported by the current runtime. The current maximum is \(maximum) channels."
+            "Recording \(requested)-channel audio is not supported by the selected format/runtime. The current maximum is \(maximum) channels."
         case .unsupportedEncodedSampleRate(let fileFormat, let sampleRate, let supportedRates):
           let requested = Int((sampleRate / 1000).rounded())
           let supportedDescription =

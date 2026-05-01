@@ -178,7 +178,7 @@ let package = Package(
     ),
     .testTarget(
       name: "AIOTests",
-      dependencies: ["AIOAudioSession", "AIOEngine"],
+      dependencies: ["AIOAudioSession", "AIOEngine", "AIORecordingSupport"],
       swiftSettings: swiftSettings(),
     ),
     .testTarget(

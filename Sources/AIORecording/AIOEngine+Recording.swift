@@ -195,6 +195,12 @@
       try recordingEngineRuntime.validateRecordingChannelCapacity(channelCount: channelCount)
     }
 
+    package func validateRecordingChannelCapacity(
+      for configuration: RecordingConfiguration,
+    ) throws(AIOError) {
+      try recordingEngineRuntime.validateRecordingChannelCapacity(for: configuration)
+    }
+
     @MainActor
     func validateEncoderCompatibility(
       for configuration: RecordingConfiguration,
@@ -319,7 +325,7 @@
     /// - Parameter reusableBuffer: A pre-allocated buffer to reuse across calls,
     ///   eliminating per-chunk `AVAudioPCMBuffer` heap allocations. If `nil`,
     ///   a new buffer is allocated (fallback for edge cases).
-    static func flushChunk(
+    package static func flushChunk(
       size bufferSize: Int,
       from audioBuffers: [SPSCRingBuffer<Float>],
       in audioFormat: AVAudioFormat,

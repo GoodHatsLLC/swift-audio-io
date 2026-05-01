@@ -21,7 +21,7 @@
   }
 
   struct RecordingEngineRuntime {
-    static let currentMaximumRecordingChannelCount = 2
+    static let currentMaximumRecordingChannelCount = 32
 
     let owner: AIOEngine
 
@@ -289,10 +289,8 @@
       guard !owner.isRecording, !owner.isPlaying else {
         return
       }
+      try validateRecordingChannelCapacity(for: configuration)
       try validateEncoderCompatibility(for: configuration)
-      try validateRecordingChannelCapacity(
-        channelCount: configuration.inputConfiguration.channels.count,
-      )
 
       guard let processingFormat = configuration.processingFormat else {
         throw AIOEngine.AIOError.invalidRecordingConfiguration(details: "(processing format)")
@@ -391,10 +389,37 @@
     func validateRecordingChannelCapacity(
       channelCount: Int,
     ) throws(AIOEngine.AIOError) {
-      guard channelCount <= Self.currentMaximumRecordingChannelCount else {
+      try validateRecordingChannelCapacity(
+        channelCount: channelCount,
+        maximum: Self.currentMaximumRecordingChannelCount,
+      )
+    }
+
+    func validateRecordingChannelCapacity(
+      for configuration: RecordingConfiguration,
+    ) throws(AIOEngine.AIOError) {
+      try validateRecordingChannelCapacity(
+        channelCount: configuration.inputConfiguration.channels.count,
+        maximum: min(
+          Self.currentMaximumRecordingChannelCount,
+          configuration.outputConfiguration.fileFormat.maximumRecordingChannelCount,
+        ),
+      )
+    }
+
+    private func validateRecordingChannelCapacity(
+      channelCount: Int,
+      maximum: Int,
+    ) throws(AIOEngine.AIOError) {
+      guard channelCount > 0 else {
+        throw AIOEngine.AIOError.invalidRecordingConfiguration(
+          details: "Channel count must be at least 1.",
+        )
+      }
+      guard channelCount <= maximum else {
         throw AIOEngine.AIOError.unsupportedRecordingChannelCount(
           requested: channelCount,
-          maximum: Self.currentMaximumRecordingChannelCount,
+          maximum: maximum,
         )
       }
     }

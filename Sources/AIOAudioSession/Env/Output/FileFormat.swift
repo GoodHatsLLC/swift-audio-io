@@ -1,5 +1,8 @@
 // © GoodHatsLLC
 
+package import AVFAudio
+import AudioToolbox
+import Foundation
 public import UniformTypeIdentifiers
 
 public enum FileFormat: String, CaseIterable, CustomStringConvertible, Sendable, Identifiable,
@@ -70,6 +73,19 @@ public enum FileFormat: String, CaseIterable, CustomStringConvertible, Sendable,
     }
   }
 
+  public var maximumRecordingChannelCount: Int {
+    switch self {
+    case .aac, .adts, .flac:
+      8
+    case .wav, .caf, .aiff:
+      32
+    }
+  }
+
+  public func supportsRecordingChannelCount(_ channelCount: Int) -> Bool {
+    channelCount > 0 && channelCount <= maximumRecordingChannelCount
+  }
+
   /// Common encoded sample rates supported by AAC-family formats.
   public static let aacCompatibleSampleRates: [Double] = [
     8000, 11025, 12000, 16000, 22050, 24000, 32000, 44100, 48000,
@@ -96,5 +112,43 @@ public enum FileFormat: String, CaseIterable, CustomStringConvertible, Sendable,
 
   public var compatibleCommonSampleRates: [SampleRate] {
     SampleRate.commonCases.filter { supports(sampleRate: $0) }
+  }
+
+  package func recordingChannelLayout(
+    for channelCount: Int,
+  ) -> AVAudioChannelLayout? {
+    guard supportsRecordingChannelCount(channelCount) else { return nil }
+    let tag: AudioChannelLayoutTag
+    switch self {
+    case .aac, .adts:
+      switch channelCount {
+      case 1: tag = kAudioChannelLayoutTag_Mono
+      case 2: tag = kAudioChannelLayoutTag_Stereo
+      case 3: tag = kAudioChannelLayoutTag_AAC_3_0
+      case 4: tag = kAudioChannelLayoutTag_AAC_Quadraphonic
+      case 5: tag = kAudioChannelLayoutTag_AAC_5_0
+      case 6: tag = kAudioChannelLayoutTag_AAC_5_1
+      case 7: tag = kAudioChannelLayoutTag_AAC_6_1
+      case 8: tag = kAudioChannelLayoutTag_AAC_7_1
+      default: return nil
+      }
+    case .flac, .wav, .caf, .aiff:
+      switch channelCount {
+      case 1: tag = kAudioChannelLayoutTag_Mono
+      case 2: tag = kAudioChannelLayoutTag_Stereo
+      default:
+        tag =
+          AudioChannelLayoutTag(kAudioChannelLayoutTag_DiscreteInOrder)
+          | AudioChannelLayoutTag(channelCount)
+      }
+    }
+    return AVAudioChannelLayout(layoutTag: tag)
+  }
+
+  package func recordingChannelLayoutData(
+    for channelCount: Int,
+  ) -> Data? {
+    guard let layout = recordingChannelLayout(for: channelCount) else { return nil }
+    return unsafe Data(bytes: layout.layout, count: MemoryLayout<AudioChannelLayout>.size)
   }
 }
