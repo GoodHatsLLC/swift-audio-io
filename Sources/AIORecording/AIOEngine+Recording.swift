@@ -189,6 +189,12 @@
       )
     }
 
+    package func validateRecordingChannelCapacity(
+      channelCount: Int,
+    ) throws(AIOError) {
+      try recordingEngineRuntime.validateRecordingChannelCapacity(channelCount: channelCount)
+    }
+
     @MainActor
     func validateEncoderCompatibility(
       for configuration: RecordingConfiguration,
