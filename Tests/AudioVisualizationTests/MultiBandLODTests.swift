@@ -24,6 +24,26 @@
     }
 
     @Test
+    func `Configuration public initializer clamps invalid user input`() {
+      let configuration = MultiBandLODConfiguration(
+        bandCount: 0,
+        lodRatio: 0,
+        bufferSeconds: 0,
+        sampleRate: 0,
+        snapshotSwapInterval: 0,
+        rawBufferLengthOverride: 0,
+      )
+
+      #expect(configuration.bandCount == 1)
+      #expect(configuration.lodRatio == 1)
+      #expect(configuration.bufferSeconds == 1)
+      #expect(configuration.sampleRate == 1)
+      #expect(configuration.snapshotSwapInterval == 1)
+      #expect(configuration.rawBufferLength == 1)
+      #expect(configuration.lodBufferLength == 1)
+    }
+
+    @Test
     func `Configuration validating initializer rejects invalid values`() throws {
       do {
         _ = try MultiBandLODConfiguration(validatingBandCount: 0)
@@ -32,6 +52,14 @@
         #expect(
           error
             == .bandCountOutOfRange(actual: 0, valid: MultiBandLODConfiguration.validBandCountRange),
+        )
+      }
+
+      #expect(throws: MultiBandLODConfiguration.ValidationError.self) {
+        _ = try MultiBandLODConfiguration(
+          validatingBandCount: 1,
+          bufferSeconds: Int.max,
+          sampleRate: Int.max,
         )
       }
     }

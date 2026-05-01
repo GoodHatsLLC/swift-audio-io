@@ -9,5 +9,4 @@
   @_exported import AIORecording
   @_exported import AIOVisualization
   @_exported import AudioSignals
-  @_exported import Tools
 #endif

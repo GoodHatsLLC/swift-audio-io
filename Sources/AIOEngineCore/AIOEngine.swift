@@ -289,6 +289,11 @@
 
     // MARK: - Callbacks
 
+    // These callbacks intentionally remain single-owner MainActor hooks. Buffer
+    // delivery is multi-consumer and token-scoped; engine lifecycle ownership is
+    // centralized by the app/composition root and uses assignment to replace the
+    // active owner explicitly.
+
     /// A callback that is invoked when a recording interruption occurs.
     @MainActor public var onRecordingInterruption:
       (@Sendable @MainActor (RecordingInterruption) async -> Void)?
@@ -586,7 +591,7 @@
       }
     }
 
-    public let bufferReceivers: Synchronized<[any BufferReceiver<Float>]> = .init([])
+    package let bufferReceivers: Synchronized<[any BufferReceiver<Float>]> = .init([])
 
     package let clock = ContinuousClock()
 
