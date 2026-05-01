@@ -51,7 +51,8 @@
     @MainActor func stopRecording() async throws(AIOEngine.AIOError) -> URL
     @MainActor func rotateRecordingFile() async throws(AIOEngine.AIOError) -> URL
 
-    func attachBufferReceiver(_ receiver: some BufferReceiver<Float>) async
+    @discardableResult
+    func attachBufferReceiver(_ receiver: some BufferReceiver<Float>) async -> BufferReceiverToken
     func detachBufferReceivers() async
 
     @MainActor func updateRecordingTapInterval(_ interval: Duration)

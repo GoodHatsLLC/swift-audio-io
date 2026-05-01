@@ -17,10 +17,26 @@
   extension AIOEngine: BufferEmitter {
     public typealias T = Float
 
+    @discardableResult
     public nonisolated func attachBufferReceiver(_ receiver: consuming some BufferReceiver<Float>)
-      async
+      async -> BufferReceiverToken
     {
-      bufferReceivers { $0.append(receiver) }
+      let receivers = bufferReceivers
+      let registeredReceiver = receiver as any BufferReceiver<Float>
+      receivers { $0.append(registeredReceiver) }
+      return BufferReceiverToken { [receivers, registeredReceiver] in
+        let removedReceiver = receivers { registeredReceivers -> (any BufferReceiver<Float>)? in
+          guard
+            let index = registeredReceivers.firstIndex(where: {
+              ($0 as AnyObject) === (registeredReceiver as AnyObject)
+            })
+          else {
+            return nil
+          }
+          return registeredReceivers.remove(at: index)
+        }
+        removedReceiver?.endBufferTask()
+      }
     }
 
     public nonisolated func detachBufferReceivers() async {

@@ -35,7 +35,8 @@
       let configuration = makeConfiguration()
       let receiver = CapturingReceiver()
 
-      await engine.attachBufferReceiver(receiver)
+      let receiverToken = await engine.attachBufferReceiver(receiver)
+      defer { receiverToken.invalidate() }
 
       let url = try await engine.startTestRecording(
         configuration: configuration,
