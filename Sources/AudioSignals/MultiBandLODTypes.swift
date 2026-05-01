@@ -17,6 +17,7 @@
       case sampleRateMustBePositive(actual: Int)
       case snapshotSwapIntervalMustBePositive(actual: Int)
       case rawBufferLengthOverrideMustBePositive(actual: Int)
+      case rawBufferLengthOverflow(sampleRate: Int, bufferSeconds: Int)
 
       public var description: String {
         switch self {
@@ -32,6 +33,8 @@
           "snapshotSwapInterval must be > 0, got \(actual)"
         case .rawBufferLengthOverrideMustBePositive(let actual):
           "rawBufferLengthOverride must be > 0, got \(actual)"
+        case .rawBufferLengthOverflow(let sampleRate, let bufferSeconds):
+          "rawBufferLength overflow: sampleRate=\(sampleRate) bufferSeconds=\(bufferSeconds)"
         }
       }
     }
@@ -76,17 +79,14 @@
       if let rawBufferLengthOverride {
         return max(rawBufferLengthOverride, 1)
       }
-      let (rawBufferLength, overflow) = sampleRate.multipliedReportingOverflow(by: bufferSeconds)
-      precondition(
-        !overflow,
-        "MultiBandLODConfiguration.rawBufferLength overflow: sampleRate=\(sampleRate) bufferSeconds=\(bufferSeconds)",
-      )
-      return rawBufferLength
+      return Self.rawBufferLength(sampleRate: sampleRate, bufferSeconds: bufferSeconds)
     }
 
     /// Computed property: number of LOD samples per band.
     public var lodBufferLength: Int {
-      Int(ceil(Double(rawBufferLength) / Double(lodRatio)))
+      let rawBufferLength = rawBufferLength
+      let lodRatio = max(lodRatio, 1)
+      return (rawBufferLength / lodRatio) + (rawBufferLength.isMultiple(of: lodRatio) ? 0 : 1)
     }
 
     /// Creates a new multi-band LOD configuration.
@@ -107,39 +107,21 @@
       snapshotSwapInterval: Int = 6,
       rawBufferLengthOverride: Int? = nil,
     ) {
-      precondition(
-        Self.validBandCountRange.contains(bandCount),
-        "MultiBandLODConfiguration.bandCount must be in \(Self.validBandCountRange), got \(bandCount)",
+      let normalized = Self.clampedParameters(
+        bandCount: bandCount,
+        lodRatio: lodRatio,
+        bufferSeconds: bufferSeconds,
+        sampleRate: sampleRate,
+        snapshotSwapInterval: snapshotSwapInterval,
+        rawBufferLengthOverride: rawBufferLengthOverride,
       )
-      precondition(
-        lodRatio > 0,
-        "MultiBandLODConfiguration.lodRatio must be > 0, got \(lodRatio)",
-      )
-      precondition(
-        bufferSeconds > 0,
-        "MultiBandLODConfiguration.bufferSeconds must be > 0, got \(bufferSeconds)",
-      )
-      precondition(
-        sampleRate > 0,
-        "MultiBandLODConfiguration.sampleRate must be > 0, got \(sampleRate)",
-      )
-      precondition(
-        snapshotSwapInterval > 0,
-        "MultiBandLODConfiguration.snapshotSwapInterval must be > 0, got \(snapshotSwapInterval)",
-      )
-      if let rawBufferLengthOverride {
-        precondition(
-          rawBufferLengthOverride > 0,
-          "MultiBandLODConfiguration.rawBufferLengthOverride must be > 0, got \(rawBufferLengthOverride)",
-        )
-      }
-      self.bandCount = bandCount
-      self.lodRatio = lodRatio
-      self.bufferSeconds = bufferSeconds
-      self.sampleRate = sampleRate
+      self.bandCount = normalized.bandCount
+      self.lodRatio = normalized.lodRatio
+      self.bufferSeconds = normalized.bufferSeconds
+      self.sampleRate = normalized.sampleRate
       self.crossoverMode = crossoverMode
-      self.snapshotSwapInterval = snapshotSwapInterval
-      self.rawBufferLengthOverride = rawBufferLengthOverride
+      self.snapshotSwapInterval = normalized.snapshotSwapInterval
+      self.rawBufferLengthOverride = normalized.rawBufferLengthOverride
     }
 
     /// Creates a configuration from untrusted values and throws on invalid input.
@@ -170,8 +152,12 @@
       if let rawBufferLengthOverride, rawBufferLengthOverride <= 0 {
         throw .rawBufferLengthOverrideMustBePositive(actual: rawBufferLengthOverride)
       }
+      let (_, overflow) = sampleRate.multipliedReportingOverflow(by: bufferSeconds)
+      guard !overflow else {
+        throw .rawBufferLengthOverflow(sampleRate: sampleRate, bufferSeconds: bufferSeconds)
+      }
       self.init(
-        bandCount: bandCount,
+        uncheckedBandCount: bandCount,
         lodRatio: lodRatio,
         bufferSeconds: bufferSeconds,
         sampleRate: sampleRate,
@@ -220,6 +206,56 @@
       lodRatio: 64,
       bufferSeconds: 300,
     )
+
+    private init(
+      uncheckedBandCount bandCount: Int,
+      lodRatio: Int,
+      bufferSeconds: Int,
+      sampleRate: Int,
+      crossoverMode: CrossoverMode,
+      snapshotSwapInterval: Int,
+      rawBufferLengthOverride: Int?,
+    ) {
+      self.bandCount = bandCount
+      self.lodRatio = lodRatio
+      self.bufferSeconds = bufferSeconds
+      self.sampleRate = sampleRate
+      self.crossoverMode = crossoverMode
+      self.snapshotSwapInterval = snapshotSwapInterval
+      self.rawBufferLengthOverride = rawBufferLengthOverride
+    }
+
+    private static func clampedParameters(
+      bandCount: Int,
+      lodRatio: Int,
+      bufferSeconds: Int,
+      sampleRate: Int,
+      snapshotSwapInterval: Int,
+      rawBufferLengthOverride: Int?,
+    ) -> (
+      bandCount: Int,
+      lodRatio: Int,
+      bufferSeconds: Int,
+      sampleRate: Int,
+      snapshotSwapInterval: Int,
+      rawBufferLengthOverride: Int?
+    ) {
+      (
+        bandCount: min(
+          max(bandCount, validBandCountRange.lowerBound), validBandCountRange.upperBound,
+        ),
+        lodRatio: max(1, lodRatio),
+        bufferSeconds: max(1, bufferSeconds),
+        sampleRate: max(1, sampleRate),
+        snapshotSwapInterval: max(1, snapshotSwapInterval),
+        rawBufferLengthOverride: rawBufferLengthOverride.map { max(1, $0) },
+      )
+    }
+
+    private static func rawBufferLength(sampleRate: Int, bufferSeconds: Int) -> Int {
+      let (rawBufferLength, overflow) = sampleRate.multipliedReportingOverflow(by: bufferSeconds)
+      return overflow ? Int.max : max(rawBufferLength, 1)
+    }
   }
 
   // MARK: - Crossover Mode
@@ -483,10 +519,10 @@
     ///   - bandIndex: Index of this band.
     ///   - capacity: Number of LOD samples to allocate.
     public init(bandIndex: Int, capacity: Int) {
-      self.bandIndex = bandIndex
-      minBuffer = Array(repeating: 0, count: capacity)
-      maxBuffer = Array(repeating: 0, count: capacity)
-      rmsBuffer = Array(repeating: 0, count: capacity)
+      self.bandIndex = max(0, bandIndex)
+      minBuffer = Array(repeating: 0, count: max(0, capacity))
+      maxBuffer = Array(repeating: 0, count: max(0, capacity))
+      rmsBuffer = Array(repeating: 0, count: max(0, capacity))
       rawBuffer = nil
     }
   }

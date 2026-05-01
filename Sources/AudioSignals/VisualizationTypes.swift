@@ -309,22 +309,10 @@
       bassFocused: Bool = true,
       historySize: Int = 43,
     ) {
-      precondition(
-        Self.validSensitivityRange.contains(sensitivity),
-        "BeatDetectionConfiguration.sensitivity must be in \(Self.validSensitivityRange), got \(sensitivity)",
-      )
-      precondition(
-        minimumBeatInterval >= 0,
-        "BeatDetectionConfiguration.minimumBeatInterval must be >= 0, got \(minimumBeatInterval)",
-      )
-      precondition(
-        historySize > 0,
-        "BeatDetectionConfiguration.historySize must be > 0, got \(historySize)",
-      )
-      self.sensitivity = sensitivity
-      self.minimumBeatInterval = minimumBeatInterval
+      self.sensitivity = Self.clampedSensitivity(sensitivity)
+      self.minimumBeatInterval = Self.clampedNonNegative(minimumBeatInterval)
       self.bassFocused = bassFocused
-      self.historySize = historySize
+      self.historySize = max(1, historySize)
     }
 
     /// Creates a configuration from untrusted values and throws on invalid input.
@@ -343,12 +331,10 @@
       guard historySize > 0 else {
         throw .historySizeMustBePositive(actual: historySize)
       }
-      self.init(
-        sensitivity: sensitivity,
-        minimumBeatInterval: minimumBeatInterval,
-        bassFocused: bassFocused,
-        historySize: historySize,
-      )
+      self.sensitivity = sensitivity
+      self.minimumBeatInterval = minimumBeatInterval
+      self.bassFocused = bassFocused
+      self.historySize = historySize
     }
 
     /// Convenience initializer that clamps out-of-range values.
@@ -383,6 +369,17 @@
       sensitivity: 0.7,
       minimumBeatInterval: 0.15,
     )
+
+    private static func clampedSensitivity(_ sensitivity: Float) -> Float {
+      guard sensitivity.isFinite else { return 0.5 }
+      return min(
+        max(sensitivity, validSensitivityRange.lowerBound), validSensitivityRange.upperBound)
+    }
+
+    private static func clampedNonNegative(_ value: TimeInterval) -> TimeInterval {
+      guard value.isFinite else { return 0 }
+      return max(0, value)
+    }
   }
 
   // MARK: - Visualization Work Registration
@@ -420,12 +417,8 @@
       configuration: MultiBandLODConfiguration = .default,
       publishRateHz: Double = VisualizationRateDefaults.lodPublishRateHz,
     ) {
-      precondition(
-        publishRateHz > 0,
-        "LODWork.publishRateHz must be > 0, got \(publishRateHz)",
-      )
       self.configuration = configuration
-      self.publishRateHz = publishRateHz
+      self.publishRateHz = Self.clampedPositive(publishRateHz)
     }
 
     public init(
@@ -435,7 +428,8 @@
       guard publishRateHz > 0 else {
         throw .publishRateMustBePositive(actual: publishRateHz)
       }
-      self.init(configuration: configuration, publishRateHz: publishRateHz)
+      self.configuration = configuration
+      self.publishRateHz = publishRateHz
     }
 
     public init(
@@ -444,8 +438,13 @@
     ) {
       self.init(
         configuration: configuration,
-        publishRateHz: max(1, publishRateHz),
+        publishRateHz: publishRateHz,
       )
+    }
+
+    private static func clampedPositive(_ value: Double) -> Double {
+      guard value.isFinite else { return 1 }
+      return max(1, value)
     }
   }
 
@@ -473,11 +472,7 @@
       frequencyDomain: FrequencyDomainWork? = nil,
       beatDetection: BeatDetectionConfiguration? = nil,
     ) {
-      precondition(
-        updateRateHz > 0,
-        "AnalysisWork.updateRateHz must be > 0, got \(updateRateHz)",
-      )
-      self.updateRateHz = updateRateHz
+      self.updateRateHz = Self.clampedPositive(updateRateHz)
       self.timeDomain = timeDomain
       self.frequencyDomain = frequencyDomain
       self.beatDetection = beatDetection
@@ -492,12 +487,10 @@
       guard updateRateHz > 0 else {
         throw .updateRateMustBePositive(actual: updateRateHz)
       }
-      self.init(
-        updateRateHz: updateRateHz,
-        timeDomain: timeDomain,
-        frequencyDomain: frequencyDomain,
-        beatDetection: beatDetection,
-      )
+      self.updateRateHz = updateRateHz
+      self.timeDomain = timeDomain
+      self.frequencyDomain = frequencyDomain
+      self.beatDetection = beatDetection
     }
 
     public init(
@@ -507,11 +500,16 @@
       beatDetection: BeatDetectionConfiguration? = nil,
     ) {
       self.init(
-        updateRateHz: max(1, updateRateHz),
+        updateRateHz: updateRateHz,
         timeDomain: timeDomain,
         frequencyDomain: frequencyDomain,
         beatDetection: beatDetection,
       )
+    }
+
+    private static func clampedPositive(_ value: Double) -> Double {
+      guard value.isFinite else { return 1 }
+      return max(1, value)
     }
   }
 
@@ -539,13 +537,9 @@
       peakHoldDecayRate: Float = 0.015,
       weighting: FrequencyWeighting = .none,
     ) {
-      precondition(
-        peakHoldDecayRate >= 0,
-        "FrequencyDomainWork.peakHoldDecayRate must be >= 0, got \(peakHoldDecayRate)",
-      )
       self.configuration = configuration
       self.bucketMode = bucketMode
-      self.peakHoldDecayRate = peakHoldDecayRate
+      self.peakHoldDecayRate = Self.clampedNonNegative(peakHoldDecayRate)
       self.weighting = weighting
     }
 
@@ -558,12 +552,10 @@
       guard peakHoldDecayRate >= 0 else {
         throw .peakHoldDecayRateMustBeNonNegative(actual: peakHoldDecayRate)
       }
-      self.init(
-        configuration: configuration,
-        bucketMode: bucketMode,
-        peakHoldDecayRate: peakHoldDecayRate,
-        weighting: weighting,
-      )
+      self.configuration = configuration
+      self.bucketMode = bucketMode
+      self.peakHoldDecayRate = peakHoldDecayRate
+      self.weighting = weighting
     }
 
     public init(
@@ -575,9 +567,14 @@
       self.init(
         configuration: configuration,
         bucketMode: bucketMode,
-        peakHoldDecayRate: max(0, peakHoldDecayRate),
+        peakHoldDecayRate: peakHoldDecayRate,
         weighting: weighting,
       )
+    }
+
+    private static func clampedNonNegative(_ value: Float) -> Float {
+      guard value.isFinite else { return 0 }
+      return max(0, value)
     }
   }
 

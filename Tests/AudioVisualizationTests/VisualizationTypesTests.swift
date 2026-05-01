@@ -191,6 +191,19 @@
     }
 
     @Test
+    func `BeatDetectionConfiguration public initializer clamps invalid user input`() {
+      let config = BeatDetectionConfiguration(
+        sensitivity: .nan,
+        minimumBeatInterval: -Double.infinity,
+        historySize: 0,
+      )
+
+      #expect(config.sensitivity == 0.5)
+      #expect(config.minimumBeatInterval == 0)
+      #expect(config.historySize == 1)
+    }
+
+    @Test
     func `BeatDetectionConfiguration validating initializer rejects invalid values`() throws {
       do {
         _ = try BeatDetectionConfiguration(validatingSensitivity: -0.1)
@@ -219,6 +232,9 @@
       let clampedLod = LODWork(clampingConfiguration: .default, publishRateHz: 0)
       #expect(clampedLod.publishRateHz == 1)
 
+      let publicLod = LODWork(publishRateHz: -Double.infinity)
+      #expect(publicLod.publishRateHz == 1)
+
       do {
         _ = try LODWork(validatingConfiguration: .default, publishRateHz: 0)
         #expect(Bool(false), "Expected LODWork validating initializer to throw")
@@ -228,6 +244,9 @@
 
       let clampedAnalysis = AnalysisWork(clampingUpdateRateHz: 0)
       #expect(clampedAnalysis.updateRateHz == 1)
+
+      let publicAnalysis = AnalysisWork(updateRateHz: .nan)
+      #expect(publicAnalysis.updateRateHz == 1)
 
       do {
         _ = try AnalysisWork(validatingUpdateRateHz: 0)
@@ -249,6 +268,12 @@
         peakHoldDecayRate: -0.25,
       )
       #expect(clampedFrequencyWork.peakHoldDecayRate == 0)
+
+      let publicFrequencyWork = FrequencyDomainWork(
+        configuration: frequencyConfig,
+        peakHoldDecayRate: -Float.infinity,
+      )
+      #expect(publicFrequencyWork.peakHoldDecayRate == 0)
 
       do {
         _ = try FrequencyDomainWork(
