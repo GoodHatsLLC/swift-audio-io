@@ -224,6 +224,33 @@
     }
 
     @Test
+    @MainActor
+    func `unsupported recording channel count fails before tap install`() async throws {
+      let engine = AIOEngine()
+      let configuration = makeConfiguration(channels: .init(platform: 4))
+      var tapInstallAttempted = false
+
+      engine.setReinstallTapOverride { _, _ throws(AIOEngine.AIOError) in
+        tapInstallAttempted = true
+        throw AIOEngine.AIOError.engineError
+      }
+      defer { engine.setReinstallTapOverride(nil) }
+
+      let didStart = await engine.startRecordingWithReconciliation(configuration: configuration)
+
+      #expect(didStart == false)
+      #expect(tapInstallAttempted == false)
+
+      switch engine.consumeLastRecordingStartFailure() {
+      case .unsupportedRecordingChannelCount(let requested, let maximum):
+        #expect(requested == 4)
+        #expect(maximum == 2)
+      case let other:
+        Issue.record("Expected unsupportedRecordingChannelCount, got \(String(describing: other))")
+      }
+    }
+
+    @Test
     func `interruption stops recording`() async throws {
       let engine = AIOEngine()
       let configuration = makeConfiguration()
@@ -557,11 +584,12 @@
     }
 
     private func makeConfiguration(
+      channels: ChannelCount = .mono,
       outputDestination: RecordingConfiguration.OutputDestination = .temporary,
     ) -> RecordingConfiguration {
       let input = InputConfiguration(
         sampleRate: SampleRate.common(.sr48000),
-        channels: .mono,
+        channels: channels,
       )
       let output = OutputConfiguration(
         fileFormat: .caf,

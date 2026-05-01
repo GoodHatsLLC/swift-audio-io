@@ -21,6 +21,8 @@
   }
 
   struct RecordingEngineRuntime {
+    static let currentMaximumRecordingChannelCount = 2
+
     let owner: AIOEngine
 
     @MainActor
@@ -288,7 +290,25 @@
         return
       }
       try validateEncoderCompatibility(for: configuration)
-      log.info("warming with config: \(configuration, privacy: .public)")
+      try validateRecordingChannelCapacity(
+        channelCount: configuration.inputConfiguration.channels.count,
+      )
+
+      guard let processingFormat = configuration.processingFormat else {
+        throw AIOEngine.AIOError.invalidRecordingConfiguration(details: "(processing format)")
+      }
+
+      let sampleRate = Int(processingFormat.sampleRate)
+      let channelCount = Int(processingFormat.channelCount)
+      guard sampleRate > 0, channelCount > 0 else {
+        throw AIOEngine.AIOError.audioSessionNotReady(
+          details: "Invalid format: \(sampleRate)Hz, \(channelCount)ch",
+        )
+      }
+      guard sampleRate < Int.max / channelCount / 2 else {
+        throw AIOEngine.AIOError.hardwareNotSupported
+      }
+      try validateRecordingChannelCapacity(channelCount: channelCount)
 
       if let existing = owner.state[locked: \.recordingConfiguration] {
         if configuration == existing {
@@ -311,22 +331,8 @@
       }
 
       do {
+        log.info("warming with config: \(configuration, privacy: .public)")
         try owner.configureAudioSession(for: configuration)
-
-        guard let processingFormat = configuration.processingFormat else {
-          throw AIOEngine.AIOError.invalidRecordingConfiguration(details: "(processing format)")
-        }
-
-        let sampleRate = Int(processingFormat.sampleRate)
-        let channelCount = Int(processingFormat.channelCount)
-        guard sampleRate > 0, channelCount > 0 else {
-          throw AIOEngine.AIOError.audioSessionNotReady(
-            details: "Invalid format: \(sampleRate)Hz, \(channelCount)ch",
-          )
-        }
-        guard sampleRate < Int.max / channelCount / 2 else {
-          throw AIOEngine.AIOError.hardwareNotSupported
-        }
 
         owner.recordingSampleTimeAtomic.store(0, ordering: .relaxed)
 
@@ -360,17 +366,11 @@
           $0.recordingConfiguration = configuration
         }
         owner.applyTapInstallResult(tapResult, processingFormat: processingFormat)
-      } catch let error as AIOEngine.AIOError {
+      } catch {
         log.error("Failed to warm engine: \(error, privacy: .public)")
         hardStop()
         owner.onRecordingFailed?()
         throw error
-      } catch {
-        let mapped = AIOEngine.AIOError.engineStartFailed(error: ErrorContext(error))
-        log.error("Failed to warm engine: \(mapped, privacy: .public)")
-        hardStop()
-        owner.onRecordingFailed?()
-        throw mapped
       }
     }
 
@@ -378,15 +378,24 @@
       sampleRate: Int,
       channelCount: Int,
     ) -> [SPSCRingBuffer<Float>] {
-      let cappedChannels = min(channelCount, 2)
-      if channelCount > cappedChannels {
-        log.warning(
-          "Clamping channel count from \(channelCount, privacy: .public) to \(cappedChannels, privacy: .public)",
-        )
-      }
+      precondition(
+        channelCount <= Self.currentMaximumRecordingChannelCount,
+        "Recording channel count \(channelCount) exceeds current runtime capacity \(Self.currentMaximumRecordingChannelCount). Validate before allocating buffers.",
+      )
       let capacity = max(1, Int(Double(sampleRate) * owner.maxBufferSeconds))
-      return (0..<cappedChannels).map { _ in
+      return (0..<channelCount).map { _ in
         SPSCRingBuffer<Float>(capacity: capacity)
+      }
+    }
+
+    func validateRecordingChannelCapacity(
+      channelCount: Int,
+    ) throws(AIOEngine.AIOError) {
+      guard channelCount <= Self.currentMaximumRecordingChannelCount else {
+        throw AIOEngine.AIOError.unsupportedRecordingChannelCount(
+          requested: channelCount,
+          maximum: Self.currentMaximumRecordingChannelCount,
+        )
       }
     }
 
@@ -942,6 +951,10 @@
       clock: ContinuousClock = .continuous,
     ) -> Result<WriteResult, any Error> {
       let channelCount = Int(audioFormat.channelCount)
+      precondition(
+        channelCount <= audioBuffers.count,
+        "flushChunk invariant violated: format has \(channelCount) channels but only \(audioBuffers.count) channel buffers are available.",
+      )
       let framesToRead = minimumAvailableFrames(
         channelCount: channelCount,
         audioBuffers: audioBuffers,
