@@ -62,6 +62,10 @@
       )
     }
 
+    /// Scrubs the active playback.
+    ///
+    /// `time` is segment-relative for `playSegment` playback and file-relative for whole-file
+    /// playback.
     @MainActor
     public func scrub(
       to time: TimeInterval,
