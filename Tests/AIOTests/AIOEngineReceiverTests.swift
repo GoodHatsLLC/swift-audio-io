@@ -16,7 +16,8 @@
       let configuration = makeConfiguration()
       let receiver = QueueLabelReceiver()
 
-      await engine.attachBufferReceiver(receiver)
+      let receiverToken = await engine.attachBufferReceiver(receiver)
+      defer { receiverToken.invalidate() }
 
       let url = try await engine.startTestRecording(configuration: configuration)
       defer { try? FileManager.default.removeItem(at: url) }
@@ -41,7 +42,8 @@
       let configuration = makeConfiguration()
       let receiver = OrderedReceiver()
 
-      await engine.attachBufferReceiver(receiver)
+      let receiverToken = await engine.attachBufferReceiver(receiver)
+      defer { receiverToken.invalidate() }
 
       let url = try await engine.startTestRecording(configuration: configuration)
       defer { try? FileManager.default.removeItem(at: url) }
@@ -73,7 +75,8 @@
       let configuration = makeConfiguration()
       let receiver = SlowReceiver(delay: 0.05)
 
-      await engine.attachBufferReceiver(receiver)
+      let receiverToken = await engine.attachBufferReceiver(receiver)
+      defer { receiverToken.invalidate() }
 
       let url = try await engine.startTestRecording(configuration: configuration)
       defer { try? FileManager.default.removeItem(at: url) }
