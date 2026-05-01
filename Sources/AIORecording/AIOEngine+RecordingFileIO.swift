@@ -195,19 +195,17 @@
         }
         let diskFormat: AVAudioFormat
         if !outputFormat.isInterleaved, outputFormat.channelCount > 1 {
-          guard
-            let interleaved = AVAudioFormat(
-              commonFormat: outputFormat.commonFormat,
-              sampleRate: outputFormat.sampleRate,
-              channels: outputFormat.channelCount,
-              interleaved: true,
-            )
-          else {
+          guard let channelLayout = outputFormat.channelLayout else {
             throw AIOError.invalidRecordingConfiguration(
-              details: "interleaved file format settings",
+              details: "file format channel layout",
             )
           }
-          diskFormat = interleaved
+          diskFormat = AVAudioFormat(
+            commonFormat: outputFormat.commonFormat,
+            sampleRate: outputFormat.sampleRate,
+            interleaved: true,
+            channelLayout: channelLayout,
+          )
         } else {
           diskFormat = outputFormat
         }

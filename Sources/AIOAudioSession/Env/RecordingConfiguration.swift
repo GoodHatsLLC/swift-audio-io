@@ -95,11 +95,18 @@
 
     /// Processing format for the audio engine pipeline.
     package var processingFormat: AVAudioFormat? {
-      AVAudioFormat(
+      guard
+        let channelLayout = outputConfiguration.fileFormat.recordingChannelLayout(
+          for: inputConfiguration.channels.count,
+        )
+      else {
+        return nil
+      }
+      return AVAudioFormat(
         commonFormat: .pcmFormatFloat32,
         sampleRate: inputConfiguration.sampleRate.platform,
-        channels: inputConfiguration.channels.platform,
         interleaved: false,
+        channelLayout: channelLayout,
       )
     }
 
@@ -133,7 +140,7 @@
       isBigEndian: Bool,
       isInterleaved: Bool,
     ) -> [String: Any] {
-      [
+      var settings: [String: Any] = [
         AVFormatIDKey: kAudioFormatLinearPCM,
         AVSampleRateKey: inputConfiguration.sampleRate.rawValue,
         AVNumberOfChannelsKey: inputConfiguration.channels.platform,
@@ -142,6 +149,28 @@
         AVLinearPCMIsBigEndianKey: isBigEndian,
         AVLinearPCMIsNonInterleaved: !isInterleaved,
       ]
+      if let channelLayout = multichannelLayoutDataForFileSettings {
+        settings[AVChannelLayoutKey] = channelLayout
+      }
+      return settings
+    }
+
+    private func validatesRecordingChannelCount() -> Bool {
+      let fileFormat = outputConfiguration.fileFormat
+      let channelCount = inputConfiguration.channels.count
+      guard fileFormat.supportsRecordingChannelCount(channelCount) else {
+        log.error(
+          "invalid \(fileFormat.description, privacy: .public) channel count: \(channelCount, privacy: .public)",
+        )
+        return false
+      }
+      return true
+    }
+
+    private var multichannelLayoutDataForFileSettings: Data? {
+      let channelCount = inputConfiguration.channels.count
+      guard channelCount > 2 else { return nil }
+      return outputConfiguration.fileFormat.recordingChannelLayoutData(for: channelCount)
     }
 
     /// Settings dictionary used to create the output `AVAudioFile`.
@@ -150,6 +179,7 @@
     /// `AVAudioFormat` may normalize/strip encoder-specific keys that must be preserved
     /// (example: `AVEncoderBitDepthHintKey`).
     package var fileSettings: [String: Any]? {
+      guard validatesRecordingChannelCount() else { return nil }
       switch outputConfiguration.fileFormat {
       case .aac, .adts:
         let sampleRate = inputConfiguration.sampleRate.rawValue
@@ -164,8 +194,12 @@
           AVNumberOfChannelsKey: inputConfiguration.channels.platform,
           AVEncoderAudioQualityKey: qualityRawValue,
         ]
-        guard AVAudioFormat(settings: settings) != nil else { return nil }
-        return settings
+        var settingsWithLayout = settings
+        if let channelLayout = multichannelLayoutDataForFileSettings {
+          settingsWithLayout[AVChannelLayoutKey] = channelLayout
+        }
+        guard AVAudioFormat(settings: settingsWithLayout) != nil else { return nil }
+        return settingsWithLayout
 
       case .flac:
         let encoderBitDepthHint =
@@ -181,8 +215,12 @@
           AVNumberOfChannelsKey: inputConfiguration.channels.platform,
           AVEncoderBitDepthHintKey: encoderBitDepthHint,
         ]
-        guard AVAudioFormat(settings: settings) != nil else { return nil }
-        return settings
+        var settingsWithLayout = settings
+        if let channelLayout = multichannelLayoutDataForFileSettings {
+          settingsWithLayout[AVChannelLayoutKey] = channelLayout
+        }
+        guard AVAudioFormat(settings: settingsWithLayout) != nil else { return nil }
+        return settingsWithLayout
 
       case .wav, .caf:
         if outputConfiguration.bitDepth == .pcmInt24 {
@@ -214,6 +252,7 @@
 
     /// Output format for file writing
     var fileFormat: AVAudioFormat? {
+      guard validatesRecordingChannelCount() else { return nil }
       switch outputConfiguration.fileFormat {
       case .aac, .adts:
         let sampleRate = inputConfiguration.sampleRate.rawValue
@@ -228,25 +267,20 @@
           AVNumberOfChannelsKey: inputConfiguration.channels.platform,
           AVEncoderAudioQualityKey: qualityRawValue,
         ]
-
-        // Validate AAC format settings before creating
-        guard let format = AVAudioFormat(settings: settings) else {
-          log.error("could not make format for settings: \(settings, privacy: .public)")
-          return nil
+        var settingsWithLayout = settings
+        if let channelLayout = multichannelLayoutDataForFileSettings {
+          settingsWithLayout[AVChannelLayoutKey] = channelLayout
         }
 
-        // Additional validation for AAC compatibility
-        let channelCount = inputConfiguration.channels.platform
+        // Validate AAC format settings before creating
+        guard let format = AVAudioFormat(settings: settingsWithLayout) else {
+          log.error("could not make format for settings: \(settingsWithLayout, privacy: .public)")
+          return nil
+        }
 
         // AAC supports limited sample rates and channel configurations
         guard outputConfiguration.fileFormat.supportsEncodedSampleRate(sampleRate) else {
           log.error("invalid sample rate: \(sampleRate, privacy: .public)")
-          return nil
-        }
-
-        // AAC supports up to 48 channels, but commonly used configurations are safer
-        guard channelCount <= 8 else {
-          log.error("invalid channel count: \(channelCount, privacy: .public)")
           return nil
         }
 
@@ -259,24 +293,26 @@
           AVNumberOfChannelsKey: inputConfiguration.channels.platform,
           AVEncoderBitDepthHintKey: fileSettings?[AVEncoderBitDepthHintKey] ?? 16,
         ]
+        var settingsWithLayout = settings
+        if let channelLayout = multichannelLayoutDataForFileSettings {
+          settingsWithLayout[AVChannelLayoutKey] = channelLayout
+        }
 
         // Validate FLAC format settings before creating
-        guard let format = AVAudioFormat(settings: settings) else {
-          log.error("could not make format for settings: \(settings, privacy: .public)")
+        guard let format = AVAudioFormat(settings: settingsWithLayout) else {
+          log.error("could not make format for settings: \(settingsWithLayout, privacy: .public)")
           return nil
         }
 
         // FLAC validation
         let sampleRate = inputConfiguration.sampleRate.rawValue
-        let channelCount = inputConfiguration.channels.platform
 
         // FLAC supports wide range of sample rates
         guard sampleRate <= 655_350,  // FLAC max sample rate
-          channelCount <= 8,  // FLAC supports up to 8 channels
           sampleRate >= 8000  // Reasonable minimum
         else {
           log.error(
-            "invalid FLAC configuration: \(sampleRate, privacy: .public)Hz, \(channelCount, privacy: .public)ch",
+            "invalid FLAC configuration: \(sampleRate, privacy: .public)Hz, \(inputConfiguration.channels.count, privacy: .public)ch",
           )
           return nil
         }
@@ -295,12 +331,16 @@
               isInterleaved: outputConfiguration.fileFormat == .wav ? true : false,
             )
           } else {
-            AVAudioFormat(
-              commonFormat: commonFormat,
-              sampleRate: inputConfiguration.sampleRate.rawValue,
-              channels: inputConfiguration.channels.platform,
-              interleaved: outputConfiguration.fileFormat.requiresInterleaved,
-            )
+            outputConfiguration.fileFormat.recordingChannelLayout(
+              for: inputConfiguration.channels.count,
+            ).map {
+              AVAudioFormat(
+                commonFormat: commonFormat,
+                sampleRate: inputConfiguration.sampleRate.rawValue,
+                interleaved: outputConfiguration.fileFormat.requiresInterleaved,
+                channelLayout: $0,
+              )
+            }
           }
 
         // Validate PCM format constraints
@@ -311,11 +351,9 @@
 
         // Additional validation for extreme configurations
         let sampleRate = inputConfiguration.sampleRate.rawValue
-        let channelCount = inputConfiguration.channels.platform
 
         // Check for reasonable limits
         guard sampleRate <= 192_000,  // 192kHz max
-          channelCount <= 32,  // 32 channels max
           sampleRate >= 8000  // 8kHz min
         else {
           log.error("unreasonable sample rate: \(sampleRate, privacy: .public)")

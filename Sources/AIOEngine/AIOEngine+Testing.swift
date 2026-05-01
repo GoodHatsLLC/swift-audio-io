@@ -142,9 +142,7 @@
         enableReceivers: Bool = true,
       ) throws(AIOError) -> URL {
         guard !isRecording else { throw .alreadyRecording }
-        try validateRecordingChannelCapacity(
-          channelCount: configuration.inputConfiguration.channels.count,
-        )
+        try validateRecordingChannelCapacity(for: configuration)
         guard let processingFormat = configuration.processingFormat else {
           throw .invalidRecordingConfiguration(details: "(processing format)")
         }
