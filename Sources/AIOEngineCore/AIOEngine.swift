@@ -277,8 +277,13 @@
       /// A Boolean value that indicates whether the audio is currently playing.
       public let isPlaying: Bool
       /// The current playback time in seconds.
+      ///
+      /// Segment playback reports time relative to the segment start; whole-file playback
+      /// reports time relative to the file start.
       public let time: TimeInterval?
-      /// The total duration of the file in seconds.
+      /// The duration of the active playback item in seconds.
+      ///
+      /// Segment playback reports segment duration; whole-file playback reports file duration.
       public let duration: TimeInterval
     }
 
@@ -788,9 +793,6 @@
     }
 
     package func getPlayback(for instance: PlaybackInstance) -> Playback {
-      let startOffset =
-        Double(instance.startFrame) / instance.file.processingFormat.sampleRate
-
       guard let nodeTime = unsafe player.lastRenderTime,
         let playerTime = unsafe player.playerTime(forNodeTime: nodeTime)
       else {
@@ -798,23 +800,23 @@
           id: instance.id,
           file: instance.file.url,
           isPlaying: player.isPlaying,
-          time: startOffset,
-          duration: Double(instance.file.length) / instance.file.processingFormat.sampleRate,
+          time: instance.playbackTime(forAbsoluteFrame: instance.startFrame),
+          duration: instance.duration,
         )
       }
 
       let sampleRate = playerTime.sampleRate
       let timeInPlayer = Double(playerTime.sampleTime) / sampleRate
-      let currentTime = timeInPlayer + startOffset
-
-      let duration = Double(instance.file.length) / instance.file.processingFormat.sampleRate
+      let renderedFrames = AVAudioFramePosition(
+        timeInPlayer * instance.file.processingFormat.sampleRate)
+      let currentAbsoluteFrame = instance.startFrame + renderedFrames
 
       return unsafe Playback(
         id: instance.id,
         file: instance.file.url,
         isPlaying: player.isPlaying,
-        time: currentTime,
-        duration: duration,
+        time: instance.playbackTime(forAbsoluteFrame: currentAbsoluteFrame),
+        duration: instance.duration,
       )
     }
 

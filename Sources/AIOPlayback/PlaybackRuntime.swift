@@ -149,6 +149,8 @@
         file: file,
         startFrame: startFrame,
         pollingInterval: interval,
+        activeSegment: PlaybackSegment(startFrame: startFrame, frameCount: frameCount),
+        onComplete: onComplete,
       )
 
       if owner.getPlayback() != nil {
@@ -179,7 +181,7 @@
         ) { [weak owner, playbackInstance] _ in
           guard let owner else { return }
           PlaybackRuntime(owner: owner).cleanupPlaybackInstance(playbackInstance)
-          if let onComplete {
+          if let onComplete = playbackInstance.onComplete {
             Task { @MainActor in
               onComplete()
             }
@@ -232,12 +234,17 @@
         unsafe owner.player.scheduleSegment(
           file,
           startingFrame: framePosition,
-          frameCount: AVAudioFrameCount(file.length) - AVAudioFrameCount(framePosition),
+          frameCount: newInstance.scheduledFrameCount,
           at: nil,
           completionCallbackType: .dataPlayedBack,
           completionHandler: { [weak owner, newInstance] _ in
             guard let owner else { return }
             PlaybackRuntime(owner: owner).cleanupPlaybackInstance(newInstance)
+            if let onComplete = newInstance.onComplete {
+              Task { @MainActor in
+                onComplete()
+              }
+            }
           },
         )
         if play {
@@ -254,15 +261,28 @@
       if let initialInstance = owner.playbackState[locked: \.playbackInstance] {
         let playback = owner.getPlayback(for: initialInstance)
         let file = initialInstance.file
-        guard playback.duration > time, time >= 0 else {
+        let allowsUpperBound = initialInstance.activeSegment != nil
+        guard time >= 0,
+          allowsUpperBound ? playback.duration >= time : playback.duration > time
+        else {
           throw AIOEngine.AIOError.invalidScrubTime(details: time)
         }
-        let framePosition = AVAudioFramePosition(time * file.processingFormat.sampleRate)
+        let framePosition =
+          if let activeSegment = initialInstance.activeSegment {
+            activeSegment.clampedAbsoluteFrame(
+              forRelativeTime: time,
+              sampleRate: file.processingFormat.sampleRate,
+            )
+          } else {
+            AVAudioFramePosition(time * file.processingFormat.sampleRate)
+          }
         let newInstance = PlaybackInstance(
           id: .init(),
           file: file,
           startFrame: framePosition,
           pollingInterval: initialInstance.pollingInterval,
+          activeSegment: initialInstance.activeSegment,
+          onComplete: initialInstance.onComplete,
         )
         owner.playbackState[locked: \.playbackInstance] = newInstance
         owner.scrubTask = Task(priority: .utility) { [weak owner] in
@@ -279,7 +299,7 @@
           id: newInstance.id,
           file: file.url,
           isPlaying: playback.isPlaying,
-          time: time,
+          time: newInstance.playbackTime(forAbsoluteFrame: framePosition),
           duration: playback.duration,
         )
         defer { owner.setPlayback(newPlayback) }
@@ -402,6 +422,8 @@
         duration: playback.duration,
         wasPlaying: playback.isPlaying,
         pollingInterval: instance.pollingInterval,
+        activeSegment: instance.activeSegment,
+        sampleRate: instance.file.processingFormat.sampleRate,
       )
     }
 
@@ -412,13 +434,23 @@
       guard duration > clampedTime else { return }
 
       do {
-        _ = try await playSegment(
-          url: resume.fileURL,
-          startTime: clampedTime,
-          endTime: duration,
-          onComplete: nil,
-          playbackPollingInterval: resume.pollingInterval,
-        )
+        if let activeSegment = resume.activeSegment {
+          let sampleRate = resume.sampleRate
+          let segmentStartTime = Double(activeSegment.startFrame) / sampleRate
+          let segmentEndTime = Double(activeSegment.endFrame) / sampleRate
+          _ = try await playSegment(
+            url: resume.fileURL,
+            startTime: segmentStartTime,
+            endTime: segmentEndTime,
+            onComplete: nil,
+            playbackPollingInterval: resume.pollingInterval,
+          )
+        } else {
+          _ = try await play(url: resume.fileURL, playbackPollingInterval: resume.pollingInterval)
+        }
+        if clampedTime > 0 {
+          _ = try scrub(to: clampedTime, updatePlaybackTimer: true)
+        }
         if resume.wasPlaying == false {
           pausePlayback()
         }
