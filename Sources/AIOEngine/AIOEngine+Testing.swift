@@ -132,6 +132,51 @@
         testReinstallTapOverride = override
       }
 
+      @MainActor
+      public func debugInstallSuccessfulTapReinstallOverrideForTesting(
+        tapFormat: AVAudioFormat? = nil,
+        onCall: (@MainActor @Sendable () -> Void)? = nil,
+      ) {
+        setReinstallTapOverride { _, processingFormat throws(AIOError) in
+          onCall?()
+          let resolvedTapFormat = tapFormat ?? processingFormat
+          guard let converter = AVAudioConverter(from: resolvedTapFormat, to: processingFormat)
+          else {
+            throw AIOError.formatConversionFailed
+          }
+          guard
+            let buffer = AVAudioPCMBuffer(
+              pcmFormat: processingFormat,
+              frameCapacity: 1_024,
+            )
+          else {
+            throw AIOError.formatConversionFailed
+          }
+
+          let artifacts = TapConversionArtifacts(
+            converter: converter,
+            inputFormat: resolvedTapFormat,
+            convertedBuffer: buffer,
+          )
+          let tapConfig = TapConfiguration(
+            bus: 0,
+            inputFormat: resolvedTapFormat,
+            outputFormat: processingFormat,
+            bufferSize: 1_024,
+          )
+          return TapInstallResult(
+            tapFormat: resolvedTapFormat,
+            artifacts: artifacts,
+            tapConfiguration: tapConfig,
+          )
+        }
+      }
+
+      @MainActor
+      public func debugClearTapReinstallOverrideForTesting() {
+        setReinstallTapOverride(nil)
+      }
+
       /// Starts a recording session without touching AVAudioSession or AVAudioEngine.
       /// Intended for integration tests that inject buffers directly.
       @MainActor
