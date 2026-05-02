@@ -195,7 +195,7 @@ Tests use **Swift Testing** framework (`@Test` macros, `@Suite`), not XCTest.
 ## Agent Workflow
 
 - Always run the relevant AIO test suite before considering work complete. Prefer the narrowest meaningful suite first (`xcrun swift test --package-path Packages/AIO` when host-compatible, or the matching XcodeBuildMCP/Xcode test scheme when simulator coverage is needed), and report what you ran.
-- Always commit finished work on the current checked-out branch after tests pass. Do not create or switch branches unless the user explicitly asks.
+- Always commit finished work on the current checked-out branch after tests pass. Do not create or switch branches unless the user explicitly asks. This includes `main` — if the session started with `main` checked out and no branch or worktree was requested, commit directly to `main` without asking first.
 
 ## Key Features
 
