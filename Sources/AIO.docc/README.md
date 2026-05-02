@@ -1,8 +1,10 @@
-# Features
+# AIO Documentation
 
-This section contains documents related to specific features of the project.
+This DocC catalog describes the public AIO package surface. App-specific recording,
+database, widget, and waveform-renderer notes belong outside `Packages/AIO/Sources/AIO.docc`.
 
-## Key Features
+Start with:
 
-*   [**Audio Recovery**](AUDIO_RECOVERY.md): The application includes a crash recovery system that can detect and recover recordings that were interrupted due to app crashes or unexpected terminations.
-*   [**Recording Control Widget**](RecordingControlWidget.md): An iOS 18+ Control Center widget for toggling audio recording.
+- <doc:SPEC_AIO>
+- <doc:SPEC_AUDIO_VIZ>
+- <doc:MultiBandVisualization>

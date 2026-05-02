@@ -1,46 +1,43 @@
 # Architecture
 
-This section documents the current AIO package architecture.
+AIO exposes three public SwiftPM products:
 
-## Current Package Graph
-
-The package exposes three public products:
-
-*   **Tools**
-*   **AudioSignals**
-*   **AIOEngine** — the public compatibility facade and re-export layer
+- `AIOEngine`: the public umbrella for recording, playback, session management,
+  visualization, and signal-processing integration.
+- `AudioSignals`: signal-processing types that can be used without the full engine.
+- `Tools`: shared concurrency and utility primitives that are intentionally public when
+  they appear in AIO's public contracts.
 
 Internally, AIO is split by runtime ownership:
 
-*   **AIOContracts** — `BufferReceiver`, `AudioSessionDelegate`, and related shared contracts
-*   **AIOAudioSession** — session/environment/input/output runtime
-*   **AIORecordingSupport** — recording-only state/support substrate shared by core and runtime layers
-*   **AIOEngineCore** — core `AIOEngine` type and shared state
-*   **AIORecording** — recording runtime, `RecordingEngineRuntime`, and tap lifecycle
-*   **AIOPlayback** — playback runtime and scrub logic
-*   **AIOVisualization** — live visualization runtime (`AudioVisualizationEngine`, `VisualizationProcessor`, `VisualizationHub`)
-*   **AIOSupport** — package-internal logging/support code
+- `AIOContracts`: `BufferReceiver`, `BufferReceiverToken`, `BufferTiming`, and session
+  delegate contracts.
+- `AIOAudioSession`: input/output configuration, route/interruption state, and
+  `AudioEnvironmentManager`.
+- `AIOEngineCore`: the ``AIOEngine`` type, observable state, errors, and shared runtime
+  context.
+- `AIORecording`: recording lifecycle, tap setup, file writing, and receiver fan-out.
+- `AIOPlayback`: file/segment playback and scrub coordination.
+- `AIOVisualization`: ``AudioVisualizationEngine``, visualization demand resolution,
+  and event fan-out.
+- `AudioSignals`: multi-band LOD, time-domain, frequency-domain, beat, and offline
+  extraction primitives.
+- `AIOMicHealth`: signal-health monitoring.
+- `AIOSupport` and `AIORecordingSupport`: package-internal support code.
 
-## Refactor Status
+## Public Boundary
 
-As of 2026-03-23:
+Consumers should import `AIOEngine` first. Direct imports of subtargets are only needed
+for narrow advanced use, such as depending on `AudioSignals` without recording/playback.
 
-*   AppLibrary consumes AIO-owned runtime contracts instead of defining its own engine-facing protocols.
-*   Visualization processing and subscriber/event fan-out are separated.
-*   The optional target split has landed.
-*   `AudioEnvironmentManager` now delegates session bootstrap/control, route observation, state projection, and preference restoration to focused collaborators.
-*   Recording behavior now lives behind `RecordingRuntime` plus `RecordingEngineRuntime`, with `AIOEngine+Recording` acting as a forwarding surface.
+The umbrella intentionally re-exports the submodules whose public symbols are part of the
+engine contract. Internal helpers stay `internal` or `package`; buffer receiver storage and
+writer/runtime support are not public API.
 
-Still in progress:
+## Topics
 
-*   `AIOEngineCore` still owns the shared observable state spine and some cross-runtime helpers.
-*   `AIOEngine` remains source-compatible, but it is not yet the near-zero-state facade described in the proposal’s final state.
-
-## Key Documents
-
-*   <doc:SPEC_AIO>
-*   <doc:SPEC_AUDIO_VIZ>
-*   <doc:MultiBandVisualization>
-*   <doc:DESIGN_THREADING_CONFORMANCE>
-*   <doc:AUDIO_ENGINES>
-*   <doc:core-audio-layer-opportunities>
+- <doc:SPEC_AIO>
+- <doc:SPEC_AUDIO_VIZ>
+- <doc:MultiBandVisualization>
+- <doc:DESIGN_THREADING_CONFORMANCE>
+- <doc:core-audio-layer-opportunities>

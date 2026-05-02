@@ -1,348 +1,148 @@
-# Multi-Band Audio Visualization
+# Multi-Band Visualization
 
-Real-time multi-band waveform visualization with Level-of-Detail (LOD) processing.
-
-## Overview
-
-The multi-band visualization system provides frequency-separated audio data optimized for waveform rendering. It splits audio into frequency bands using a cascading lowpass filter bank and computes LOD data (min/max/RMS) suitable for efficient GPU rendering.
-
-This system powers both live recording visualizations and static waveform snapshots.
-
-For CPU ↔ GPU invariants (buffer layout, indexing/wrapping, zoom/offset semantics), see <doc:MultiBandLODContract>.
+Multi-band visualization splits mono float samples into perceptual frequency bands and
+stores min, max, and RMS values at a configurable level of detail.
 
 ## Quick Start
 
-### Live Visualization During Recording
-
 ```swift
 import AIOEngine
 
-// Get the visualization engine (typically from your audio recording setup)
-let vizEngine = AudioVisualizationEngine()
-
-let request = VisualizationRequest(
+let visualization = AudioVisualizationEngine()
+let subscription = visualization.subscribe(
+  request: VisualizationRequest(
     work: VisualizationWork(
-        lod: LODWork(configuration: .default, publishRateHz: 60)
-    )
-)
+      lod: LODWork(
+        configuration: MultiBandLODConfiguration(
+          bandCount: 5,
+          lodRatio: 128,
+          bufferSeconds: 300,
+          sampleRate: 48_000
+        ),
+        publishRateHz: 60
+      )
+    ),
+    eventMask: [.lodSnapshot]
+  )
+) { event in
+  guard case .lodSnapshot = event else { return }
+  _ = visualization.withCurrentLODSnapshotRef { snapshot in
+    snapshot.bandCount
+  }
+}
 
-let subscription = vizEngine.subscribe(
-    request: request,
-    handler: { event in
-      if case .lodSnapshot = event {
-        vizEngine.withCurrentLODSnapshotRef { snapshot in
-          renderWaveform(snapshot)
-        }
-      }
-    }
-)
-vizEngine.startVisualization()
-
-// Start feeding audio data (called from your audio callback)
-vizEngine.processBuffer(audioSamples)
-
-// Later, stop receiving updates
+visualization.startVisualization()
 subscription.cancel()
 ```
 
-### Offline Generation from Audio File
+## Configuration
+
+``MultiBandLODConfiguration`` controls allocation and band splitting:
+
+- `bandCount`: 1...128 frequency bands. 5 is the default.
+- `lodRatio`: raw samples per LOD bucket. 128 is the default.
+- `bufferSeconds`: rolling live buffer duration when `rawBufferLengthOverride` is not set.
+- `sampleRate`: nominal source sample rate.
+- `crossoverMode`: mel, linear, or custom crossover frequencies.
+- `snapshotSwapInterval`: how often the live processor swaps published buffer slots.
+- `rawBufferLengthOverride`: exact raw-sample length for offline/file extraction.
+
+Use `init(validatingBandCount:...)` to reject invalid user input, or the non-throwing
+initializer when clamping is acceptable.
+
+## Processor
+
+``MultiBandLODProcessor`` is the low-level processor:
 
 ```swift
-import AIOEngine
-
-// Generate LOD snapshot from an audio file
-let extractor = OfflineLODExtractor(configuration: .default)
-let snapshot = try await extractor.extract(from: audioFileURL).snapshot
-
-// Render to image
-let renderer = try WaveformSnapshotRenderer()
-let image = try renderer.render(snapshot: snapshot)
-```
-
-## Core Types
-
-### MultiBandLODConfiguration
-
-Configuration for the LOD processor:
-
-```swift
-let config = MultiBandLODConfiguration(
-    bandCount: 5,           // Number of frequency bands (3-8)
-    lodRatio: 128,          // Samples per LOD point
-    bufferSeconds: 300,     // Max recording duration
-    sampleRate: 44_100,     // Audio sample rate
-    crossoverMode: .mel     // Frequency distribution
+let processor = MultiBandLODProcessor(
+  configuration: MultiBandLODConfiguration(sampleRate: 48_000)
 )
+
+let samples: [Float] = [0, 0.2, -0.1, 0.4]
+processor.process(samples)
+
+let copiedSnapshot = processor.snapshot()
+let liveRef = processor.snapshotRef()
 ```
 
-**Parameters:**
-- `bandCount`: Number of frequency bands (3-8). More bands = finer frequency resolution.
-- `lodRatio`: Downsampling ratio. 128 means every 128 samples becomes 1 LOD point with min/max/RMS.
-- `bufferSeconds`: Maximum recording duration supported. Determines buffer allocation.
-- `sampleRate`: Audio sample rate. Must match your audio input.
-- `crossoverMode`: How frequency bands are distributed (`.mel` for perceptual, `.linear` for uniform).
+For live rendering, prefer ``LODSnapshotRef`` or
+``MultiBandLODProcessor/withCurrentLODSnapshotRef(_:)``. For storage or tests, use the copied
+``MultiBandLODSnapshot``.
 
-**Defaults:**
-```swift
-MultiBandLODConfiguration.default  // 5 bands, 128 ratio, 300s, 44.1kHz, mel
-```
+## Snapshot Layout
 
-### MultiBandLODSnapshot
-
-Immutable snapshot of current visualization state:
+Each snapshot stores band-contiguous channels:
 
 ```swift
-struct MultiBandLODSnapshot {
-    let bands: [BandLODData]     // Per-band LOD data
-    let writeIndex: Int          // Current write position
-    let lodRatio: Int            // Samples per LOD point
-    let rawBufferLength: Int     // Total buffer capacity
-
-    var bandCount: Int           // Number of bands
-    var lodBufferLength: Int     // LOD buffer length per band
-}
+let minValues = snapshot.copyContiguousLODChannel(.min)
+let maxValues = snapshot.copyContiguousLODChannel(.max)
+let rmsValues = snapshot.copyContiguousLODChannel(.rms)
 ```
 
-**Accessing Band Data:**
-```swift
-let snapshot = processor.snapshot()
-
-// Per-band access
-for band in snapshot.bands {
-    let minValues = band.minBuffer   // [Float] - minimum per LOD point
-    let maxValues = band.maxBuffer   // [Float] - maximum per LOD point
-    let rmsValues = band.rmsBuffer   // [Float] - RMS energy per LOD point
-}
-
-// Flat buffers for GPU (band-contiguous)
-let flatMin = snapshot.copyContiguousLODChannel(.min)  // [band0...][band1...]...
-let flatMax = snapshot.copyContiguousLODChannel(.max)
-let flatRMS = snapshot.copyContiguousLODChannel(.rms)
-```
-
-### BandLODData
-
-Per-band Level-of-Detail data:
+For band `b` and LOD index `i`, the flat offset is:
 
 ```swift
-struct BandLODData {
-    let bandIndex: Int
-    let min: [Float]    // Minimum amplitude per LOD point
-    let max: [Float]    // Maximum amplitude per LOD point
-    let rms: [Float]    // RMS energy per LOD point
-}
+let offset = (b * snapshot.lodBufferLength) + i
 ```
 
-## MultiBandLODProcessor
+`writeIndex` means:
 
-The main processing class that splits audio into bands and computes LOD:
+- Live snapshot: circular head in `0..<lodBufferLength`.
+- Offline snapshot: count of written LOD buckets.
 
-```swift
-let processor = MultiBandLODProcessor(configuration: .default)
+## Offline Extraction
 
-// Feed audio samples (real-time)
-processor.process(audioBuffer)
-
-// Get current state
-let snapshot = processor.snapshot()
-
-// Reset for new recording
-processor.reset()
-```
-
-**Thread Safety:**
-- `process()` and `snapshot()` are thread-safe
-- Typically called from audio thread (`process`) and main thread (`snapshot`)
-
-## Integration with AudioVisualizationEngine
-
-The `AudioVisualizationEngine` provides convenient integration:
-
-```swift
-@MainActor
-final class AudioVisualizationEngine {
-    // Subscribe with work + event handler
-    func subscribe(
-        request: VisualizationRequest,
-        handler: @escaping @Sendable (VisualizationEvent) -> Void
-    ) -> VisualizationSubscription
-
-    // Lifecycle control
-    func startVisualization()
-    func pauseVisualization()
-    func resumeVisualization()
-    func stopVisualization()
-
-    // Access current state
-    var multiBandLOD: MultiBandLODSnapshot?
-    func withCurrentLODSnapshotRef<R>(_ body: (LODSnapshotRef) -> R) -> R?
-    var isMultiBandLODEnabled: Bool
-
-    // Feed audio (called from processBuffer)
-    nonisolated func processBuffer(_ data: UnsafeBufferPointer<Float>)
-}
-```
-
-**Usage in Recording Pipeline:**
-```swift
-// During recording setup
-let request = VisualizationRequest(
-    work: VisualizationWork(lod: LODWork(configuration: .default, publishRateHz: 60))
-)
-let subscription = vizEngine.subscribe(request: request) { event in
-    if case .lodSnapshot = event {
-        vizEngine.withCurrentLODSnapshotRef { snapshot in
-            // Render using the current frame-scoped snapshot
-            _ = snapshot
-        }
-    }
-}
-vizEngine.startVisualization()
-
-// In audio callback
-func audioCallback(samples: UnsafeBufferPointer<Float>) {
-    vizEngine.processBuffer(samples)
-}
-
-    var body: some View {
-        // Fetch a frame-scoped snapshot in your display-link/timer update path.
-        // Avoid caching one LODSnapshotRef across multiple frames.
-    }
-}
-```
-
-## Offline File Processing
-
-Generate LOD data from existing audio files:
+Use ``OfflineLODExtractor`` to build a snapshot from an audio file:
 
 ```swift
 let extractor = OfflineLODExtractor(
-    configuration: MultiBandLODConfiguration(
-        bandCount: 5,
-        lodRatio: 128,
-        bufferSeconds: 600,  // Support up to 10 min
-        sampleRate: 44_100
-    ),
-    channelStrategy: .average
-)
-let snapshot = try await extractor.extract(from: audioURL).snapshot
-```
-
-This reads the entire audio file and produces a complete LOD snapshot suitable for rendering static waveform images.
-
-## Frequency Band Distribution
-
-### Mel Scale (Default)
-
-Bands are distributed according to human auditory perception. Band boundaries are derived from the configured `minFreq`/`maxFreq` and `bandCount` using mel-space interpolation, then converted back to Hz.
-
-For the default configuration (`bandCount=5`, `.mel(minFreq: 40, maxFreq: 15000)`), the crossover frequencies are approximately:
-- 663 Hz
-- 1811 Hz
-- 3926 Hz
-- 7822 Hz
-
-| Band | Frequency Range | Content |
-|------|-----------------|---------|
-| 0 | ~40-663 Hz | Sub-bass, kick drums |
-| 1 | ~663-1811 Hz | Bass, lower vocals |
-| 2 | ~1.8-3.9 kHz | Midrange, speech |
-| 3 | ~3.9-7.8 kHz | Presence, clarity |
-| 4 | ~7.8-15 kHz | Brilliance, air |
-
-### Linear Scale
-
-Equal frequency spacing (less perceptually useful but sometimes desired):
-
-```swift
-let config = MultiBandLODConfiguration(
+  configuration: MultiBandLODConfiguration(
     bandCount: 5,
-    crossoverMode: .linear
-)
-```
-
-## Metal Rendering Integration
-
-The LOD snapshot is designed for efficient GPU rendering:
-
-```swift
-// Create GPU buffers from snapshot
-let minBuffer = device.makeBuffer(
-    bytes: snapshot.copyContiguousLODChannel(.min),
-    length: bufferSize,
-    options: .storageModeShared
+    lodRatio: 128,
+    bufferSeconds: 1,
+    sampleRate: 48_000
+  ),
+  channelStrategy: .average
 )
 
-let maxBuffer = device.makeBuffer(
-    bytes: snapshot.copyContiguousLODChannel(.max),
-    length: bufferSize,
-    options: .storageModeShared
-)
-
-// Pass to shader
-encoder.setVertexBuffer(minBuffer, offset: 0, index: 1)
-encoder.setVertexBuffer(maxBuffer, offset: 0, index: 2)
-encoder.setVertexBuffer(rmsBuffer, offset: 0, index: 3)
+let result = try await extractor.extract(from: audioURL)
+let snapshot = result.snapshot
 ```
 
-**Shader Uniforms:**
-```metal
-struct Uniforms {
-    float zoom;
-    float viewOffset;
-    float screenWidth;
-    float screenHeight;
-    float separation;      // Band visual separation
-    int bandCount;
-    int paletteMode;
-    int bufferLength;      // snapshot.rawBufferLength
-    int lodRatio;          // snapshot.lodRatio
-    int writeIndex;        // snapshot.writeIndex
-};
-```
+The extractor sizes the snapshot from the file's frame count, not from a live rolling-window
+duration.
 
-## Performance Characteristics
+## Renderer Contract
 
-### Memory
+AIO does not ship a public renderer. Renderers should consume the public snapshot contract:
 
-Buffer size formula:
-```
-lodLength = (sampleRate * bufferSeconds) / lodRatio
-memoryPerBand = lodLength * 3 * sizeof(Float)  // min, max, rms
-totalMemory = memoryPerBand * bandCount
-```
+- `bandCount`
+- `lodRatio`
+- `rawBufferLength`
+- `lodBufferLength`
+- `writeIndex`
+- per-band min/max/RMS buffers
 
-Example (5 bands, 300s, 128 ratio, 44.1kHz):
-```
-lodLength = (44100 * 300) / 128 = 103,359
-memoryPerBand = 103,359 * 3 * 4 = ~1.2 MB
-totalMemory = ~6 MB
-```
-
-### CPU
-
-- Filter bank uses efficient biquad cascades
-- LOD computation is O(1) per sample
-- `snapshot()` creates a copy (~6MB allocation at 300s)
-
-### Recommended Configurations
-
-| Use Case | Bands | LOD Ratio | Buffer |
-|----------|-------|-----------|--------|
-| Live recording | 5 | 128 | 300s |
-| Thumbnail generation | 5 | 128 | 600s |
-| Detailed view | 5-8 | 64 | 300s |
+Renderers that need direct buffer access should prefer `withContiguousLODChannel` and the
+checked `withContiguousLODChannelIfValid` variants rather than copying every frame.
 
 ## Topics
 
 ### Configuration
+
 - ``MultiBandLODConfiguration``
 - ``CrossoverMode``
 
-### Data Types
+### Data
+
 - ``MultiBandLODSnapshot``
 - ``BandLODData``
+- ``LODChannel``
+- ``LODSnapshotRef``
 
 ### Processing
+
 - ``MultiBandLODProcessor``
+- ``OfflineLODExtractor``
 - ``AudioVisualizationEngine``
