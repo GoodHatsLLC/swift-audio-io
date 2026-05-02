@@ -3,6 +3,11 @@
 AIO is a Swift audio I/O package. Import `AIOEngine` for recording, file and segment
 playback, audio-session configuration types, and live visualization.
 
+## License
+
+AIO is licensed under the GNU Affero General Public License, version 3 only
+(`AGPL-3.0-only`). See `LICENSE`.
+
 ## Quickstart
 
 ```swift
@@ -94,3 +99,26 @@ Use `bin/test-aio-gate.sh` before an AIO release when the real-platform harnesse
 available. That gate also runs the workspace-only `AIOPlatformIntegrationTests` scheme
 for iOS Simulator audio-session, segment playback, channel-matrix, writer-drain, and
 rotation coverage.
+
+## Release Versioning
+
+AIO follows Semantic Versioning for the public API exposed by the declared SwiftPM
+library products: `AIOEngine`, `AudioSignals`, and `Tools`.
+
+- Before `1.0.0`, minor releases may include source-breaking API changes, but every
+  break must be called out in `CHANGELOG.md`.
+- At and after `1.0.0`, source-breaking public API changes require a major-version
+  bump.
+- Patch releases are for compatible fixes only.
+- `@_spi(TESTING)` and DEBUG-only helpers are not part of the semver-stable public API.
+
+## Release CI Matrix
+
+The release gate is split by the package's declared platforms. Locally, run the full
+gate with `bin/test-aio-gate.sh`. In CircleCI, trigger the `aio-release-gate` workflow
+with `run-aio-release-gate=true`.
+
+| Declared platform | Required gate |
+| --- | --- |
+| macOS 26.2 | `xcrun swift build --package-path Packages/AIO`, `xcrun swift test --package-path Packages/AIO`, and `AIOHarnessMacUITests` on macOS |
+| iOS 26.2 | `AIOPlatformIntegrationTests` and `AIOHarnessiOSUITests` on iOS Simulator |

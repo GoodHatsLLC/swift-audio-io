@@ -3,8 +3,8 @@
 import AVFAudio
 import Foundation
 
-/// Platform-agnostic stereo orientation
-public enum StereoOrientation: Sendable {
+/// Platform-agnostic stereo orientation.
+enum StereoOrientation: Sendable {
   case portrait
   case portraitUpsideDown
   case landscapeLeft
@@ -33,8 +33,8 @@ public enum StereoOrientation: Sendable {
   #endif
 }
 
-/// Platform-agnostic device information provider for audio session configuration
-public protocol PlatformDeviceInfo: Sendable {
+/// Platform-agnostic device information provider for audio session configuration.
+protocol PlatformDeviceInfo: Sendable {
   /// Current stereo orientation for audio capture
   var currentOrientation: StereoOrientation { get async }
 
@@ -48,20 +48,20 @@ public protocol PlatformDeviceInfo: Sendable {
   import UIKit
 
   /// iOS implementation of device info that tracks physical device orientation
-  public actor IOSDeviceInfo: PlatformDeviceInfo {
+  actor IOSDeviceInfo: PlatformDeviceInfo {
     private var _currentOrientation: StereoOrientation = .portrait
 
     @MainActor
-    public init() {
+    init() {
       UIDevice.current.beginGeneratingDeviceOrientationNotifications()
       _currentOrientation = Self.mapOrientation(UIDevice.current.orientation) ?? .portrait
     }
 
-    public var currentOrientation: StereoOrientation {
+    var currentOrientation: StereoOrientation {
       _currentOrientation
     }
 
-    public nonisolated func orientationChanges() -> AsyncStream<StereoOrientation> {
+    nonisolated func orientationChanges() -> AsyncStream<StereoOrientation> {
       AsyncStream { continuation in
         let task = Task { @MainActor in
           let notifications = NotificationCenter.default.notifications(
@@ -109,14 +109,14 @@ public protocol PlatformDeviceInfo: Sendable {
   ///
   /// macOS devices don't have physical orientation changes, so this returns
   /// a fixed portrait orientation for consistency with the audio engine.
-  public actor MacOSDeviceInfo: PlatformDeviceInfo {
-    public init() {}
+  actor MacOSDeviceInfo: PlatformDeviceInfo {
+    init() {}
 
-    public var currentOrientation: StereoOrientation {
+    var currentOrientation: StereoOrientation {
       .portrait
     }
 
-    public nonisolated func orientationChanges() -> AsyncStream<StereoOrientation> {
+    nonisolated func orientationChanges() -> AsyncStream<StereoOrientation> {
       // Return empty stream - macOS doesn't change orientation
       AsyncStream { continuation in
         continuation.finish()
