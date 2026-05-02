@@ -91,4 +91,6 @@ xcrun swift test --package-path Packages/AIO
 ```
 
 Use `bin/test-aio-gate.sh` before an AIO release when the real-platform harnesses are
-available.
+available. That gate also runs the workspace-only `AIOPlatformIntegrationTests` scheme
+for iOS Simulator audio-session, segment playback, channel-matrix, writer-drain, and
+rotation coverage.

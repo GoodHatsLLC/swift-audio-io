@@ -154,7 +154,7 @@ private func feedRMS(
 
 // MARK: - Tests
 
-@Suite("MicHealthMonitor")
+@Suite("MicHealthMonitor", .serialized)
 struct MicHealthMonitorTests {
   private let healthy: Float = 0.1  // ~-20 dBFS, comfortably above -60 dBFS
   private let silent: Float = 0.0  // floored to leastNormalMagnitude

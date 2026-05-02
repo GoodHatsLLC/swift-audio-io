@@ -13,7 +13,8 @@ Before an AIO release, run the broader gate when the platform harnesses are avai
 bin/test-aio-gate.sh
 ```
 
-That gate runs the package build, the package tests, and the real-platform harness suites
+That gate runs the package build, the package tests, the workspace-only
+`AIOPlatformIntegrationTests` iOS Simulator scheme, and the real-platform harness suites
 defined in the workspace.
 
 ## Quickstart Rot Check
