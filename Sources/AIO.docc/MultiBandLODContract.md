@@ -1,6 +1,7 @@
 # Multi-Band LOD Contract
 
-This document defines the *runtime contract* between the CPU multi-band LOD pipeline (`MultiBandLODProcessor`) and the GPU renderer (`viz.metal` + `MetalWaveformView` / `WaveformSnapshotRenderer`).
+This document defines the runtime contract between the CPU multi-band LOD pipeline
+(`MultiBandLODProcessor`) and any consumer-owned renderer.
 
 ## Definitions
 
