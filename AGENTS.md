@@ -174,7 +174,7 @@ Preferred: use XcodeBuildMCP (MCP server or `xcodebuildmcp` CLI) for builds/test
 If you're iterating on parts of the package that can run directly on the host (no iOS-only APIs), prefer SwiftPM via `xcrun` for fast feedback.
 
 ### Preferred (XcodeBuildMCP MCP server or CLI)
-See `DETAILS_BUILD_MCP.md`. Use scheme `AIOTests` (or `ToolsTests`, `AudioVisualizationTests`) and run `mcp__XcodeBuildMCP__test_sim` or `xcodebuildmcp test-sim --workspace Recorder.xcworkspace --scheme AIOTests --simulator-name "iPhone 17 Pro"`.
+See `DETAILS_BUILD_MCP.md`. Use the hosted iOS workspace scheme `AIOiOSTests` (or `AudioVisualizationiOSTests`) with `mcp__XcodeBuildMCP__test_sim`, or run the SwiftPM package schemes `AIOTests`, `ToolsTests`, and `AudioVisualizationTests` directly when simulator hosting is not needed.
 
 ### Host SwiftPM (When Compatible)
 ```bash
@@ -183,7 +183,7 @@ xcrun swift test --package-path Packages/AIO
 
 ### Backup (iOS Simulator via raw Xcode CLI)
 ```bash
-xcodebuild test -workspace Recorder.xcworkspace -scheme AIOTests -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -derivedDataPath ./.DerivedData
+xcodebuild test -workspace Recorder.xcworkspace -scheme AIOiOSTests -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -derivedDataPath ./.DerivedData
 ```
 
 ### Claude Code Slash Commands (Optional)
