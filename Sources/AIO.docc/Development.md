@@ -7,15 +7,14 @@ xcrun swift build --package-path Packages/AIO
 xcrun swift test --package-path Packages/AIO
 ```
 
-Before an AIO release, run the broader gate when the platform harnesses are available:
+CircleCI's `build-test` workflow runs the broader AIO gate on every push: the
+SwiftPM package tests on the macOS host, plus the workspace-only
+`AIOPlatformIntegrationTests` iOS Simulator scheme and the `AIOHarnessiOSUITests` /
+`AIOHarnessMacUITests` real-platform harness suites. To reproduce that locally:
 
 ```bash
-bin/test-aio-gate.sh
+./bin/test.sh --all   # SwiftPM unit tests + iOS Simulator + macOS workspace schemes
 ```
-
-That gate runs the package build, the package tests, the workspace-only
-`AIOPlatformIntegrationTests` iOS Simulator scheme, and the real-platform harness suites
-defined in the workspace.
 
 ## Quickstart Rot Check
 

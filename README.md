@@ -86,8 +86,8 @@ func runAIOQuickstart() async throws {
 ```
 
 This quickstart is mirrored by `AIOQuickstart.swift` in the AIO test target and is
-type-checked by `xcrun swift test --package-path Packages/AIO`, which is also invoked by
-`bin/test-aio-gate.sh`.
+type-checked by `xcrun swift test --package-path Packages/AIO`, which runs in CircleCI
+on every push as part of `build-test`.
 
 ## Verification
 
@@ -95,10 +95,11 @@ type-checked by `xcrun swift test --package-path Packages/AIO`, which is also in
 xcrun swift test --package-path Packages/AIO
 ```
 
-Use `bin/test-aio-gate.sh` before an AIO release when the real-platform harnesses are
-available. That gate also runs the workspace-only `AIOPlatformIntegrationTests` scheme
-for iOS Simulator audio-session, segment playback, channel-matrix, writer-drain, and
-rotation coverage.
+CircleCI's `build-test` workflow runs the broader AIO gate on every push. It includes
+the package SwiftPM tests, the workspace-only `AIOPlatformIntegrationTests` scheme for
+iOS Simulator audio-session / segment playback / channel-matrix / writer-drain /
+rotation coverage, and the macOS / iOS harness UI test schemes. Reproduce locally with
+`./bin/test.sh --all`.
 
 ## Release Versioning
 
@@ -114,11 +115,10 @@ library products: `AIOEngine`, `AudioSignals`, and `Tools`.
 
 ## Release CI Matrix
 
-The release gate is split by the package's declared platforms. Locally, run the full
-gate with `bin/test-aio-gate.sh`. In CircleCI, trigger the `aio-release-gate` workflow
-with `run-aio-release-gate=true`.
+CircleCI's `build-test` workflow runs the gate on every push. Locally, reproduce with
+`./bin/test.sh --all`.
 
 | Declared platform | Required gate |
 | --- | --- |
-| macOS 26.2 | `xcrun swift build --package-path Packages/AIO`, `xcrun swift test --package-path Packages/AIO`, and `AIOHarnessMacUITests` on macOS |
+| macOS 26.2 | `xcrun swift test --package-path Packages/AIO` and `AIOHarnessMacUITests` on macOS |
 | iOS 26.2 | `AIOPlatformIntegrationTests` and `AIOHarnessiOSUITests` on iOS Simulator |
