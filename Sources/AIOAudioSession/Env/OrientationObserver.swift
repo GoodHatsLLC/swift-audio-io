@@ -56,10 +56,14 @@
           cont.yield(value)
         }
       let c = Transferring(cancellable)
+      let terminationTasks = AsyncTaskRunner()
       cont.onTermination = { _ in
-        Task.detached { @MainActor in
-          c.value.cancel()
-          UIDevice.current.endGeneratingDeviceOrientationNotifications()
+        terminationTasks.run { [c, terminationTasks] in
+          await MainActor.run {
+            c.value.cancel()
+            UIDevice.current.endGeneratingDeviceOrientationNotifications()
+          }
+          _ = terminationTasks
         }
       }
       return stream
