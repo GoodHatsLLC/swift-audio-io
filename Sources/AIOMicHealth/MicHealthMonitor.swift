@@ -179,34 +179,15 @@ public actor MicHealthMonitor {
   }
 
   /// Consumes the injected streams until they end or `run()`'s Task is
-  /// cancelled. Spawns one child per stream and exits as soon as either
-  /// stream ends so the monitor does not hang waiting on a dead source.
+  /// cancelled. Runs one child per stream and exits as soon as either stream
+  /// ends so the monitor does not hang waiting on a dead source.
   public func run() async {
-    let (doneStream, doneContinuation) = AsyncStream<Void>.makeStream()
-    let rmsTask = Task {
-      await self.consumeRMS()
-      doneContinuation.yield(())
+    await withTaskGroup(of: Void.self) { group in
+      group.addTask { await self.consumeRMS() }
+      group.addTask { await self.consumeRoute() }
+      await group.next()
+      group.cancelAll()
     }
-    let routeTask = Task {
-      await self.consumeRoute()
-      doneContinuation.yield(())
-    }
-
-    await withTaskCancellationHandler {
-      for await _ in doneStream {
-        break
-      }
-    } onCancel: {
-      rmsTask.cancel()
-      routeTask.cancel()
-      doneContinuation.finish()
-    }
-
-    rmsTask.cancel()
-    routeTask.cancel()
-    _ = await rmsTask.result
-    _ = await routeTask.result
-    doneContinuation.finish()
   }
 
   /// Closes any still-open interval at the current clock reading and
