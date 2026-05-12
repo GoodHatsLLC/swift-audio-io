@@ -1,6 +1,7 @@
 // © GoodHatsLLC
 
 internal import Foundation
+import Tools
 
 /// Platform-neutral model of a discoverable audio input endpoint.
 struct PlatformAudioInputDescriptor: Hashable {
@@ -95,9 +96,10 @@ enum PlatformAudioBackendFactory {
     func routeChanges() -> AsyncStream<PlatformAudioRouteEvent> {
       AsyncStream { continuation in
         let task = Task {
+          let sleeper = TaskSleeper()
           var previousSignature = routeSignature()
           while !Task.isCancelled {
-            try? await Task.sleep(for: .milliseconds(750))
+            try? await sleeper.sleep(for: .milliseconds(750))
             let nextSignature = routeSignature()
             if nextSignature != previousSignature {
               previousSignature = nextSignature
