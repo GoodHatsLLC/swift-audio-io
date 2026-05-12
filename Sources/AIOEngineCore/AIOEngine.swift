@@ -594,6 +594,7 @@
 
     package let bufferReceivers: Synchronized<[any BufferReceiver<Float>]> = .init([])
     package let playbackCallbackTasks = AsyncTaskRunner()
+    package let recordingCallbackTasks = AsyncTaskRunner()
 
     package let clock = ContinuousClock()
 
