@@ -67,7 +67,7 @@
     private let platformAudioBackend: any PlatformAudioBackend
     private var sessionController: AudioSessionController { .init(owner: self) }
     private var routeObserver: AudioRouteObserver { .init(owner: self) }
-    private var backendRouteTask: Task<Void, Never>?
+    private var backendRouteTask: MainActorOwnedWork?
 
     private enum StorageKey {
       static let useMeasurement = "aio.audio_env.use_measurement"
@@ -290,13 +290,13 @@
       await refreshInputsFromPlatform()
       isReady = true
 
-      backendRouteTask?.cancel()
+      await backendRouteTask?.cancel()
       backendRouteTask = routeObserver.makeRouteTask()
 
       // Keep parity with iOS semantics: `run()` represents a long-lived manager loop
       // and only returns after cancellation.
       await withCancellationOperation {
-        backendRouteTask?.cancel()
+        await backendRouteTask?.cancel()
         backendRouteTask = nil
         isAudioSessionActive = false
         isReady = false
@@ -360,9 +360,9 @@
       let owner: AudioEnvironmentManager
 
       @MainActor
-      func makeRouteTask() -> Task<Void, Never> {
+      func makeRouteTask() -> MainActorOwnedWork {
         let backend = owner.platformAudioBackend
-        return Task { @MainActor [weak owner] in
+        return MainActorOwnedWork { [weak owner] in
           guard let owner else { return }
           for await _ in backend.routeChanges() {
             await owner.refreshInputsFromPlatform()

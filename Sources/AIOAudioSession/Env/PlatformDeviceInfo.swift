@@ -2,6 +2,7 @@
 
 import AVFAudio
 import Foundation
+import Tools
 
 /// Platform-agnostic stereo orientation.
 enum StereoOrientation: Sendable {
@@ -63,22 +64,26 @@ protocol PlatformDeviceInfo: Sendable {
 
     nonisolated func orientationChanges() -> AsyncStream<StereoOrientation> {
       AsyncStream { continuation in
-        let task = Task { @MainActor in
+        let runner = AsyncTaskRunner()
+        runner.run {
           let notifications = NotificationCenter.default.notifications(
             named: UIDevice.orientationDidChangeNotification,
           )
 
-          for await notification in notifications {
-            let device = (notification.object as? UIDevice) ?? UIDevice.current
-            if let mapped = Self.mapOrientation(device.orientation) {
-              await self.update(orientation: mapped)
-              continuation.yield(mapped)
-            }
+          for await _ in notifications {
+            if Task.isCancelled { return }
+            guard
+              let mapped = await MainActor.run(
+                body: { Self.mapOrientation(UIDevice.current.orientation) },
+              )
+            else { continue }
+            await self.update(orientation: mapped)
+            continuation.yield(mapped)
           }
         }
 
         continuation.onTermination = { _ in
-          task.cancel()
+          runner.cancelAllNow()
         }
       }
     }
