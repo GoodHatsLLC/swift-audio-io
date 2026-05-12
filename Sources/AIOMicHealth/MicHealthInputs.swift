@@ -1,21 +1,22 @@
 // © GoodHatsLLC
 
 public import AIOAudioSession
+public import Tools
 
 /// Dependency container injected into `MicHealthMonitor.init`.
 ///
-/// All three streams are consumer-owned (the monitor drives a single
-/// `for await` loop on each). The `clock` parameter gives tests a hook to
-/// run the state machine synchronously against a controllable `TestClock`.
+/// All three asynchronous inputs are consumer-owned (the monitor drives a
+/// single `for await` loop on each). The `clock` parameter gives tests a hook
+/// to run the state machine synchronously against a controllable `TestClock`.
 public struct MicHealthInputs: Sendable {
   /// Linear-amplitude RMS samples in `[0, 1]`. The monitor converts to
   /// dBFS at the comparison site.
-  public let rms: AsyncStream<Float>
+  public let rms: AsyncSignalStream<Float>
 
   /// Audio-session route change events. On iOS these are produced from
   /// `AVAudioSession` notifications; on macOS the type is a degenerate
   /// value and the monitor will simply ignore it.
-  public let routeEvents: AsyncStream<AudioRouteChangeEvent>
+  public let routeEvents: AsyncSignalStream<AudioRouteChangeEvent>
 
   /// Clock used for both "now" readings and interval bookkeeping.
   public let clock: any Clock<Duration>
@@ -24,8 +25,8 @@ public struct MicHealthInputs: Sendable {
   public let thresholds: MicHealthThresholds
 
   public init(
-    rms: AsyncStream<Float>,
-    routeEvents: AsyncStream<AudioRouteChangeEvent>,
+    rms: AsyncSignalStream<Float>,
+    routeEvents: AsyncSignalStream<AudioRouteChangeEvent>,
     clock: any Clock<Duration>,
     thresholds: MicHealthThresholds,
   ) {
