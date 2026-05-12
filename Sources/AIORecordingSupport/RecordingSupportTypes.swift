@@ -376,7 +376,7 @@
     package var lastRecordingConfiguration: RecordingConfiguration?
     package var pendingRecordingRestart: RecordingConfiguration?
     package var receiverSession: ReceiverSession?
-    package var reconciliationTask: Task<Void, Never>?
+    package var reconciliationTask: MainActorOwnedWork?
     package var writerSession: WriterSession?
     package var drainingWriterSessions: [WriterSession] = []
     package var lastWriteFailure: WriteFailure?
