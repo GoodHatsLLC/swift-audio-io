@@ -97,14 +97,6 @@ private func makeMonitor(
   )
 }
 
-/// Yields several times to give the monitor actor a chance to drain its
-/// input stream and apply any resulting state transitions.
-private func drain() async {
-  for _ in 0..<6 {
-    await Task.yield()
-  }
-}
-
 /// Waits briefly for a task to complete without hanging the test if the
 /// expected shutdown behavior regresses.
 private func waitForCompletion(
@@ -142,14 +134,12 @@ private func feedRMS(
 ) async {
   let stepDuration = duration / steps
   for _ in 0..<steps {
-    harness.rmsContinuation.yield(linear)
+    await harness.monitor.recordRMSForTesting(linear)
     harness.clock.advance(by: stepDuration)
-    await drain()
   }
   // Final frame at the end of the window so the monitor sees a post-advance
   // sample and re-evaluates at the new clock reading.
-  harness.rmsContinuation.yield(linear)
-  await drain()
+  await harness.monitor.recordRMSForTesting(linear)
 }
 
 // MARK: - Tests
@@ -365,7 +355,6 @@ struct MicHealthMonitorTests {
     let harness = makeMonitor()
 
     harness.rmsContinuation.finish()
-    await drain()
 
     #expect(await waitForCompletion(harness.runTask))
 
@@ -403,8 +392,7 @@ struct MicHealthMonitorTests {
       await feedRMS(harness, linear: healthy, for: thresholds.healthyMinDuration * 3 / 2)
       #expect(harness.monitor.currentState == .healthy)
 
-      harness.routeContinuation.yield(makeRouteEvent(reason: .oldDeviceUnavailable))
-      await drain()
+      await harness.monitor.recordRouteForTesting(makeRouteEvent(reason: .oldDeviceUnavailable))
 
       if case .degraded(.routeLost) = harness.monitor.currentState {
         // expected — route loss is instantaneous, no threshold delay.
@@ -426,8 +414,7 @@ struct MicHealthMonitorTests {
       let harness = makeMonitor()
 
       harness.clock.advance(by: .milliseconds(25))
-      harness.routeContinuation.yield(makeRouteEvent(reason: .oldDeviceUnavailable))
-      await drain()
+      await harness.monitor.recordRouteForTesting(makeRouteEvent(reason: .oldDeviceUnavailable))
 
       #expect(harness.monitor.currentState == .degraded(.routeLost(deviceName: nil)))
 
@@ -450,10 +437,8 @@ struct MicHealthMonitorTests {
       let thresholds = MicHealthThresholds.testFast
       await feedRMS(harness, linear: healthy, for: thresholds.healthyMinDuration * 3 / 2)
 
-      harness.routeContinuation.yield(makeRouteEvent(reason: .oldDeviceUnavailable))
-      await drain()
-      harness.routeContinuation.yield(makeRouteEvent(reason: .newDeviceAvailable))
-      await drain()
+      await harness.monitor.recordRouteForTesting(makeRouteEvent(reason: .oldDeviceUnavailable))
+      await harness.monitor.recordRouteForTesting(makeRouteEvent(reason: .newDeviceAvailable))
 
       // No clock advance with healthy signal: still degraded.
       if case .degraded(.routeLost) = harness.monitor.currentState {

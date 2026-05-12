@@ -244,7 +244,7 @@
     }
 
     deinit {
-      stopVisualization()
+      shutdownProcessing(publishActiveState: false)
     }
 
     private func makeProcessor() -> VisualizationProcessor {
@@ -361,8 +361,7 @@
 
     /// Stops the visualization processing.
     public func stopVisualization() {
-      wantsActiveAtomic.store(false, ordering: .relaxed)
-      updateProcessingState()
+      shutdownProcessing(publishActiveState: true)
 
       // Clear data
       timeDomain = .empty
@@ -370,9 +369,17 @@
       beat = .empty
       spectrumPeakHold.removeAll()
       latestBufferTiming = nil
-      processor.reset()
 
       log.info("Audio visualization stopped")
+    }
+
+    private func shutdownProcessing(publishActiveState: Bool) {
+      wantsActiveAtomic.store(false, ordering: .relaxed)
+      guard let processor else { return }
+      if processor.setActive(false), publishActiveState {
+        isActive = false
+      }
+      processor.reset()
     }
 
     private func updateProcessingState() {
