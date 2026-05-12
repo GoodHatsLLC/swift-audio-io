@@ -17,7 +17,7 @@
         owner.errorManager.report {
           try owner.env.request(sampleRate: newValue)
           owner._selectedSampleRate = newValue
-          Task { @MainActor [weak owner] in
+          owner.callbackTasks.run { [weak owner] in
             guard let owner else { return }
             let actual = owner.env.sampleRate
             if actual == newValue {
