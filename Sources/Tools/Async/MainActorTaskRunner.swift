@@ -11,7 +11,7 @@ public import Foundation
 public final class MainActorTaskRunner {
   private var tasks: [UUID: MainActorOwnedWork] = [:]
 
-  public init() {}
+  public nonisolated init() {}
 
   deinit {
     for task in tasks.values {
