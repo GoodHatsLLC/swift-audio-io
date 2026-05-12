@@ -40,7 +40,7 @@ protocol PlatformDeviceInfo: Sendable {
   var currentOrientation: StereoOrientation { get async }
 
   /// Async stream of orientation changes
-  func orientationChanges() -> AsyncStream<StereoOrientation>
+  func orientationChanges() -> AsyncSignalStream<StereoOrientation>
 }
 
 // MARK: - iOS Implementation
@@ -62,30 +62,28 @@ protocol PlatformDeviceInfo: Sendable {
       _currentOrientation
     }
 
-    nonisolated func orientationChanges() -> AsyncStream<StereoOrientation> {
-      AsyncStream { continuation in
-        let runner = AsyncTaskRunner()
-        runner.run {
-          let notifications = NotificationCenter.default.notifications(
-            named: UIDevice.orientationDidChangeNotification,
-          )
+    nonisolated func orientationChanges() -> AsyncSignalStream<StereoOrientation> {
+      let runner = AsyncTaskRunner()
+      let signal = AsyncSignal<StereoOrientation>(terminationHandler: { _ in
+        runner.cancelAllNow()
+      })
+      runner.run {
+        let notifications = NotificationCenter.default.notifications(
+          named: UIDevice.orientationDidChangeNotification,
+        )
 
-          for await _ in notifications {
-            if Task.isCancelled { return }
-            guard
-              let mapped = await MainActor.run(
-                body: { Self.mapOrientation(UIDevice.current.orientation) },
-              )
-            else { continue }
-            await self.update(orientation: mapped)
-            continuation.yield(mapped)
-          }
-        }
-
-        continuation.onTermination = { _ in
-          runner.cancelAllNow()
+        for await _ in notifications {
+          if Task.isCancelled { return }
+          guard
+            let mapped = await MainActor.run(
+              body: { Self.mapOrientation(UIDevice.current.orientation) },
+            )
+          else { continue }
+          await self.update(orientation: mapped)
+          signal.yield(mapped)
         }
       }
+      return signal.events()
     }
 
     private func update(orientation: StereoOrientation) {
@@ -121,11 +119,11 @@ protocol PlatformDeviceInfo: Sendable {
       .portrait
     }
 
-    nonisolated func orientationChanges() -> AsyncStream<StereoOrientation> {
+    nonisolated func orientationChanges() -> AsyncSignalStream<StereoOrientation> {
       // Return empty stream - macOS doesn't change orientation
-      AsyncStream { continuation in
-        continuation.finish()
-      }
+      let signal = AsyncSignal<StereoOrientation>()
+      signal.finish()
+      return signal.events()
     }
   }
 #endif
