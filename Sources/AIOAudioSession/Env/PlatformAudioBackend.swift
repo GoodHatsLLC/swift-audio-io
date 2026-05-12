@@ -18,7 +18,7 @@ enum PlatformAudioRouteEvent: Hashable {
 /// Internal platform audio backend contract used to decouple call sites from platform-only APIs.
 protocol PlatformAudioBackend: Sendable {
   var platformName: String { get }
-  func routeChanges() -> AsyncStream<PlatformAudioRouteEvent>
+  func routeChanges() -> AsyncSignalStream<PlatformAudioRouteEvent>
   func availableInputs() async -> [PlatformAudioInputDescriptor]
 }
 
@@ -40,38 +40,40 @@ enum PlatformAudioBackendFactory {
   struct IOSPlatformAudioBackend: PlatformAudioBackend {
     let platformName: String = "iOS"
 
-    func routeChanges() -> AsyncStream<PlatformAudioRouteEvent> {
-      AsyncStream { continuation in
-        let routeRunner = AsyncTaskRunner()
-        routeRunner.run {
-          let routeNotifications = NotificationCenter.default.notifications(
-            named: AVAudioSession.routeChangeNotification,
-          )
-          for await _ in routeNotifications {
-            continuation.yield(.changed)
-          }
+    func routeChanges() -> AsyncSignalStream<PlatformAudioRouteEvent> {
+      let routeRunner = AsyncTaskRunner()
+      let availableInputsRunner: AsyncTaskRunner? =
+        if #available(iOS 26.0, *) {
+          AsyncTaskRunner()
+        } else {
+          nil
         }
-        let availableInputsRunner: AsyncTaskRunner? =
-          if #available(iOS 26.0, *) {
-            AsyncTaskRunner()
-          } else {
-            nil
-          }
-        if let availableInputsRunner {
-          availableInputsRunner.run {
-            let inputNotifications = NotificationCenter.default.notifications(
-              named: AVAudioSession.availableInputsChangeNotification,
-            )
-            for await _ in inputNotifications {
-              continuation.yield(.changed)
-            }
-          }
-        }
-        continuation.onTermination = { _ in
+      let signal = AsyncSignal<PlatformAudioRouteEvent>(
+        bufferingPolicy: .unbounded,
+        terminationHandler: { _ in
           routeRunner.cancelAllNow()
           availableInputsRunner?.cancelAllNow()
+        },
+      )
+      routeRunner.run {
+        let routeNotifications = NotificationCenter.default.notifications(
+          named: AVAudioSession.routeChangeNotification,
+        )
+        for await _ in routeNotifications {
+          signal.yield(.changed)
         }
       }
+      if let availableInputsRunner {
+        availableInputsRunner.run {
+          let inputNotifications = NotificationCenter.default.notifications(
+            named: AVAudioSession.availableInputsChangeNotification,
+          )
+          for await _ in inputNotifications {
+            signal.yield(.changed)
+          }
+        }
+      }
+      return signal.events()
     }
 
     func availableInputs() async -> [PlatformAudioInputDescriptor] {
@@ -97,26 +99,28 @@ enum PlatformAudioBackendFactory {
   struct MacOSPlatformAudioBackend: PlatformAudioBackend {
     let platformName: String = "macOS"
 
-    func routeChanges() -> AsyncStream<PlatformAudioRouteEvent> {
-      AsyncStream { continuation in
-        let runner = AsyncTaskRunner()
-        runner.run {
-          let sleeper = TaskSleeper()
-          var previousSignature = routeSignature()
-          while !Task.isCancelled {
-            try? await sleeper.sleep(for: .milliseconds(750))
-            let nextSignature = routeSignature()
-            if nextSignature != previousSignature {
-              previousSignature = nextSignature
-              continuation.yield(.changed)
-            }
-          }
-          continuation.finish()
-        }
-        continuation.onTermination = { _ in
+    func routeChanges() -> AsyncSignalStream<PlatformAudioRouteEvent> {
+      let runner = AsyncTaskRunner()
+      let signal = AsyncSignal<PlatformAudioRouteEvent>(
+        bufferingPolicy: .unbounded,
+        terminationHandler: { _ in
           runner.cancelAllNow()
+        },
+      )
+      runner.run {
+        let sleeper = TaskSleeper()
+        var previousSignature = routeSignature()
+        while !Task.isCancelled {
+          try? await sleeper.sleep(for: .milliseconds(750))
+          let nextSignature = routeSignature()
+          if nextSignature != previousSignature {
+            previousSignature = nextSignature
+            signal.yield(.changed)
+          }
         }
+        signal.finish()
       }
+      return signal.events()
     }
 
     func availableInputs() async -> [PlatformAudioInputDescriptor] {
@@ -297,10 +301,10 @@ enum PlatformAudioBackendFactory {
   struct UnsupportedPlatformAudioBackend: PlatformAudioBackend {
     let platformName: String = "unsupported"
 
-    func routeChanges() -> AsyncStream<PlatformAudioRouteEvent> {
-      AsyncStream { continuation in
-        continuation.finish()
-      }
+    func routeChanges() -> AsyncSignalStream<PlatformAudioRouteEvent> {
+      let signal = AsyncSignal<PlatformAudioRouteEvent>()
+      signal.finish()
+      return signal.events()
     }
 
     func availableInputs() async -> [PlatformAudioInputDescriptor] {
