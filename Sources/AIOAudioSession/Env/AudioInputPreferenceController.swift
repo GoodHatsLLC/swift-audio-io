@@ -211,24 +211,12 @@
             let session = owner.session
             let currentOrientation = owner.orientation
 
-            try await Task.detached {
-              var lastError: (any Error)?
-              for stereoSource in candidates {
-                do {
-                  try stereoSource.set(preferredPolarPattern: .stereo)
-                  try input.set(preferredSource: stereoSource)
-                  if currentOrientation != .none {
-                    try session.setPreferredInputOrientation(currentOrientation)
-                  }
-                  lastError = nil
-                  break
-                } catch {
-                  lastError = error
-                  continue
-                }
-              }
-              if let lastError { throw lastError }
-            }.value
+            try await Self.executeStereoPreference(
+              candidates: candidates,
+              input: input,
+              session: session,
+              currentOrientation: currentOrientation,
+            )
           }
 
           owner.state = AudioEnvironmentState.mirrored(
@@ -254,6 +242,39 @@
           try await applyMono(persistPreference: false)
           throw mapped
         }
+      }
+
+      private nonisolated static func executeStereoPreference(
+        candidates: [AudioSource],
+        input: AudioInput,
+        session: AVAudioSession,
+        currentOrientation: AVAudioSession.StereoOrientation,
+      ) async throws {
+        let work = DetachedOwnedWork<Result<Void, any Error>> {
+          () async -> Result<
+            Void, any Error
+          > in
+          var lastError: (any Error)?
+          for stereoSource in candidates {
+            do {
+              try stereoSource.set(preferredPolarPattern: .stereo)
+              try input.set(preferredSource: stereoSource)
+              if currentOrientation != .none {
+                try session.setPreferredInputOrientation(currentOrientation)
+              }
+              lastError = nil
+              break
+            } catch {
+              lastError = error
+              continue
+            }
+          }
+          if let lastError {
+            return .failure(lastError)
+          }
+          return .success(())
+        }
+        try await work.value.get()
       }
 
       @MainActor

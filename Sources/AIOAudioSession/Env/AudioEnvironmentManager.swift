@@ -169,6 +169,7 @@
     public var sessionConfiguration: AudioSessionConfiguration = .recordingConfiguration
     let errorManager: any ErrorManaging
     let preferenceStore: AudioEnvironmentPreferenceStore
+    @ObservationIgnored var callbackTasks = MainActorTaskRunner()
     typealias PersistedInputPreferences = AudioEnvironmentPreferenceStore.InputPreferences
     private var lifecycleRuntime: AudioEnvironmentLifecycleRuntime { .init(owner: self) }
     var sessionBootstrap: AudioSessionBootstrap { .init(owner: self) }
@@ -213,7 +214,10 @@
       _ plan: InputConfigurationPlan,
       session: AVAudioSession,
     ) async throws(ManagerError) {
-      let t = Task.detached {
+      let work = DetachedOwnedWork<Result<Void, ManagerError>> {
+        () async -> Result<
+          Void, ManagerError
+        > in
         if let count = plan.channelCount {
           do {
             try session.setPreferredInputNumberOfChannels(count)
@@ -231,6 +235,8 @@
             try source.set(preferredPolarPattern: pattern)
           } catch let err as AudioSource.PreferenceError {
             return Result<Void, ManagerError>.failure(.audioSource(err))
+          } catch {
+            return Result<Void, ManagerError>.failure(.unexpected(ErrorContext(error)))
           }
         }
 
@@ -239,6 +245,8 @@
             try input.set(preferredSource: source)
           } catch let error as AudioInput.PreferenceError {
             return Result<Void, ManagerError>.failure(.audioInput(error))
+          } catch {
+            return Result<Void, ManagerError>.failure(.unexpected(ErrorContext(error)))
           }
         }
 
@@ -253,14 +261,11 @@
         }
         return .success(())
       }
-      do {
-        let result = try await t.value
-        switch result {
-        case .success: return
-        case .failure(let managerError): throw managerError
-        }
-      } catch {
-        throw ManagerError.unexpected(ErrorContext(error))
+      switch await work.value {
+      case .success:
+        return
+      case .failure(let managerError):
+        throw managerError
       }
     }
 

@@ -30,7 +30,7 @@
           "🔊 Audio session manually set to \(active ? "active" : "inactive", privacy: .public)",
         )
         if active {
-          Task { @MainActor [weak owner] in
+          owner.callbackTasks.run { [weak owner] in
             await owner?.restorePreferredInputAndConfigurationIfPossible(
               reason: "audio session activated",
             )
