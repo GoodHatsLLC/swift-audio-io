@@ -115,9 +115,7 @@
       case .began:
         guard isRecording else { return }
         log.info("Audio interruption began, stopping recording")
-        Task { @MainActor in
-          await handleUnrecoverableInterruption(reason: "Audio session interrupted")
-        }
+        await handleUnrecoverableInterruption(reason: "Audio session interrupted")
       case .ended:
         log.info("Audio interruption ended")
       @unknown default:

@@ -110,6 +110,7 @@
   }
 
   package actor WriterDrainSignal {
+    private nonisolated let cancellationRunner = AsyncTaskRunner()
     private var isSignaled = false
     private var continuations: [UUID: CheckedContinuation<Void, Never>] = [:]
 
@@ -131,7 +132,9 @@
           }
         },
         onCancel: {
-          Task { await self.cancelWaiter(waiterID) }
+          cancellationRunner.run {
+            await self.cancelWaiter(waiterID)
+          }
         },
       )
     }
