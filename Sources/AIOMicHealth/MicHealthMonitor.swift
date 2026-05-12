@@ -98,7 +98,7 @@ extension AudioRouteChangeEvent {
 
 /// A deterministic, injection-testable mic-health state machine.
 ///
-/// The monitor consumes two `AsyncStream`s (RMS + route events) concurrently
+/// The monitor consumes two asynchronous inputs (RMS + route events) concurrently
 /// inside `run()`. State transitions update a `nonisolated` `Mut`-wrapped
 /// `MicHealthState` so the recording banner can read the current state
 /// synchronously from MainActor without crossing an `await`. The event log
@@ -110,8 +110,8 @@ extension AudioRouteChangeEvent {
 public actor MicHealthMonitor {
   // Constructor-injected.
   private let thresholds: MicHealthThresholds
-  private let rms: AsyncStream<Float>
-  private let routeEvents: AsyncStream<AudioRouteChangeEvent>
+  private let rms: AsyncSignalStream<Float>
+  private let routeEvents: AsyncSignalStream<AudioRouteChangeEvent>
   private let clockAdapter: MicHealthClockAdapter
   /// Absolute seconds at monitor construction time. All event timestamps are
   /// relative to this anchor so route-loss events that arrive before the first
