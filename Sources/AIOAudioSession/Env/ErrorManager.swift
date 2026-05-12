@@ -12,6 +12,7 @@ private let log = SystemLog.make()
 @Observable
 public final class ErrorManager: Sendable {
   @ObservationIgnored private let errorEventsSubject = Subject<ErrorEvent>()
+  @ObservationIgnored private let eventTasks = AsyncTaskRunner()
 
   public nonisolated init() {}
 
@@ -92,16 +93,19 @@ public final class ErrorManager: Sendable {
       \("[\(source.file):\(source.function):\(source.line)]", privacy: .public)
       """,
     )
-    Task { @MainActor in
-      let event = ErrorEvent(
-        error: error,
-        visibility: visibility,
-        userMessage: userMessage,
-        context: context,
-        source: source,
-      )
-      errors.append(event)
-      errorEventsSubject.send(event)
+    let event = ErrorEvent(
+      error: error,
+      visibility: visibility,
+      userMessage: userMessage,
+      context: context,
+      source: source,
+    )
+    eventTasks.run { [weak self, event] in
+      await MainActor.run {
+        guard let self else { return }
+        self.errors.append(event)
+        self.errorEventsSubject.send(event)
+      }
     }
   }
 
@@ -122,14 +126,12 @@ public final class ErrorManager: Sendable {
           )
       },
       { err, _ in
-        Task { @MainActor in
-          self.enqueue(
-            err,
-            visibility: visibility,
-            userMessage: userMessage,
-            context: context,
-          )
-        }
+        self.enqueue(
+          err,
+          visibility: visibility,
+          userMessage: userMessage,
+          context: context,
+        )
       },
     )
   }

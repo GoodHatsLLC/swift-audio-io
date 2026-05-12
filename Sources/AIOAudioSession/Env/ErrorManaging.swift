@@ -1,3 +1,5 @@
+import Synchronization
+
 /// A narrow, injectable interface for error reporting.
 ///
 /// - View layer may access a concrete `ErrorManager` via SwiftUI environment.
@@ -45,15 +47,13 @@ extension ErrorManaging {
     context: String? = nil,
   ) -> Reporter<any Error> {
     .init { err, sl in
-      Task { @MainActor in
-        self.enqueue(
-          err,
-          visibility: visibility,
-          userMessage: userMessage,
-          context: context,
-          source: sl,
-        )
-      }
+      self.enqueue(
+        err,
+        visibility: visibility,
+        userMessage: userMessage,
+        context: context,
+        source: sl,
+      )
     }
   }
 
@@ -127,10 +127,14 @@ extension ErrorManager: ErrorManaging {}
   ///
   /// Stores enqueued errors for later inspection without any UI coupling.
   public final class MockErrorManager: Sendable, ErrorManaging {
+    private let eventsBox: Mutex<[ErrorManager.ErrorEvent]> = .init([])
+
     public nonisolated init() {}
 
     @MainActor
-    public private(set) var events: [ErrorManager.ErrorEvent] = []
+    public var events: [ErrorManager.ErrorEvent] {
+      eventsBox.withLock { $0 }
+    }
 
     public nonisolated func enqueue(
       _ error: any Error,
@@ -139,30 +143,32 @@ extension ErrorManager: ErrorManaging {}
       context: String?,
       source: SourceLocation,
     ) {
-      Task { @MainActor in
-        events.append(
+      eventsBox.withLock {
+        $0.append(
           ErrorManager.ErrorEvent(
             error: error,
             visibility: visibility,
             userMessage: userMessage,
             context: context,
             source: source,
-          ),
+          )
         )
       }
     }
 
     @MainActor
     public func popEvent() -> ErrorManager.ErrorEvent? {
-      if !events.isEmpty {
-        return events.removeFirst()
+      eventsBox.withLock {
+        if !$0.isEmpty {
+          return $0.removeFirst()
+        }
+        return nil
       }
-      return nil
     }
 
     @MainActor
     public func reset() {
-      events.removeAll()
+      eventsBox.withLock { $0.removeAll() }
     }
   }
 #endif
