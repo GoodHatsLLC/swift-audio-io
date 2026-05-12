@@ -37,7 +37,7 @@
           return
         }
         owner.lastRecordingConfiguration = configuration
-        owner.reconciliationTask = Task { @MainActor [weak owner] in
+        owner.reconciliationTask = MainActorOwnedWork { [weak owner] in
           guard let owner else { return }
           await RecordingRuntime(owner: owner).reconcileRecordingState(
             desiredState: true,
@@ -45,7 +45,7 @@
           )
         }
       } else if owner.isRecording {
-        Task { @MainActor [weak owner] in
+        owner.reconciliationTask = MainActorOwnedWork { [weak owner] in
           guard let owner else { return }
           _ = try? await RecordingRuntime(owner: owner).stopRecording()
         }

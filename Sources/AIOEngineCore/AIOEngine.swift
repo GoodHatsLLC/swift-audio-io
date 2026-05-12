@@ -510,10 +510,10 @@
       set { recordingRuntimeContext.receiverSession = newValue }
     }
 
-    @MainActor package var reconciliationTask: Task<Void, Never>? {
+    @MainActor package var reconciliationTask: MainActorOwnedWork? {
       get { recordingRuntimeContext.reconciliationTask }
       set {
-        recordingRuntimeContext.reconciliationTask?.cancel()
+        recordingRuntimeContext.reconciliationTask?.cancelNow()
         recordingRuntimeContext.reconciliationTask = newValue
       }
     }
