@@ -18,6 +18,20 @@ public struct DetachedOwnedWork<Success: Sendable>: Sendable {
     }
   }
 
+  /// Starts work that inherits the caller's actor isolation instead of
+  /// detaching. Use when the operation captures actor-confined framework values
+  /// that are not compiler-verifiable as `Sendable`.
+  public init(
+    priority: TaskPriority? = nil,
+    inheriting isolation: isolated (any Actor)? = #isolation,
+    operation: @escaping () async -> Success
+  ) {
+    task = Task(priority: priority) {
+      _ = isolation
+      return await operation()
+    }
+  }
+
   public var isCancelled: Bool {
     task.isCancelled
   }
@@ -37,6 +51,10 @@ public struct DetachedOwnedWork<Success: Sendable>: Sendable {
     _ = await task.value
   }
 }
+
+/// Actor-confined spelling for `DetachedOwnedWork`'s actor-inheriting
+/// initializer.
+public typealias ActorOwnedWork<Success: Sendable> = DetachedOwnedWork<Success>
 
 /// A main-actor task handle with both drained and best-effort cancellation APIs.
 ///
