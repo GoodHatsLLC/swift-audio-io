@@ -170,23 +170,43 @@ public actor MicHealthMonitor {
     publishedState.withLock { $0 }
   }
 
+  internal func recordRMSForTesting(_ linearRMS: Float) {
+    handleRMS(linearRMS)
+  }
+
+  internal func recordRouteForTesting(_ event: AudioRouteChangeEvent) {
+    handleRoute(event)
+  }
+
   /// Consumes the injected streams until they end or `run()`'s Task is
-  /// cancelled. Spawns one child per stream in a structured task group
-  /// and exits as soon as either stream ends so the monitor does not hang
-  /// waiting on a dead source.
+  /// cancelled. Spawns one child per stream and exits as soon as either
+  /// stream ends so the monitor does not hang waiting on a dead source.
   public func run() async {
-    await withTaskGroup(of: Void.self) { group in
-      group.addTask { [weak self] in
-        guard let self else { return }
-        await self.consumeRMS()
-      }
-      group.addTask { [weak self] in
-        guard let self else { return }
-        await self.consumeRoute()
-      }
-      _ = await group.next()
-      group.cancelAll()
+    let (doneStream, doneContinuation) = AsyncStream<Void>.makeStream()
+    let rmsTask = Task {
+      await self.consumeRMS()
+      doneContinuation.yield(())
     }
+    let routeTask = Task {
+      await self.consumeRoute()
+      doneContinuation.yield(())
+    }
+
+    await withTaskCancellationHandler {
+      for await _ in doneStream {
+        break
+      }
+    } onCancel: {
+      rmsTask.cancel()
+      routeTask.cancel()
+      doneContinuation.finish()
+    }
+
+    rmsTask.cancel()
+    routeTask.cancel()
+    _ = await rmsTask.result
+    _ = await routeTask.result
+    doneContinuation.finish()
   }
 
   /// Closes any still-open interval at the current clock reading and

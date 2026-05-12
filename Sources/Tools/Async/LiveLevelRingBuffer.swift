@@ -135,7 +135,6 @@ public import Foundation
       throw Error.mmapFailed(url, errno: err)
     }
     let raw: UnsafeMutableRawPointer = unsafe mapped
-    unsafe self.rawPointer = raw
 
     // Header layout: 4 × UInt32 then UInt64 atomic write index, then padding,
     // then the data slab starts at `headerSize`.
@@ -144,8 +143,7 @@ public import Foundation
       .assumingMemoryBound(to: UInt64.AtomicRepresentation.self)
     let dataPtr = unsafe raw.advanced(by: Self.headerSize)
       .assumingMemoryBound(to: Float.self)
-    unsafe self.writeIndexAtomic = UnsafeAtomic<UInt64>(at: writeIndexPtr)
-    unsafe self.dataPointer = dataPtr
+    let writeIndexAtomic = unsafe UnsafeAtomic<UInt64>(at: writeIndexPtr)
 
     switch mode {
     case .writer:
@@ -169,6 +167,10 @@ public import Foundation
           magic: magic, version: version, capacity: storedCapacity)
       }
     }
+
+    unsafe self.rawPointer = raw
+    self.writeIndexAtomic = writeIndexAtomic
+    unsafe self.dataPointer = dataPtr
   }
 
   deinit {
