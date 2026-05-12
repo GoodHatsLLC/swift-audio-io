@@ -11,11 +11,15 @@ public final class AsyncSignal<Element: Sendable>: Sendable {
   private let continuation: AsyncSignalContinuation<Element>
 
   public init(
-    bufferingPolicy: AsyncSignalContinuation<Element>.BufferingPolicy = .bufferingNewest(1)
+    bufferingPolicy: AsyncSignalContinuation<Element>.BufferingPolicy = .bufferingNewest(1),
+    terminationHandler: (@Sendable (AsyncSignalContinuation<Element>.Termination) -> Void)? = nil,
   ) {
     let signal = AsyncSignalStream<Element>.makeStream(bufferingPolicy: bufferingPolicy)
     stream = signal.stream
     continuation = signal.continuation
+    if let terminationHandler {
+      continuation.onTermination = terminationHandler
+    }
   }
 
   public func events() -> AsyncSignalStream<Element> {
