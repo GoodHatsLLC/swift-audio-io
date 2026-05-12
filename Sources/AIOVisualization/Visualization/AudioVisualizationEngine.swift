@@ -230,6 +230,7 @@
     private let configuration: Configuration
 
     private let hub: VisualizationHub
+    private let callbackTasks = AsyncTaskRunner()
     @ObservationIgnored private var processor: VisualizationProcessor!
 
     // MARK: - Initialization
@@ -244,6 +245,7 @@
     }
 
     deinit {
+      callbackTasks.cancelAllNow()
       shutdownProcessing(publishActiveState: false)
     }
 
@@ -336,11 +338,19 @@
       request: VisualizationRequest,
       sink: any VisualizationSink,
     ) -> VisualizationSubscription {
-      subscribe(request: request) { [weak sink] event in
+      let eventTasks = AsyncTaskRunner()
+      let subscription = subscribe(request: request) { [eventTasks, weak sink] event in
         guard let sink else { return }
-        Task { @MainActor in
-          sink.receive(event)
+        eventTasks.run { [weak sink] in
+          await MainActor.run {
+            sink?.receive(event)
+          }
         }
+      }
+
+      return VisualizationSubscription {
+        subscription.cancel()
+        eventTasks.cancelAllNow()
       }
     }
 
@@ -432,8 +442,10 @@
 
     public nonisolated func endBufferTask() {
       wantsActiveAtomic.store(false, ordering: .relaxed)
-      Task { @MainActor [weak self] in
-        self?.stopVisualization()
+      callbackTasks.run { [weak self] in
+        await MainActor.run {
+          self?.stopVisualization()
+        }
       }
     }
   }
