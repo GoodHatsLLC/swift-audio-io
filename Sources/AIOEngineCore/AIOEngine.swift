@@ -537,6 +537,7 @@
       get { playbackRuntimeContext.lastPlaybackStateSignature }
       set { playbackRuntimeContext.lastPlaybackStateSignature = newValue }
     }
+
     /// A Boolean value that indicates whether the engine is currently playing back audio.
     @MainActor public var isPlayback: Bool {
       playback != nil
@@ -575,23 +576,24 @@
         )?
     #endif
 
-    @MainActor package var playbackTask: Task<Void, Never>? {
+    @MainActor package var playbackTask: MainActorOwnedWork? {
       get { playbackRuntimeContext.playbackTask }
       set {
-        playbackRuntimeContext.playbackTask?.cancel()
+        playbackRuntimeContext.playbackTask?.cancelNow()
         playbackRuntimeContext.playbackTask = newValue
       }
     }
 
-    @MainActor package var scrubTask: Task<Void, Never>? {
+    @MainActor package var scrubTask: MainActorOwnedWork? {
       get { playbackRuntimeContext.scrubTask }
       set {
-        playbackRuntimeContext.scrubTask?.cancel()
+        playbackRuntimeContext.scrubTask?.cancelNow()
         playbackRuntimeContext.scrubTask = newValue
       }
     }
 
     package let bufferReceivers: Synchronized<[any BufferReceiver<Float>]> = .init([])
+    package let playbackCallbackTasks = AsyncTaskRunner()
 
     package let clock = ContinuousClock()
 
