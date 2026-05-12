@@ -15,8 +15,7 @@ extension AsyncThrowingStream where Failure == any Error, Element: Sendable {
     let (stream, cont) = AsyncThrowingStream.makeStream()
 
     self = stream
-    let it = Task {
-      _ = isolation
+    let work = ActorOwnedWork(inheriting: isolation) {
       do {
         for try await element in source {
           cont.yield(element)
@@ -26,7 +25,7 @@ extension AsyncThrowingStream where Failure == any Error, Element: Sendable {
       }
     }
     cont.onTermination = { _ in
-      it.cancel()
+      work.cancelNow()
     }
   }
 }
@@ -39,14 +38,13 @@ extension AsyncStream {
     let (stream, cont) = AsyncStream.makeStream()
 
     self = stream
-    let it = Task {
-      _ = isolation
+    let work = ActorOwnedWork(inheriting: isolation) {
       for await element in source {
         cont.yield(element)
       }
     }
     cont.onTermination = { _ in
-      it.cancel()
+      work.cancelNow()
     }
   }
 
@@ -62,14 +60,13 @@ extension AsyncStream {
     let (stream, cont) = AsyncStream.makeStream()
 
     self = stream
-    let it = Task {
-      _ = isolation
+    let work = ActorOwnedWork(inheriting: isolation) {
       for await element in source {
         cont.yield(transform(element))
       }
     }
     cont.onTermination = { _ in
-      it.cancel()
+      work.cancelNow()
     }
   }
 
@@ -85,8 +82,7 @@ extension AsyncStream {
     let (stream, cont) = AsyncStream.makeStream()
 
     self = stream
-    let it = Task {
-      _ = isolation
+    let work = ActorOwnedWork(inheriting: isolation) {
       for await element in source {
         if let element = transform(element) {
           cont.yield(element)
@@ -94,7 +90,7 @@ extension AsyncStream {
       }
     }
     cont.onTermination = { _ in
-      it.cancel()
+      work.cancelNow()
     }
   }
 }
@@ -112,15 +108,14 @@ extension AsyncStream {
     let (stream, cont) = AsyncStream.makeStream()
 
     self = stream
-    let it = Task {
-      _ = isolation
+    let work = ActorOwnedWork(inheriting: isolation) {
       for await element in source {
         let mappedElement = transform(element)
         cont.yield(mappedElement)
       }
     }
     cont.onTermination = { _ in
-      it.cancel()
+      work.cancelNow()
     }
   }
 
@@ -136,8 +131,7 @@ extension AsyncStream {
     let (stream, cont) = AsyncStream.makeStream()
 
     self = stream
-    let it = Task {
-      _ = isolation
+    let work = ActorOwnedWork(inheriting: isolation) {
       for await element in source {
         if let mappedElement = transform(element) {
           cont.yield(mappedElement)
@@ -145,7 +139,7 @@ extension AsyncStream {
       }
     }
     cont.onTermination = { _ in
-      it.cancel()
+      work.cancelNow()
     }
   }
 }
