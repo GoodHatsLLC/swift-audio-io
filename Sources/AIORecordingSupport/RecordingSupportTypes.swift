@@ -144,6 +144,12 @@
       continuation.resume()
     }
 
+    package nonisolated func signalFromSynchronousContext() {
+      cancellationRunner.run {
+        await self.signal()
+      }
+    }
+
     package func signal() {
       guard !isSignaled else { return }
       isSignaled = true

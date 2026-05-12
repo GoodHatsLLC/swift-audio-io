@@ -34,19 +34,22 @@
       let control = WriterControl()
       let localMetrics = owner.metrics
       let (tapErrorPoll, onTapError) = owner.makeTapErrorHandlers()
-      let errorHandler: @Sendable (ErrorContext) -> Void = { [weak owner] error in
+      let callbackTasks = owner.recordingCallbackTasks
+      let errorHandler: @Sendable (ErrorContext) -> Void = { [weak owner, callbackTasks] error in
         guard let owner else { return }
-        Task { @MainActor [weak owner] in
-          guard let owner else { return }
-          owner.recordingEngineRuntime.recordWriteFailure(error, url: writer.fileURL)
-          owner.errorSubject.send(
-            AIOEngine.AIOError.audioFileFailed(
-              operation: .write,
-              url: writer.fileURL,
-              error: error,
-            ),
-          )
-          owner.onRecordingFailed?()
+        callbackTasks.run { [weak owner] in
+          await MainActor.run {
+            guard let owner else { return }
+            owner.recordingEngineRuntime.recordWriteFailure(error, url: writer.fileURL)
+            owner.errorSubject.send(
+              AIOEngine.AIOError.audioFileFailed(
+                operation: .write,
+                url: writer.fileURL,
+                error: error,
+              ),
+            )
+            owner.onRecordingFailed?()
+          }
         }
       }
       let session = WriterSession(
@@ -141,7 +144,7 @@
       session.control.targetSampleTime.store(targetSampleTime, ordering: .relaxed)
       let written = session.control.writtenSampleTime.load(ordering: .relaxed)
       if written >= targetSampleTime {
-        Task { await session.control.targetSatisfiedSignal.signal() }
+        session.control.targetSatisfiedSignal.signalFromSynchronousContext()
       }
       if logBuffers {
         let counts = owner.state.withLock { $0.audioBuffers?.map(\.availableToRead) ?? [] }
@@ -208,7 +211,7 @@
         logBuffers: session.id == owner.writerSession?.id,
       )
       owner.drainingWriterSessions.append(session)
-      Task { [weak owner] in
+      owner.recordingCallbackTasks.run { [weak owner] in
         guard let owner else { return }
         await owner.recordingEngineRuntime.drainWriterSession(session, notifyOnFailure: true)
         await MainActor.run { owner.drainingWriterSessions.removeAll { $0.id == session.id } }
@@ -799,7 +802,7 @@
           if stopRequested {
             let target = control.targetSampleTime.load(ordering: .relaxed)
             if writtenSampleTime >= target {
-              Task { await control.targetSatisfiedSignal.signal() }
+              control.targetSatisfiedSignal.signalFromSynchronousContext()
               break
             }
           }
@@ -825,7 +828,7 @@
             if stopRequested {
               let target = control.targetSampleTime.load(ordering: .relaxed)
               if writtenSampleTime >= target {
-                Task { await control.targetSatisfiedSignal.signal() }
+                control.targetSatisfiedSignal.signalFromSynchronousContext()
                 break
               }
             }
@@ -859,7 +862,7 @@
         }
       }
       log.info("🧹 writerLoop exiting for \(writer.fileURL.lastPathComponent, privacy: .public)")
-      Task { await control.drainSignal.signal() }
+      control.drainSignal.signalFromSynchronousContext()
     }
 
     static func receiverLoopSync(
