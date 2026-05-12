@@ -59,6 +59,7 @@
         file: file,
         newInstance: newInstance,
         play: play,
+        callbackTasks: playbackCallbackTasks,
       )
     }
 

@@ -152,6 +152,7 @@
         activeSegment: PlaybackSegment(startFrame: startFrame, frameCount: frameCount),
         onComplete: onComplete,
       )
+      let callbackTasks = owner.playbackCallbackTasks
 
       if owner.getPlayback() != nil {
         owner.playbackState[locked: \.playbackInstance] = nil
@@ -182,8 +183,8 @@
           guard let owner else { return }
           PlaybackRuntime(owner: owner).cleanupPlaybackInstance(playbackInstance)
           if let onComplete = playbackInstance.onComplete {
-            Task { @MainActor in
-              onComplete()
+            callbackTasks.run { [onComplete] in
+              await onComplete()
             }
           }
         }
@@ -203,7 +204,7 @@
 
     @MainActor
     func resetPlaybackTimer(to instance: PlaybackInstance) {
-      owner.playbackTask = Task { @MainActor [owner] in
+      owner.playbackTask = MainActorOwnedWork { [owner] in
         let interval = instance.pollingInterval
         for await _ in AsyncTimerSequence(interval: interval, clock: .suspending) {
           if Task.isCancelled { return }
@@ -225,6 +226,7 @@
       file: AVAudioFile,
       newInstance: PlaybackInstance,
       play: Bool,
+      callbackTasks: AsyncTaskRunner,
     ) async {
       if Task.isCancelled { return }
       await owner.withEngineControlQueue { [weak owner] in
@@ -241,8 +243,8 @@
             guard let owner else { return }
             PlaybackRuntime(owner: owner).cleanupPlaybackInstance(newInstance)
             if let onComplete = newInstance.onComplete {
-              Task { @MainActor in
-                onComplete()
+              callbackTasks.run { [onComplete] in
+                await onComplete()
               }
             }
           },
@@ -285,13 +287,14 @@
           onComplete: initialInstance.onComplete,
         )
         owner.playbackState[locked: \.playbackInstance] = newInstance
-        owner.scrubTask = Task(priority: .utility) { [weak owner] in
+        owner.scrubTask = MainActorOwnedWork(priority: .utility) { [weak owner] in
           guard let owner else { return }
           await PlaybackRuntime(owner: owner).scrub(
             framePosition: framePosition,
             file: file,
             newInstance: newInstance,
             play: playback.isPlaying,
+            callbackTasks: owner.playbackCallbackTasks,
           )
         }
 
@@ -365,7 +368,8 @@
     }
 
     nonisolated func cleanupPlaybackInstance(_ instance: PlaybackInstance) {
-      let finishedFile: AVAudioFile? = owner.playbackState.withLock { state in
+      let runtimeOwner = owner
+      let finishedFile: AVAudioFile? = runtimeOwner.playbackState.withLock { state in
         if let foundInstance = state.playbackInstance, foundInstance.id == instance.id {
           state.playbackInstance = nil
           return foundInstance.file
@@ -374,20 +378,23 @@
         }
       }
       if let finishedFile {
-        owner.engineControlQueue.async { [weak owner] in
-          guard let owner else { return }
-          guard owner.playbackState[locked: \.playbackInstance] == nil else { return }
-          unsafe owner.player.stop()
-          unsafe owner.engine.stop()
-          unsafe owner.engine.reset()
-          if unsafe !owner.engine.attachedNodes.contains(owner.player) {
-            unsafe owner.engine.attach(owner.player)
+        let callbackTasks = runtimeOwner.playbackCallbackTasks
+        runtimeOwner.engineControlQueue.async { [weak runtimeOwner] in
+          guard let runtimeOwner else { return }
+          guard runtimeOwner.playbackState[locked: \.playbackInstance] == nil else { return }
+          unsafe runtimeOwner.player.stop()
+          unsafe runtimeOwner.engine.stop()
+          unsafe runtimeOwner.engine.reset()
+          if unsafe !runtimeOwner.engine.attachedNodes.contains(runtimeOwner.player) {
+            unsafe runtimeOwner.engine.attach(runtimeOwner.player)
           }
         }
-        Task { @MainActor [owner] in
-          if owner.playbackState[locked: \.playbackInstance] == nil {
-            owner.setPlayback(nil)
-            owner.deactivateAudioSessionIfNeeded(reason: "playback finished")
+        callbackTasks.run { [weak runtimeOwner] in
+          await MainActor.run {
+            if runtimeOwner?.playbackState[locked: \.playbackInstance] == nil {
+              runtimeOwner?.setPlayback(nil)
+              runtimeOwner?.deactivateAudioSessionIfNeeded(reason: "playback finished")
+            }
           }
         }
         finishedFile.close()
