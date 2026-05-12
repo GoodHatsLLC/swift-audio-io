@@ -42,7 +42,8 @@ enum PlatformAudioBackendFactory {
 
     func routeChanges() -> AsyncStream<PlatformAudioRouteEvent> {
       AsyncStream { continuation in
-        let routeTask = Task {
+        let routeRunner = AsyncTaskRunner()
+        routeRunner.run {
           let routeNotifications = NotificationCenter.default.notifications(
             named: AVAudioSession.routeChangeNotification,
           )
@@ -50,22 +51,25 @@ enum PlatformAudioBackendFactory {
             continuation.yield(.changed)
           }
         }
-        let availableInputsTask: Task<Void, Never>? =
+        let availableInputsRunner: AsyncTaskRunner? =
           if #available(iOS 26.0, *) {
-            Task {
-              let inputNotifications = NotificationCenter.default.notifications(
-                named: AVAudioSession.availableInputsChangeNotification,
-              )
-              for await _ in inputNotifications {
-                continuation.yield(.changed)
-              }
-            }
+            AsyncTaskRunner()
           } else {
             nil
           }
+        if let availableInputsRunner {
+          availableInputsRunner.run {
+            let inputNotifications = NotificationCenter.default.notifications(
+              named: AVAudioSession.availableInputsChangeNotification,
+            )
+            for await _ in inputNotifications {
+              continuation.yield(.changed)
+            }
+          }
+        }
         continuation.onTermination = { _ in
-          routeTask.cancel()
-          availableInputsTask?.cancel()
+          routeRunner.cancelAllNow()
+          availableInputsRunner?.cancelAllNow()
         }
       }
     }
@@ -95,7 +99,8 @@ enum PlatformAudioBackendFactory {
 
     func routeChanges() -> AsyncStream<PlatformAudioRouteEvent> {
       AsyncStream { continuation in
-        let task = Task {
+        let runner = AsyncTaskRunner()
+        runner.run {
           let sleeper = TaskSleeper()
           var previousSignature = routeSignature()
           while !Task.isCancelled {
@@ -109,7 +114,7 @@ enum PlatformAudioBackendFactory {
           continuation.finish()
         }
         continuation.onTermination = { _ in
-          task.cancel()
+          runner.cancelAllNow()
         }
       }
     }
