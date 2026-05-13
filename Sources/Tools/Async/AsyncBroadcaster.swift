@@ -9,23 +9,29 @@ import os
 public final class AsyncBroadcaster<Element: Sendable>: AsyncSequence, Sendable {
   public typealias Element = Element
 
-  public init<S: AsyncSequence>(replay: AsyncBuffer, sequence: sending S)
+  public init<S: AsyncSequence>(
+    replay: AsyncBuffer,
+    subscriberBuffer: AsyncBuffer = .unbounded,
+    sequence: sending S,
+  )
   where S.Element == Element {
     let controller = MulticastController<Element>(
       sequence.map(MulticastController.Event.publish), replay: replay,
     )
     self.controller = controller
     memory = replay
+    self.subscriberBuffer = subscriberBuffer
   }
 
   let controller: MulticastController<Element>
   let memory: AsyncBuffer
+  let subscriberBuffer: AsyncBuffer
 
   public func makeAsyncIterator() -> Iterator {
     let underlying = AsyncSignalStream<Element>
       .makeStream(
         of: Element.self,
-        bufferingPolicy: .unbounded,
+        bufferingPolicy: .init(subscriberBuffer),
       )
     controller.handle(.subscribe(underlying.continuation))
     return Iterator(underlying: underlying.stream.makeAsyncIterator())
@@ -47,8 +53,11 @@ public final class AsyncBroadcaster<Element: Sendable>: AsyncSequence, Sendable 
 }
 
 extension AsyncSequence where Self: Sendable, Self.Element: Sendable {
-  public func broadcast(replay: AsyncBuffer = .none) -> AsyncBroadcaster<Element> {
-    AsyncBroadcaster(replay: replay, sequence: self)
+  public func broadcast(
+    replay: AsyncBuffer = .none,
+    subscriberBuffer: AsyncBuffer = .unbounded,
+  ) -> AsyncBroadcaster<Element> {
+    AsyncBroadcaster(replay: replay, subscriberBuffer: subscriberBuffer, sequence: self)
   }
 }
 
@@ -63,25 +72,37 @@ final class MulticastController<Element: Sendable>: Sendable {
   init<S: AsyncSequence>(
     isolation: isolated (any Actor)? = #isolation, _ sequence: S, replay: AsyncBuffer,
   ) where S.Element == Event {
-    state = .init(.available(.init(replayCapacity: replay, replay: [], continuations: [:])))
-    Task(priority: .high) { [weak self] in
+    let state = StateBox(
+      .available(.init(replayCapacity: replay, replay: [], continuations: [:])),
+    )
+    self.state = state
+    upstreamWork = ActorOwnedWork(priority: .high, inheriting: isolation) {
       _ = isolation
       do {
         for try await event in sequence {
-          guard let self else { return }
-          handle(event)
+          Self.handle(event, state: state)
         }
-        self?.handle(.finish)
+        Self.handle(.finish, state: state)
       } catch {
-        self?.handle(.finish)
+        Self.handle(.finish, state: state)
       }
     }
   }
 
-  private let state: Mut<State>
+  private let state: StateBox
+  private let upstreamWork: ActorOwnedWork<Void>
+
+  deinit {
+    upstreamWork.cancelNow()
+    Self.handle(.finish, state: state)
+  }
 
   func handle(_ event: Event) {
-    let action: @Sendable () -> Void = state.withLock { state in
+    Self.handle(event, state: state)
+  }
+
+  private static func handle(_ event: Event, state stateBox: StateBox) {
+    let action: @Sendable () -> Void = stateBox.value.withLock { state in
       switch event {
       case .finish:
         state.finish()
@@ -94,16 +115,14 @@ final class MulticastController<Element: Sendable>: Sendable {
           state = .available(storage)
           storage.recite(to: continuation)
           return {
-            continuation.onTermination = { [weak self] c in
-              if let self {
-                switch c {
-                case .finished:
-                  break
-                case .cancelled:
-                  handle(.unsubscribe(id: id))
-                @unknown default:
-                  break
-                }
+            continuation.onTermination = { c in
+              switch c {
+              case .finished:
+                break
+              case .cancelled:
+                Self.handle(.unsubscribe(id: id), state: stateBox)
+              @unknown default:
+                break
               }
             }
           }
@@ -138,6 +157,14 @@ final class MulticastController<Element: Sendable>: Sendable {
     }
     action()
   }
+
+  private final class StateBox: Sendable {
+    init(_ state: State) {
+      value = .init(state)
+    }
+
+    let value: Mut<State>
+  }
 }
 
 extension MulticastController {
@@ -156,8 +183,9 @@ extension MulticastController {
       case .finished:
         return
       case .available(var storage):
+        let replay = storage.replay
         storage.finishAll()
-        self = .finished(storage.replay)
+        self = .finished(replay)
       }
     }
   }
@@ -176,7 +204,6 @@ extension MulticastController {
     }
 
     mutating func finishAll() {
-      replay.removeAll()
       let continuations = continuations
       self.continuations.removeAll()
       for (_, continuation) in continuations {
