@@ -24,10 +24,7 @@
 
       engine.injectTestAudio(channels: [ramp(count: 64)])
 
-      let received = await waitFor(
-        condition: { receiver.snapshot().isEmpty == false },
-        timeout: .seconds(1),
-      )
+      let received = await receiver.waitUntilReceived()
       #expect(received == true)
 
       let labels = receiver.snapshot()
@@ -53,10 +50,7 @@
       engine.injectTestAudio(channels: [first])
       engine.injectTestAudio(channels: [second])
 
-      let received = await waitFor(
-        condition: { receiver.snapshot().count >= 2 },
-        timeout: .seconds(1),
-      )
+      let received = await receiver.waitUntilReceived(count: 2)
       #expect(received == true)
 
       let packets = receiver.snapshot()
@@ -85,8 +79,7 @@
         engine.injectTestAudio(channels: [ramp(count: 128)])
       }
 
-      try? await Task.sleep(for: .milliseconds(200))
-
+      _ = try await engine.stopRecording()
       let size = try #require(url.resourceValues(forKeys: [.fileSizeKey]).fileSize)
       #expect(size > 0)
 
@@ -96,8 +89,6 @@
         #expect(metrics.receiverDrops == 0)
         #expect(metrics.writerDrops == 0)
       #endif
-
-      _ = try await engine.stopRecording()
     }
 
     private func makeConfiguration() -> RecordingConfiguration {
@@ -122,18 +113,6 @@
       return (0..<count).map { Float($0) / Float(count) }
     }
 
-    private func waitFor(
-      condition: @Sendable () -> Bool,
-      timeout: Duration,
-    ) async -> Bool {
-      let clock = ContinuousClock()
-      let deadline = clock.now.advanced(by: timeout)
-      while clock.now < deadline {
-        if condition() { return true }
-        try? await Task.sleep(for: .milliseconds(10))
-      }
-      return condition()
-    }
   }
 
   private func currentQueueLabel() -> String {
@@ -146,12 +125,21 @@
   private final class QueueLabelReceiver: BufferReceiver, @unchecked Sendable {
     typealias T = Float
     private let lock = NSLock()
+    private let received = AsyncContinuation<Void>()
     private var storedLabels: [String] = []
 
     func snapshot() -> [String] {
       lock.lock()
       defer { lock.unlock() }
       return storedLabels
+    }
+
+    func waitUntilReceived() async -> Bool {
+      if !snapshot().isEmpty {
+        return true
+      }
+      await received()
+      return !snapshot().isEmpty
     }
 
     nonisolated func processBuffer(_ data: UnsafeBufferPointer<Float>) {
@@ -163,6 +151,7 @@
       lock.lock()
       storedLabels.append(label)
       lock.unlock()
+      try? received.yield()
     }
 
     nonisolated func endBufferTask() {}
@@ -173,12 +162,21 @@
   private final class OrderedReceiver: BufferReceiver, @unchecked Sendable {
     typealias T = Float
     private let lock = NSLock()
+    private let receivedTarget = AsyncContinuation<Void>()
     private var stored: [(values: [Float], timing: BufferTiming)] = []
 
     func snapshot() -> [(values: [Float], timing: BufferTiming)] {
       lock.lock()
       defer { lock.unlock() }
       return stored
+    }
+
+    func waitUntilReceived(count targetCount: Int) async -> Bool {
+      if snapshot().count >= targetCount {
+        return true
+      }
+      await receivedTarget()
+      return snapshot().count >= targetCount
     }
 
     nonisolated func processBuffer(_ data: UnsafeBufferPointer<Float>) {
@@ -188,7 +186,11 @@
     nonisolated func processBuffer(_ data: UnsafeBufferPointer<Float>, timing: BufferTiming) {
       lock.lock()
       unsafe stored.append((values: Array(data), timing: timing))
+      let count = stored.count
       lock.unlock()
+      if count >= 2 {
+        try? receivedTarget.yield()
+      }
     }
 
     nonisolated func endBufferTask() {}
