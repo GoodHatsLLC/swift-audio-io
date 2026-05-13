@@ -107,11 +107,11 @@
     private let configuration: AudioVisualizationEngine.Configuration
     private let callbacks: Callbacks
 
-    private let processingQueue = DispatchQueue(
+    private let analysisTicker = VisualizationDispatchTicker(
       label: "audio-visualization",
       qos: .userInteractive,
     )
-    private let lodPublishQueue = DispatchQueue(
+    private let lodPublishTicker = VisualizationDispatchTicker(
       label: "audio-visualization.lod-publish",
       qos: .userInteractive,
     )
@@ -131,8 +131,6 @@
     private var analysisPipeline: AnalysisPipeline?
     private var analysisUpdateRateHz: Double?
     private var lodPublishRateHz: Double?
-    private var analysisTimer: (any DispatchSourceTimer)?
-    private var lodPublishTimer: (any DispatchSourceTimer)?
     private var spectrumPeakHold: [Float] = []
 
     init(
@@ -175,13 +173,11 @@
       guard wasActive != isActive else { return false }
 
       if isActive {
-        updateAnalysisTimerIfNeeded()
-        updateLodPublishTimerIfNeeded()
+        updateAnalysisCadenceIfNeeded()
+        updateLodPublishCadenceIfNeeded()
       } else {
-        analysisTimer?.cancel()
-        analysisTimer = nil
-        lodPublishTimer?.cancel()
-        lodPublishTimer = nil
+        analysisTicker.cancel()
+        lodPublishTicker.cancel()
       }
 
       return true
@@ -230,8 +226,8 @@
         : (work.analysis?.updateRateHz ?? configuration.analysisUpdateRateHz)
 
       configureAnalysisPipelineIfNeeded(analysisWork: work.analysis, flags: flags)
-      updateAnalysisTimerIfNeeded()
-      updateLodPublishTimerIfNeeded()
+      updateAnalysisCadenceIfNeeded()
+      updateLodPublishCadenceIfNeeded()
     }
 
     func reset() {
@@ -386,9 +382,8 @@
       guard needsRebuild else { return }
 
       analysisEnabledAtomic.store(false, ordering: .relaxed)
-      analysisTimer?.cancel()
-      analysisTimer = nil
-      processingQueue.sync {}
+      analysisTicker.cancel()
+      analysisTicker.syncBarrier()
 
       analysisPipeline = AnalysisPipeline(config: newConfig, sampleRate: configuration.sampleRate)
       analysisConfig = newConfig
@@ -402,39 +397,29 @@
       analysisEnabledAtomic.store(true, ordering: .relaxed)
     }
 
-    private func updateAnalysisTimerIfNeeded() {
-      analysisTimer?.cancel()
-      analysisTimer = nil
+    private func updateAnalysisCadenceIfNeeded() {
+      analysisTicker.cancel()
 
       guard isActiveAtomic.load(ordering: .relaxed) else { return }
       guard analysisEnabledAtomic.load(ordering: .relaxed) else { return }
       guard let updateRateHz = analysisUpdateRateHz else { return }
 
       let interval = 1.0 / max(updateRateHz, 1)
-      let timer = DispatchSource.makeTimerSource(queue: processingQueue)
-      timer.schedule(deadline: .now(), repeating: interval)
-      timer.setEventHandler { [weak self] in
+      analysisTicker.start(interval: interval) { [weak self] in
         self?.updateVisualizations()
       }
-      timer.resume()
-      analysisTimer = timer
     }
 
-    private func updateLodPublishTimerIfNeeded() {
-      lodPublishTimer?.cancel()
-      lodPublishTimer = nil
+    private func updateLodPublishCadenceIfNeeded() {
+      lodPublishTicker.cancel()
 
       guard isActiveAtomic.load(ordering: .relaxed) else { return }
       guard let rateHz = lodPublishRateHz else { return }
 
       let interval = 1.0 / max(rateHz, 1)
-      let timer = DispatchSource.makeTimerSource(queue: lodPublishQueue)
-      timer.schedule(deadline: .now(), repeating: interval, leeway: .milliseconds(1))
-      timer.setEventHandler { [weak self] in
+      lodPublishTicker.start(interval: interval, leeway: .milliseconds(1)) { [weak self] in
         self?.publishLODSnapshot()
       }
-      timer.resume()
-      lodPublishTimer = timer
     }
 
     private func updateAudioBuffer(_ data: UnsafeBufferPointer<Float>) {
