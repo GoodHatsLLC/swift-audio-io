@@ -5,14 +5,18 @@ public import Foundation
 
 /// Type erasure of async sequences with a failure type.
 ///
-/// - Note: Relies fully on the upstream sequence for buffer control.
+/// The erased stream owns a forwarding task. Normal upstream completion
+/// finishes the erased stream; downstream termination requests cancellation of
+/// that forwarding task. The erased layer uses an unbounded buffer so it does
+/// not change the upstream sequence's buffering semantics.
 extension AsyncThrowingStream where Failure == any Error, Element: Sendable {
   /// Type erasure of a failable async sequence. (iOS 17 compatible)
   ///
-  /// - Note: Relies fully on the upstream sequence for buffer control.
+  /// - Note: The erased layer uses an unbounded buffer and relies on the
+  ///   upstream sequence for producer-side buffer control.
   public init<S: AsyncSequence>(isolation: isolated (any Actor)? = #isolation, _ source: S)
   where S.Element == Element {
-    let (stream, cont) = AsyncThrowingStream.makeStream()
+    let (stream, cont) = AsyncThrowingStream.makeStream(bufferingPolicy: .unbounded)
 
     self = stream
     let work = ActorOwnedWork(inheriting: isolation) {
@@ -20,6 +24,7 @@ extension AsyncThrowingStream where Failure == any Error, Element: Sendable {
         for try await element in source {
           cont.yield(element)
         }
+        cont.finish()
       } catch {
         cont.yield(with: .failure(error))
       }
@@ -35,13 +40,14 @@ extension AsyncStream {
   @available(iOS 18, *)
   public init<S: AsyncSequence>(isolation: isolated (any Actor)? = #isolation, _ source: S)
   where S.Element == Element, S.Failure == Never, Element: Sendable {
-    let (stream, cont) = AsyncStream.makeStream()
+    let (stream, cont) = AsyncStream.makeStream(bufferingPolicy: .unbounded)
 
     self = stream
     let work = ActorOwnedWork(inheriting: isolation) {
       for await element in source {
         cont.yield(element)
       }
+      cont.finish()
     }
     cont.onTermination = { _ in
       work.cancelNow()
@@ -50,20 +56,22 @@ extension AsyncStream {
 
   /// Type erasure of imperative bridging async sequence types.
   ///
-  /// This method erases any upstream async sequence type which directly uses an `AsyncStream.AsyncIterator`
-  /// to `AsyncStream`. It is a thin wrapper which does not modify the upstream sequence's buffering policy.
+  /// This method erases any upstream async sequence type which directly uses an
+  /// `AsyncStream.AsyncIterator`. It is a thin wrapper which does not modify the
+  /// upstream sequence's buffering policy.
   public init<S: AsyncSequence>(
     isolation: isolated (any Actor)? = #isolation,
     source: S,
     map transform: @escaping (S.Element) -> Element,
   ) where S.AsyncIterator == AsyncStream<S.Element>.AsyncIterator, Element: Sendable {
-    let (stream, cont) = AsyncStream.makeStream()
+    let (stream, cont) = AsyncStream.makeStream(bufferingPolicy: .unbounded)
 
     self = stream
     let work = ActorOwnedWork(inheriting: isolation) {
       for await element in source {
         cont.yield(transform(element))
       }
+      cont.finish()
     }
     cont.onTermination = { _ in
       work.cancelNow()
@@ -72,14 +80,15 @@ extension AsyncStream {
 
   /// Type erasure of imperative bridging async sequence types.
   ///
-  /// This method erases any upstream async sequence type which directly uses an `AsyncStream.AsyncIterator`
-  /// to `AsyncStream`. It is a thin wrapper which does not modify the upstream sequence's buffering policy.
+  /// This method erases any upstream async sequence type which directly uses an
+  /// `AsyncStream.AsyncIterator`. It is a thin wrapper which does not modify the
+  /// upstream sequence's buffering policy.
   public init<S: AsyncSequence>(
     isolation: isolated (any Actor)? = #isolation,
     source: S,
     compactMap transform: @escaping (S.Element) -> Element?,
   ) where S.AsyncIterator == AsyncStream<S.Element>.AsyncIterator, Element: Sendable {
-    let (stream, cont) = AsyncStream.makeStream()
+    let (stream, cont) = AsyncStream.makeStream(bufferingPolicy: .unbounded)
 
     self = stream
     let work = ActorOwnedWork(inheriting: isolation) {
@@ -88,6 +97,7 @@ extension AsyncStream {
           cont.yield(element)
         }
       }
+      cont.finish()
     }
     cont.onTermination = { _ in
       work.cancelNow()
@@ -98,14 +108,15 @@ extension AsyncStream {
 extension AsyncStream {
   /// Type erasure of imperative bridging async sequence types.
   ///
-  /// This method erases any upstream async sequence type which directly uses an `AsyncStream.AsyncIterator`
-  /// to `AsyncStream`. It is a thin wrapper which does not modify the upstream sequence's buffering policy.
+  /// This method erases any upstream async sequence type which directly uses a
+  /// notification iterator. It is a thin wrapper which does not modify the
+  /// upstream sequence's buffering policy.
   public init<S: AsyncSequence>(
     isolation: isolated (any Actor)? = #isolation,
     source: S,
     map transform: @escaping (S.Element) -> Element,
   ) where S.AsyncIterator == NotificationCenter.Notifications.AsyncIterator, Element: Sendable {
-    let (stream, cont) = AsyncStream.makeStream()
+    let (stream, cont) = AsyncStream.makeStream(bufferingPolicy: .unbounded)
 
     self = stream
     let work = ActorOwnedWork(inheriting: isolation) {
@@ -113,6 +124,7 @@ extension AsyncStream {
         let mappedElement = transform(element)
         cont.yield(mappedElement)
       }
+      cont.finish()
     }
     cont.onTermination = { _ in
       work.cancelNow()
@@ -121,14 +133,15 @@ extension AsyncStream {
 
   /// Type erasure of imperative bridging async sequence types.
   ///
-  /// This method erases any upstream async sequence type which directly uses an `AsyncStream.AsyncIterator`
-  /// to `AsyncStream`. It is a thin wrapper which does not modify the upstream sequence's buffering policy.
+  /// This method erases any upstream async sequence type which directly uses a
+  /// notification iterator. It is a thin wrapper which does not modify the
+  /// upstream sequence's buffering policy.
   public init<S: AsyncSequence>(
     isolation: isolated (any Actor)? = #isolation,
     source: S,
     compactMap transform: @escaping (S.Element) -> Element?,
   ) where S.AsyncIterator == NotificationCenter.Notifications.AsyncIterator, Element: Sendable {
-    let (stream, cont) = AsyncStream.makeStream()
+    let (stream, cont) = AsyncStream.makeStream(bufferingPolicy: .unbounded)
 
     self = stream
     let work = ActorOwnedWork(inheriting: isolation) {
@@ -137,6 +150,7 @@ extension AsyncStream {
           cont.yield(mappedElement)
         }
       }
+      cont.finish()
     }
     cont.onTermination = { _ in
       work.cancelNow()
