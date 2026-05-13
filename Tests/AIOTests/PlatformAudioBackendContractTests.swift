@@ -5,34 +5,44 @@
   import Testing
   @testable import AIOAudioSession
   @testable import AIOEngine
+  import Tools
 
   struct PlatformAudioBackendContractTests {
-    actor StubState {
+    // SAFETY: Test backend state is guarded by `lock`; `routeSignal` and
+    // `subscriberReady` are Sendable synchronization primitives.
+    final class StubState: @unchecked Sendable {
+      private let lock = NSLock()
       private var inputs: [PlatformAudioInputDescriptor]
-      private var continuation: AsyncStream<PlatformAudioRouteEvent>.Continuation?
+      private let routeSignal = AsyncSignal<PlatformAudioRouteEvent>()
+      private let subscriberReady = AsyncContinuation<Void>()
 
       init(inputs: [PlatformAudioInputDescriptor]) {
         self.inputs = inputs
       }
 
-      func setContinuation(_ continuation: AsyncStream<PlatformAudioRouteEvent>.Continuation) {
-        self.continuation = continuation
+      func routeChanges() -> AsyncSignalStream<PlatformAudioRouteEvent> {
+        try? subscriberReady.yield()
+        return routeSignal.events()
+      }
+
+      func waitForSubscriber() async {
+        await subscriberReady()
       }
 
       func currentInputs() -> [PlatformAudioInputDescriptor] {
-        inputs
+        lock.lock()
+        defer { lock.unlock() }
+        return inputs
       }
 
       func updateInputs(_ inputs: [PlatformAudioInputDescriptor]) {
+        lock.lock()
         self.inputs = inputs
+        lock.unlock()
       }
 
       func emitRouteChange() {
-        continuation?.yield(.changed)
-      }
-
-      func hasSubscriber() -> Bool {
-        continuation != nil
+        routeSignal.yield(.changed)
       }
     }
 
@@ -41,16 +51,12 @@
 
       let platformName: String = "stub"
 
-      func routeChanges() -> AsyncStream<PlatformAudioRouteEvent> {
-        AsyncStream { continuation in
-          Task {
-            await state.setContinuation(continuation)
-          }
-        }
+      func routeChanges() -> AsyncSignalStream<PlatformAudioRouteEvent> {
+        state.routeChanges()
       }
 
       func availableInputs() async -> [PlatformAudioInputDescriptor] {
-        await state.currentInputs()
+        state.currentInputs()
       }
     }
 
@@ -60,19 +66,6 @@
       let defaults = try #require(UserDefaults(suiteName: suiteName))
       defaults.removePersistentDomain(forName: suiteName)
       return defaults
-    }
-
-    @MainActor
-    private func waitUntil(
-      timeoutMillis: Int = 2000,
-      _ predicate: @escaping @MainActor () async -> Bool,
-    ) async -> Bool {
-      let deadline = Date().addingTimeInterval(Double(timeoutMillis) / 1000.0)
-      while Date() < deadline {
-        if await predicate() { return true }
-        try? await Task.sleep(for: .milliseconds(20))
-      }
-      return await predicate()
     }
 
     @Test
@@ -105,11 +98,9 @@
         try await manager.run()
       }
 
-      let becameReady = await waitUntil {
-        manager.isReady
-      }
+      await state.waitForSubscriber()
 
-      #expect(becameReady)
+      #expect(manager.isReady)
       #expect(manager.availableInputs.count == 2)
       #expect(manager.selectedInput?.id == "mic-b")
       #expect(manager.selectedInput?.channelCount == .stereo)
@@ -143,17 +134,15 @@
         try await manager.run()
       }
 
-      let becameReady = await waitUntil {
-        manager.isReady
-      }
-      #expect(becameReady)
+      await state.waitForSubscriber()
+      #expect(manager.isReady)
 
-      let subscribed = await waitUntil {
-        await state.hasSubscriber()
+      let refreshed = AsyncContinuation<Void>()
+      let subscriberID = manager.addRouteChangeSubscriber { _ in
+        try? refreshed.yield()
       }
-      #expect(subscribed)
 
-      await state.updateInputs(
+      state.updateInputs(
         [
           PlatformAudioInputDescriptor(
             id: "mic-b",
@@ -163,13 +152,12 @@
           )
         ],
       )
-      await state.emitRouteChange()
+      state.emitRouteChange()
+      await refreshed()
+      manager.removeSubscriber(subscriberID)
 
-      let refreshed = await waitUntil {
-        manager.selectedInput?.id == "mic-b"
-      }
-      #expect(refreshed)
       #expect(manager.availableInputs.count == 1)
+      #expect(manager.selectedInput?.id == "mic-b")
       #expect(manager.selectedInput?.channelCount == .stereo)
 
       runTask.cancel()

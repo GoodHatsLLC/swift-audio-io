@@ -17,17 +17,20 @@
         public let fileURL: URL
         private let control: WriterControl
         private let closeCountValue: @Sendable () -> Int
+        private let closed: AsyncContinuation<Void>
 
         fileprivate init(
           id: UUID,
           fileURL: URL,
           control: WriterControl,
           closeCountValue: @escaping @Sendable () -> Int,
+          closed: AsyncContinuation<Void>,
         ) {
           self.id = id
           self.fileURL = fileURL
           self.control = control
           self.closeCountValue = closeCountValue
+          self.closed = closed
         }
 
         public var stopRequested: Bool {
@@ -48,6 +51,10 @@
 
         public func signalDrain() async {
           await control.drainSignal.signal()
+        }
+
+        public func waitUntilClosed() async {
+          await closed()
         }
       }
 
@@ -101,8 +108,9 @@
       ) -> WriterDrainTestHandle {
         recordingSampleTimeAtomic.store(targetSampleTime, ordering: .relaxed)
         let control = WriterControl()
+        let closed = AsyncContinuation<Void>()
         control.writtenSampleTime.store(writtenSampleTime, ordering: .relaxed)
-        let writer = TestingRecordingFileWriter(fileURL: fileURL)
+        let writer = TestingRecordingFileWriter(fileURL: fileURL, closed: closed)
         let session = WriterSession(
           id: UUID(),
           control: control,
@@ -115,12 +123,17 @@
           fileURL: fileURL,
           control: control,
           closeCountValue: { writer.closeCount() },
+          closed: closed,
         )
       }
 
       @MainActor
       public func debugDrainingWriterSessionIDsForTesting() -> [UUID] {
         drainingWriterSessions.map(\.id)
+      }
+
+      public nonisolated func debugDrainRecordingCallbacksForTesting() async {
+        await recordingCallbackTasks.drain()
       }
 
       @MainActor
@@ -383,15 +396,18 @@
     private final class TestingRecordingFileWriter: RecordingFileWriter {
       let fileURL: URL
       private let closeCountStorage = ManagedAtomic<Int>(0)
+      private let closed: AsyncContinuation<Void>
 
-      init(fileURL: URL) {
+      init(fileURL: URL, closed: AsyncContinuation<Void>) {
         self.fileURL = fileURL
+        self.closed = closed
       }
 
       func write(_ buffer: AVAudioPCMBuffer) throws {}
 
       func close() {
         closeCountStorage.wrappingIncrement(ordering: .relaxed)
+        try? closed.yield()
       }
 
       func closeCount() -> Int {

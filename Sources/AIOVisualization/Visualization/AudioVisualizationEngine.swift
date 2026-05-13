@@ -383,6 +383,19 @@
       log.info("Audio visualization stopped")
     }
 
+    #if DEBUG
+      @MainActor
+      public func debugPublishLODSnapshotForTesting() {
+        processor.publishLODSnapshotForTesting()
+      }
+
+      @MainActor
+      public func debugDrainVisualizationDeliveryForTesting() async {
+        await VisualizationMainDelivery.drainForTesting()
+        await callbackTasks.drain()
+      }
+    #endif
+
     private func shutdownProcessing(publishActiveState: Bool) {
       wantsActiveAtomic.store(false, ordering: .relaxed)
       guard let processor else { return }

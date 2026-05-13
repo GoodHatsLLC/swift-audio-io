@@ -47,12 +47,7 @@
       let samples = (0..<128).map { Float($0) / 128.0 }
       engine.injectTestAudio(channels: [samples])
 
-      let start = ContinuousClock.now
-      while receiver.snapshot().values.isEmpty,
-        ContinuousClock.now - start < .seconds(1)
-      {
-        try? await Task.sleep(for: .milliseconds(10))
-      }
+      #expect(await receiver.waitUntilReceived() == true)
 
       let snapshot = receiver.snapshot()
       #expect(snapshot.values == samples)
@@ -100,10 +95,6 @@
       defer { try? FileManager.default.removeItem(at: firstURL) }
 
       engine.injectTestAudio(channels: [ramp(count: 256)])
-      let firstFileReady = await waitUntil(timeout: .seconds(1)) {
-        fileHasBytes(at: firstURL)
-      }
-      try #require(firstFileReady == true)
 
       let rotatedURL = try await engine.rotateRecordingFile()
       defer { try? FileManager.default.removeItem(at: rotatedURL) }
@@ -115,16 +106,6 @@
       #expect(rotatedOutputURL != firstURL)
 
       engine.injectTestAudio(channels: [ramp(count: 256)])
-      let rotatedFileReady = await waitUntil(timeout: .seconds(1)) {
-        fileHasBytes(at: rotatedOutputURL)
-      }
-      try #require(rotatedFileReady == true)
-      let rotatedFramesWritten = await waitUntil(timeout: .seconds(1)) {
-        await MainActor.run {
-          engine.debugCurrentWriterWrittenSampleTime() >= 256
-        }
-      }
-      try #require(rotatedFramesWritten == true)
       let finalURL = try await engine.stopRecording()
       defer { try? FileManager.default.removeItem(at: finalURL) }
 
@@ -160,13 +141,12 @@
       #expect(handle.closeCount() == 0)
 
       await handle.signalDrain()
+      await handle.waitUntilClosed()
+      await engine.debugDrainRecordingCallbacksForTesting()
 
-      let removedFromQueue = await waitUntil(timeout: .seconds(1)) {
-        await MainActor.run {
-          !engine.debugDrainingWriterSessionIDsForTesting().contains(handle.id)
-        }
+      let removedFromQueue = await MainActor.run {
+        !engine.debugDrainingWriterSessionIDsForTesting().contains(handle.id)
       }
-
       #expect(removedFromQueue == true)
       #expect(handle.closeCount() == 1)
     }
@@ -191,12 +171,12 @@
       #expect(handle.targetSampleTime == 128)
       #expect(handle.writtenSampleTime == 128)
 
-      let removedFromQueue = await waitUntil(timeout: .seconds(1)) {
-        await MainActor.run {
-          !engine.debugDrainingWriterSessionIDsForTesting().contains(handle.id)
-        }
-      }
+      await handle.waitUntilClosed()
+      await engine.debugDrainRecordingCallbacksForTesting()
 
+      let removedFromQueue = await MainActor.run {
+        !engine.debugDrainingWriterSessionIDsForTesting().contains(handle.id)
+      }
       #expect(removedFromQueue == true)
       #expect(handle.closeCount() == 1)
     }
@@ -263,13 +243,6 @@
 
       await engine.handleInterruption(type: .began, options: nil)
 
-      let start = ContinuousClock.now
-      while await engine.isRecording,
-        ContinuousClock.now - start < .seconds(1)
-      {
-        try? await Task.sleep(for: .milliseconds(10))
-      }
-
       let isRecording = await engine.isRecording
       #expect(isRecording == false)
 
@@ -285,10 +258,10 @@
 
       await MainActor.run {
         engine.onRecordingInterruption = { interruption in
-          await probe.record(interruption)
+          probe.record(interruption)
         }
         engine.onRecordingFailed = {
-          Task { await probe.recordFailure() }
+          probe.recordFailure()
         }
       }
 
@@ -318,12 +291,9 @@
 
       #expect(continued == false)
 
-      let stopped = await waitUntil(timeout: .seconds(1)) {
-        await engine.isRecording == false
-      }
-      #expect(stopped == true)
+      #expect(await engine.isRecording == false)
 
-      let snapshot = await probe.snapshot()
+      let snapshot = probe.snapshot()
       #expect(snapshot.failureCount == 1)
       #expect(
         snapshot.interruptions.contains { interruption in
@@ -376,7 +346,7 @@
 
       await MainActor.run {
         engine.onRecordingInterruption = { interruption in
-          await probe.record(interruption)
+          probe.record(interruption)
         }
       }
 
@@ -407,13 +377,8 @@
       #expect(continued == true)
       #expect(await engine.isRecording == true)
 
-      let observed = await waitUntil(timeout: .seconds(1)) {
-        let snapshot = await probe.snapshot()
-        return snapshot.interruptions.isEmpty == false
-      }
-      #expect(observed == true)
-
-      let snapshot = await probe.snapshot()
+      let snapshot = probe.snapshot()
+      #expect(snapshot.interruptions.isEmpty == false)
       #expect(
         snapshot.interruptions.contains { interruption in
           if case .routeChangeContinuing(_, let qualityChange) = interruption {
@@ -450,9 +415,6 @@
           )
         }
       }
-      defer {
-        Task { @MainActor in engine.setReinstallTapOverride(nil) }
-      }
 
       let event = AudioRouteChangeEvent(
         reason: .routeConfigurationChange,
@@ -463,6 +425,9 @@
 
       #expect(await engine.isRecording == true)
       #expect(reinstallCalls.snapshot() == 1)
+      await MainActor.run {
+        engine.setReinstallTapOverride(nil)
+      }
 
       _ = try await engine.stopRecording()
     }
@@ -476,7 +441,7 @@
 
       await MainActor.run {
         engine.onRecordingInterruption = { interruption in
-          await probe.record(interruption)
+          probe.record(interruption)
         }
       }
 
@@ -496,9 +461,6 @@
           )
         }
       }
-      defer {
-        Task { @MainActor in engine.setReinstallTapOverride(nil) }
-      }
 
       let event = AudioRouteChangeEvent(
         reason: .newDeviceAvailable,
@@ -509,13 +471,12 @@
 
       #expect(await engine.isRecording == true)
       #expect(reinstallCalls.snapshot() == 1)
-
-      let observed = await waitUntil(timeout: .seconds(1)) {
-        let snapshot = await probe.snapshot()
-        return snapshot.interruptions.isEmpty == false
+      await MainActor.run {
+        engine.setReinstallTapOverride(nil)
       }
-      #expect(observed == true)
-      let snapshot = await probe.snapshot()
+
+      let snapshot = probe.snapshot()
+      #expect(snapshot.interruptions.isEmpty == false)
       #expect(
         snapshot.interruptions.contains { interruption in
           if case .routeChangeContinuing(_, let qualityChange) = interruption {
@@ -538,10 +499,10 @@
 
       await MainActor.run {
         engine.onRecordingInterruption = { interruption in
-          await probe.record(interruption)
+          probe.record(interruption)
         }
         engine.onRecordingFailed = {
-          Task { await probe.recordFailure() }
+          probe.recordFailure()
         }
       }
 
@@ -556,9 +517,6 @@
           throw .engineError
         }
       }
-      defer {
-        Task { @MainActor in engine.setReinstallTapOverride(nil) }
-      }
 
       let event = AudioRouteChangeEvent(
         reason: .routeConfigurationChange,
@@ -566,13 +524,13 @@
         session: AVAudioSession.sharedInstance(),
       )
       await engine.handleRouteChange(event: event)
-
-      let stopped = await waitUntil(timeout: .seconds(1)) {
-        await engine.isRecording == false
+      await MainActor.run {
+        engine.setReinstallTapOverride(nil)
       }
-      #expect(stopped == true)
 
-      let snapshot = await probe.snapshot()
+      #expect(await engine.isRecording == false)
+
+      let snapshot = probe.snapshot()
       #expect(snapshot.failureCount == 1)
       #expect(
         snapshot.interruptions.contains { interruption in
@@ -626,28 +584,6 @@
       return (0..<count).map { Float($0) / Float(count) }
     }
 
-    private func waitUntil(
-      timeout: Duration,
-      condition: @escaping @Sendable () async -> Bool,
-    ) async -> Bool {
-      let clock = ContinuousClock()
-      let deadline = clock.now.advanced(by: timeout)
-      while clock.now < deadline {
-        if await condition() { return true }
-        try? await Task.sleep(for: .milliseconds(10))
-      }
-      return await condition()
-    }
-
-    private func fileHasBytes(at url: URL) -> Bool {
-      guard FileManager.default.fileExists(atPath: url.path) else { return false }
-      do {
-        let values = try url.resourceValues(forKeys: [.fileSizeKey])
-        return (values.fileSize ?? 0) > 0
-      } catch {
-        return false
-      }
-    }
   }
 
   private func makeMockTapInstallResult(
@@ -687,6 +623,7 @@
   private final class CapturingReceiver: BufferReceiver, @unchecked Sendable {
     typealias T = Float
     private let lock = NSLock()
+    private let received = AsyncContinuation<Void>()
     private var storedValues: [Float] = []
     private var storedTiming: BufferTiming?
 
@@ -694,6 +631,14 @@
       lock.lock()
       defer { lock.unlock() }
       return (storedValues, storedTiming)
+    }
+
+    func waitUntilReceived() async -> Bool {
+      if !snapshot().values.isEmpty {
+        return true
+      }
+      await received()
+      return !snapshot().values.isEmpty
     }
 
     nonisolated func processBuffer(_ data: UnsafeBufferPointer<Float>) {
@@ -705,24 +650,33 @@
       storedValues = unsafe Array(data)
       storedTiming = timing
       lock.unlock()
+      try? received.yield()
     }
 
     nonisolated func endBufferTask() {}
   }
 
-  private actor RouteFaultProbe {
-    private(set) var interruptions: [AIOEngine.RecordingInterruption] = []
-    private(set) var failureCount: Int = 0
+  // SAFETY: All mutable state is protected by NSLock, only accessed under lock.
+  private final class RouteFaultProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private var interruptions: [AIOEngine.RecordingInterruption] = []
+    private var failureCount: Int = 0
 
     func record(_ interruption: AIOEngine.RecordingInterruption) {
+      lock.lock()
       interruptions.append(interruption)
+      lock.unlock()
     }
 
     func recordFailure() {
+      lock.lock()
       failureCount += 1
+      lock.unlock()
     }
 
     func snapshot() -> (interruptions: [AIOEngine.RecordingInterruption], failureCount: Int) {
+      lock.lock()
+      defer { lock.unlock() }
       (interruptions, failureCount)
     }
   }

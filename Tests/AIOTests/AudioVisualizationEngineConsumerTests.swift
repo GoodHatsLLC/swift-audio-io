@@ -6,6 +6,7 @@
   import AudioSignals
   import Foundation
   import Testing
+  import Tools
 
   struct AudioVisualizationEngineConsumerTests {
     @Test
@@ -21,14 +22,14 @@
       )
 
       let subscription = engine.subscribe(request: request) { event in
-        Task { await recorder.record(event) }
+        recorder.record(event)
       }
 
       engine.startVisualization()
       sendBuffer(engine, sampleTime: 0)
-      try? await Task.sleep(for: .milliseconds(80))
+      await engine.debugDrainVisualizationDeliveryForTesting()
 
-      let snapshot = await recorder.snapshot()
+      let snapshot = recorder.snapshot()
       #expect(snapshot.totalCount == 0)
 
       subscription.cancel()
@@ -50,7 +51,7 @@
           eventMask: [.latestBufferTiming],
         ),
       ) { event in
-        Task { await timingRecorder.record(event) }
+        timingRecorder.record(event)
       }
 
       let lodSubscription = engine.subscribe(
@@ -67,24 +68,17 @@
           eventMask: [.lodSnapshotBackground, .lodSnapshot],
         ),
       ) { event in
-        Task { await lodRecorder.record(event) }
+        lodRecorder.record(event)
       }
 
       engine.startVisualization()
       for step in 0..<8 {
         sendBuffer(engine, sampleTime: Int64(step * 64))
-        try? await Task.sleep(for: .milliseconds(8))
       }
+      engine.debugPublishLODSnapshotForTesting()
+      await engine.debugDrainVisualizationDeliveryForTesting()
 
-      #expect(
-        await waitUntilAsync {
-          let timing = await timingRecorder.snapshot()
-          let lod = await lodRecorder.snapshot()
-          return timing.latestBufferTimingCount > 0 && lod.lodSnapshotCount > 0
-        },
-      )
-
-      let timingSnapshot = await timingRecorder.snapshot()
+      let timingSnapshot = timingRecorder.snapshot()
       #expect(timingSnapshot.latestBufferTimingCount > 0)
       #expect(timingSnapshot.lodSnapshotCount == 0)
       #expect(timingSnapshot.lodSnapshotBackgroundCount == 0)
@@ -92,7 +86,7 @@
       #expect(timingSnapshot.frequencyDomainCount == 0)
       #expect(timingSnapshot.beatCount == 0)
 
-      let lodSnapshot = await lodRecorder.snapshot()
+      let lodSnapshot = lodRecorder.snapshot()
       #expect(lodSnapshot.latestBufferTimingCount == 0)
       #expect(lodSnapshot.lodSnapshotCount > 0 || lodSnapshot.lodSnapshotBackgroundCount > 0)
 
@@ -126,7 +120,6 @@
       for step in 0..<8 {
         sendBuffer(engine, sampleTime: Int64(step * 64))
       }
-      try? await Task.sleep(for: .milliseconds(50))
 
       let hasLodRef = engine.withCurrentLODSnapshotRef { _ in true } ?? false
       #expect(hasLodRef)
@@ -148,14 +141,14 @@
       )
 
       let subscription = engine.subscribe(request: request) { event in
-        Task { await recorder.record(event) }
+        recorder.record(event)
       }
 
       engine.startVisualization()
       sendBuffer(engine, sampleTime: 0)
-      try? await Task.sleep(for: .milliseconds(80))
+      await engine.debugDrainVisualizationDeliveryForTesting()
 
-      let snapshot = await recorder.snapshot()
+      let snapshot = recorder.snapshot()
       #expect(snapshot.latestBufferTimingCount == 0)
 
       subscription.cancel()
@@ -173,20 +166,18 @@
       let request = VisualizationRequest(work: .none)
 
       let first = engine.subscribe(request: request) { event in
-        Task { await firstRecorder.record(event) }
+        firstRecorder.record(event)
       }
       let second = engine.subscribe(request: request) { event in
-        Task { await secondRecorder.record(event) }
+        secondRecorder.record(event)
       }
 
       engine.startVisualization()
       sendBuffer(engine, sampleTime: 0)
 
       #expect(
-        await waitUntilAsync {
-          let firstSnapshot = await firstRecorder.snapshot()
-          let secondSnapshot = await secondRecorder.snapshot()
-          return firstSnapshot.sampleTimes == [0] && secondSnapshot.sampleTimes == [0]
+        await firstRecorder.waitUntil { firstSnapshot in
+          firstSnapshot.sampleTimes == [0] && secondRecorder.snapshot().sampleTimes == [0]
         },
       )
 
@@ -194,20 +185,19 @@
       sendBuffer(engine, sampleTime: 64)
 
       #expect(
-        await waitUntilAsync {
-          let secondSnapshot = await secondRecorder.snapshot()
-          return secondSnapshot.sampleTimes == [0, 64]
+        await secondRecorder.waitUntil { secondSnapshot in
+          secondSnapshot.sampleTimes == [0, 64]
         },
       )
 
-      let firstAfterCancel = await firstRecorder.snapshot()
+      let firstAfterCancel = firstRecorder.snapshot()
       #expect(firstAfterCancel.sampleTimes == [0])
 
       second.cancel()
       sendBuffer(engine, sampleTime: 128)
-      try? await Task.sleep(for: .milliseconds(80))
+      await engine.debugDrainVisualizationDeliveryForTesting()
 
-      let secondAfterCancel = await secondRecorder.snapshot()
+      let secondAfterCancel = secondRecorder.snapshot()
       #expect(secondAfterCancel.sampleTimes == [0, 64])
       engine.stopVisualization()
     }
@@ -234,25 +224,21 @@
       )
 
       let first = engine.subscribe(request: request) { event in
-        Task { await firstRecorder.record(event) }
+        firstRecorder.record(event)
       }
       let second = engine.subscribe(request: request) { event in
-        Task { await secondRecorder.record(event) }
+        secondRecorder.record(event)
       }
 
       engine.startVisualization()
       for step in 0..<8 {
         sendBuffer(engine, sampleTime: Int64(step * 64))
-        try? await Task.sleep(for: .milliseconds(8))
       }
+      engine.debugPublishLODSnapshotForTesting()
+      await engine.debugDrainVisualizationDeliveryForTesting()
 
-      #expect(
-        await waitUntilAsync {
-          let firstSnapshot = await firstRecorder.snapshot()
-          let secondSnapshot = await secondRecorder.snapshot()
-          return firstSnapshot.lodBackgroundCount > 0 && secondSnapshot.lodBackgroundCount > 0
-        },
-      )
+      #expect(firstRecorder.snapshot().lodBackgroundCount > 0)
+      #expect(secondRecorder.snapshot().lodBackgroundCount > 0)
 
       first.cancel()
       second.cancel()
@@ -270,47 +256,42 @@
       let request = VisualizationRequest(work: .none)
 
       let first = engine.subscribe(request: request) { event in
-        Task { await firstRecorder.record(event) }
+        firstRecorder.record(event)
       }
       engine.startVisualization()
 
       sendBuffer(engine, sampleTime: 0)
       #expect(
-        await waitUntilAsync {
-          let firstSnapshot = await firstRecorder.snapshot()
-          let secondSnapshot = await secondRecorder.snapshot()
-          return firstSnapshot.sampleTimes == [0] && secondSnapshot.sampleTimes.isEmpty
+        await firstRecorder.waitUntil { firstSnapshot in
+          firstSnapshot.sampleTimes == [0] && secondRecorder.snapshot().sampleTimes.isEmpty
         },
       )
 
       let second = engine.subscribe(request: request) { event in
-        Task { await secondRecorder.record(event) }
+        secondRecorder.record(event)
       }
       sendBuffer(engine, sampleTime: 64)
       #expect(
-        await waitUntilAsync {
-          let firstSnapshot = await firstRecorder.snapshot()
-          let secondSnapshot = await secondRecorder.snapshot()
-          return firstSnapshot.sampleTimes == [0, 64] && secondSnapshot.sampleTimes == [64]
+        await firstRecorder.waitUntil { firstSnapshot in
+          firstSnapshot.sampleTimes == [0, 64] && secondRecorder.snapshot().sampleTimes == [64]
         },
       )
 
       first.cancel()
       sendBuffer(engine, sampleTime: 128)
       #expect(
-        await waitUntilAsync {
-          let firstSnapshot = await firstRecorder.snapshot()
-          let secondSnapshot = await secondRecorder.snapshot()
-          return firstSnapshot.sampleTimes == [0, 64] && secondSnapshot.sampleTimes == [64, 128]
+        await secondRecorder.waitUntil { secondSnapshot in
+          firstRecorder.snapshot().sampleTimes == [0, 64]
+            && secondSnapshot.sampleTimes == [64, 128]
         },
       )
 
       second.cancel()
       sendBuffer(engine, sampleTime: 192)
-      try? await Task.sleep(for: .milliseconds(80))
+      await engine.debugDrainVisualizationDeliveryForTesting()
 
-      let firstAfterCancel = await firstRecorder.snapshot()
-      let secondAfterCancel = await secondRecorder.snapshot()
+      let firstAfterCancel = firstRecorder.snapshot()
+      let secondAfterCancel = secondRecorder.snapshot()
       #expect(firstAfterCancel.sampleTimes == [0, 64])
       #expect(secondAfterCancel.sampleTimes == [64, 128])
 
@@ -333,9 +314,7 @@
           publishRateHz: 120,
         ),
       )
-      var latestTimingThreadsAreMain: [Bool] = []
-      var lodMainCallbackCount = 0
-      var lodMainThreadsAreMain: [Bool] = []
+      let mainCapture = MainThreadEventCapture()
 
       let subscription = engine.subscribe(
         request: VisualizationRequest(work: work),
@@ -343,24 +322,17 @@
           switch event {
           case .lodSnapshot:
             guard engine.withCurrentLODSnapshotRef({ _ in true }) == true else { return }
-            Task { @MainActor in
-              lodMainCallbackCount += 1
-              lodMainThreadsAreMain.append(true)
-            }
+            mainCapture.recordLod(isMainThread: Thread.isMainThread)
           case .lodSnapshotBackground:
             let isMainThread = Thread.isMainThread
             let hasSnapshot = engine.withCurrentLODSnapshotRef { _ in true } ?? false
-            Task {
-              await backgroundCapture.record(
-                isMainThread: isMainThread,
-                hasSnapshot: hasSnapshot,
-              )
-            }
+            backgroundCapture.record(
+              isMainThread: isMainThread,
+              hasSnapshot: hasSnapshot,
+            )
           case .latestBufferTiming(let timing):
             guard timing != nil else { return }
-            Task { @MainActor in
-              latestTimingThreadsAreMain.append(true)
-            }
+            mainCapture.recordLatestTiming(isMainThread: Thread.isMainThread)
           case .timeDomain, .frequencyDomain, .beat:
             break
           }
@@ -370,17 +342,17 @@
 
       for step in 0..<6 {
         sendBuffer(engine, sampleTime: Int64(step * 64))
-        try? await Task.sleep(for: .milliseconds(5))
       }
 
-      #expect(await waitUntil { !latestTimingThreadsAreMain.isEmpty })
-      #expect(await waitUntil { lodMainCallbackCount > 0 })
-      #expect(await waitForBackgroundCallbacks(backgroundCapture))
+      await engine.debugDrainVisualizationDeliveryForTesting()
+      #expect(await mainCapture.waitForLatestTimingAndLod())
+      #expect(await backgroundCapture.waitForCallback())
 
-      #expect(latestTimingThreadsAreMain.allSatisfy { $0 })
-      #expect(lodMainThreadsAreMain.allSatisfy { $0 })
+      let mainSnapshot = mainCapture.snapshot()
+      #expect(mainSnapshot.latestTimingThreadsAreMain)
+      #expect(mainSnapshot.lodThreadsAreMain)
 
-      let background = await backgroundCapture.snapshot()
+      let background = backgroundCapture.snapshot()
       #expect(background.callbackCount > 0)
       #expect(background.sawNonMainThread)
       #expect(background.sawSnapshot)
@@ -405,92 +377,113 @@
       }
     }
 
-    @MainActor
-    private func waitUntil(
-      timeout: Duration = .seconds(1),
-      condition: @MainActor () -> Bool,
-    ) async -> Bool {
-      let clock = ContinuousClock()
-      let deadline = clock.now.advanced(by: timeout)
-      while clock.now < deadline {
-        if condition() {
-          return true
-        }
-        try? await Task.sleep(for: .milliseconds(10))
-      }
-      return condition()
-    }
-
-    @MainActor
-    private func waitUntilAsync(
-      timeout: Duration = .seconds(1),
-      condition: @Sendable () async -> Bool,
-    ) async -> Bool {
-      let clock = ContinuousClock()
-      let deadline = clock.now.advanced(by: timeout)
-      while clock.now < deadline {
-        if await condition() {
-          return true
-        }
-        try? await Task.sleep(for: .milliseconds(10))
-      }
-      return await condition()
-    }
-
-    @MainActor
-    private func waitForBackgroundCallbacks(
-      _ capture: BackgroundSinkCapture,
-      timeout: Duration = .seconds(2),
-    ) async -> Bool {
-      let clock = ContinuousClock()
-      let deadline = clock.now.advanced(by: timeout)
-      while clock.now < deadline {
-        let snapshot = await capture.snapshot()
-        if snapshot.callbackCount > 0 {
-          return true
-        }
-        try? await Task.sleep(for: .milliseconds(10))
-      }
-      return await (capture.snapshot()).callbackCount > 0
-    }
   }
 
-  private actor BackgroundSinkCapture {
+  // SAFETY: Test capture guarded by `lock`; `signal` is Sendable.
+  private final class BackgroundSinkCapture: @unchecked Sendable {
     struct Snapshot {
       let callbackCount: Int
       let sawNonMainThread: Bool
       let sawSnapshot: Bool
     }
 
+    private let lock = NSLock()
+    private let signal = AsyncSignal<Void>()
     private var callbackCount = 0
     private var sawNonMainThread = false
     private var sawSnapshot = false
 
     func record(isMainThread: Bool, hasSnapshot: Bool) {
+      lock.lock()
       callbackCount += 1
       sawNonMainThread = sawNonMainThread || !isMainThread
       sawSnapshot = sawSnapshot || hasSnapshot
+      lock.unlock()
+      signal.signal()
     }
 
     func snapshot() -> Snapshot {
-      Snapshot(
+      lock.lock()
+      defer { lock.unlock() }
+      return Snapshot(
         callbackCount: callbackCount,
         sawNonMainThread: sawNonMainThread,
         sawSnapshot: sawSnapshot,
       )
     }
+
+    func waitForCallback() async -> Bool {
+      await waitForSignal(signal.events()) { [self] in
+        snapshot().callbackCount > 0
+      }
+    }
   }
 
-  private actor VisualizationEventRecorder {
+  // SAFETY: Test capture guarded by `lock`; `signal` is Sendable.
+  private final class MainThreadEventCapture: @unchecked Sendable {
+    struct Snapshot {
+      let latestTimingCount: Int
+      let lodCount: Int
+      let latestTimingThreadsAreMain: Bool
+      let lodThreadsAreMain: Bool
+    }
+
+    private let lock = NSLock()
+    private let signal = AsyncSignal<Void>()
+    private var latestTimingCount = 0
+    private var lodCount = 0
+    private var latestTimingThreadsAreMain = true
+    private var lodThreadsAreMain = true
+
+    func recordLatestTiming(isMainThread: Bool) {
+      lock.lock()
+      latestTimingCount += 1
+      latestTimingThreadsAreMain = latestTimingThreadsAreMain && isMainThread
+      lock.unlock()
+      signal.signal()
+    }
+
+    func recordLod(isMainThread: Bool) {
+      lock.lock()
+      lodCount += 1
+      lodThreadsAreMain = lodThreadsAreMain && isMainThread
+      lock.unlock()
+      signal.signal()
+    }
+
+    func snapshot() -> Snapshot {
+      lock.lock()
+      defer { lock.unlock() }
+      return Snapshot(
+        latestTimingCount: latestTimingCount,
+        lodCount: lodCount,
+        latestTimingThreadsAreMain: latestTimingThreadsAreMain,
+        lodThreadsAreMain: lodThreadsAreMain,
+      )
+    }
+
+    func waitForLatestTimingAndLod() async -> Bool {
+      await waitForSignal(signal.events(), timeout: .seconds(2)) { [self] in
+        let snapshot = snapshot()
+        return snapshot.latestTimingCount > 0 && snapshot.lodCount > 0
+      }
+    }
+  }
+
+  // SAFETY: Test recorder guarded by `lock`; `signal` is Sendable.
+  private final class VisualizationEventRecorder: @unchecked Sendable {
     struct Snapshot {
       let sampleTimes: [Int64]
       let lodBackgroundCount: Int
     }
 
+    private let lock = NSLock()
+    private let signal = AsyncSignal<Void>()
     private var sampleTimes: [Int64] = []
     private var lodBackgroundCount: Int = 0
 
     func record(_ event: VisualizationEvent) {
+      lock.lock()
       switch event {
       case .latestBufferTiming(let timing):
         if let timing {
@@ -501,17 +494,28 @@
       default:
         break
       }
+      lock.unlock()
+      signal.signal()
     }
 
     func snapshot() -> Snapshot {
-      Snapshot(
+      lock.lock()
+      defer { lock.unlock() }
+      return Snapshot(
         sampleTimes: sampleTimes,
         lodBackgroundCount: lodBackgroundCount,
       )
     }
+
+    func waitUntil(_ condition: @escaping @Sendable (Snapshot) -> Bool) async -> Bool {
+      await waitForSignal(signal.events()) { [self] in
+        condition(snapshot())
+      }
+    }
   }
 
-  private actor EventCountRecorder {
+  // SAFETY: Test recorder guarded by `lock`.
+  private final class EventCountRecorder: @unchecked Sendable {
     struct Snapshot {
       let lodSnapshotCount: Int
       let lodSnapshotBackgroundCount: Int
@@ -530,6 +534,7 @@
       }
     }
 
+    private let lock = NSLock()
     private var lodSnapshotCount = 0
     private var lodSnapshotBackgroundCount = 0
     private var timeDomainCount = 0
@@ -538,6 +543,8 @@
     private var latestBufferTimingCount = 0
 
     func record(_ event: VisualizationEvent) {
+      lock.lock()
+      defer { lock.unlock() }
       switch event {
       case .lodSnapshot:
         lodSnapshotCount += 1
@@ -555,7 +562,9 @@
     }
 
     func snapshot() -> Snapshot {
-      Snapshot(
+      lock.lock()
+      defer { lock.unlock() }
+      return Snapshot(
         lodSnapshotCount: lodSnapshotCount,
         lodSnapshotBackgroundCount: lodSnapshotBackgroundCount,
         timeDomainCount: timeDomainCount,
@@ -563,6 +572,33 @@
         beatCount: beatCount,
         latestBufferTimingCount: latestBufferTimingCount,
       )
+    }
+  }
+
+  private func waitForSignal(
+    _ events: AsyncSignalStream<Void>,
+    timeout: Duration = .seconds(1),
+    condition: @escaping @Sendable () -> Bool,
+  ) async -> Bool {
+    if condition() {
+      return true
+    }
+
+    return await withTaskGroup(of: Bool.self) { group in
+      group.addTask {
+        for await _ in events {
+          if condition() { return true }
+        }
+        return false
+      }
+      group.addTask {
+        try? await TimeoutPolicy(timeout).waitForTimeout()
+        return false
+      }
+
+      let result = await group.next() ?? false
+      group.cancelAll()
+      return result
     }
   }
 #endif

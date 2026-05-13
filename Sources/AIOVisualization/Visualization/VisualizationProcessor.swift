@@ -528,6 +528,12 @@
       callbacks.onLODSnapshot()
     }
 
+    #if DEBUG
+      func publishLODSnapshotForTesting() {
+        publishLODSnapshot()
+      }
+    #endif
+
     private func updateSpectrumPeaks(
       current: [Float],
       newSpectrum: [Float],
