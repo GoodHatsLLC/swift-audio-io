@@ -31,6 +31,7 @@ struct ReplacingTaskSlotTests {
     let events = EventLog()
     let firstStarted = AsyncContinuation<Void>()
     let firstCleaned = AsyncContinuation<Void>()
+    let secondStarted = AsyncContinuation<Void>()
     let cancellation = CancellationGate()
 
     await slot.replace {
@@ -45,10 +46,12 @@ struct ReplacingTaskSlotTests {
 
     async let replacement: Void = slot.replace {
       await events.append("second-started")
+      try? secondStarted.yield()
     }
 
     await firstCleaned()
     await replacement
+    await secondStarted()
 
     #expect(await events.values == ["first-started", "first-cleaned", "second-started"])
   }
