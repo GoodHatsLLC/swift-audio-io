@@ -22,7 +22,7 @@ public final class AsyncBroadcaster<Element: Sendable>: AsyncSequence, Sendable 
   let memory: AsyncBuffer
 
   public func makeAsyncIterator() -> Iterator {
-    let underlying = AsyncStream<Element>
+    let underlying = AsyncSignalStream<Element>
       .makeStream(
         of: Element.self,
         bufferingPolicy: .unbounded,
@@ -32,11 +32,11 @@ public final class AsyncBroadcaster<Element: Sendable>: AsyncSequence, Sendable 
   }
 
   public struct Iterator: AsyncIteratorProtocol {
-    init(underlying: AsyncStream<Element>.Iterator) {
+    init(underlying: AsyncSignalStream<Element>.Iterator) {
       self.underlying = underlying
     }
 
-    private var underlying: AsyncStream<Element>.Iterator
+    private var underlying: AsyncSignalStream<Element>.Iterator
 
     public mutating func next(isolation: isolated (any Actor)?) async
       -> Element?
@@ -54,7 +54,7 @@ extension AsyncSequence where Self: Sendable, Self.Element: Sendable {
 
 final class MulticastController<Element: Sendable>: Sendable {
   enum Event {
-    case subscribe(_ continuation: AsyncStream<Element>.Continuation)
+    case subscribe(_ continuation: AsyncSignalContinuation<Element>)
     case unsubscribe(id: UUID)
     case publish(Element)
     case finish
@@ -167,7 +167,7 @@ extension MulticastController {
   struct Storage {
     let replayCapacity: AsyncBuffer
     var replay: [Element] = []
-    var continuations: OrderedDictionary<UUID, AsyncStream<Element>.Continuation> = [:]
+    var continuations: OrderedDictionary<UUID, AsyncSignalContinuation<Element>> = [:]
     mutating func finish(id: UUID) {
       if let continuation = continuations[id] {
         continuations[id] = nil
@@ -189,7 +189,7 @@ extension MulticastController {
       replayCapacity.prune(elements: &replay)
     }
 
-    func recite(to continuation: AsyncStream<Element>.Continuation) {
+    func recite(to continuation: AsyncSignalContinuation<Element>) {
       for element in replay {
         continuation.yield(element)
       }
