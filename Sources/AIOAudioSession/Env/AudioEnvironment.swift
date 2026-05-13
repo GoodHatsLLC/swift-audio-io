@@ -154,11 +154,11 @@
       private let center: NotificationCenter
       /// An asynchronous stream of audio session interruption notifications.
       public var interruption:
-        AsyncStream<
+        AsyncSignalStream<
           (type: AVAudioSession.InterruptionType, options: AVAudioSession.InterruptionOptions?),
         >
       {
-        AsyncStream<
+        AsyncSignalStream<
           (type: AVAudioSession.InterruptionType, options: AVAudioSession.InterruptionOptions?),
         >(
           source: center.notifications(named: AVAudioSession.interruptionNotification),
@@ -195,11 +195,11 @@
 
       /// An asynchronous stream of audio session route change notifications.
       public var routeChange:
-        AsyncStream<
+        AsyncSignalStream<
           (reason: AVAudioSession.RouteChangeReason, previous: AVAudioSessionRouteDescription?),
         >
       {
-        AsyncStream<
+        AsyncSignalStream<
           (reason: AVAudioSession.RouteChangeReason, previous: AVAudioSessionRouteDescription?),
         >(
           source: center.notifications(named: AVAudioSession.routeChangeNotification),
@@ -226,25 +226,25 @@
       }
 
       /// An asynchronous stream of notifications for when the available inputs change.
-      public var availableInputsChanged: AsyncStream<Void> {
+      public var availableInputsChanged: AsyncSignalStream<Void> {
         if #available(iOS 26.0, *) {
-          AsyncStream<Void>(
+          return AsyncSignalStream<Void>(
             source: center.notifications(named: AVAudioSession.availableInputsChangeNotification),
             map: { _ in () },
           )
         } else {
-          AsyncStream<Void> { i in
-            log.warning(
-              "availableInputsChanged notifications are not available on this OS version",
-            )
-            i.finish()
-          }
+          log.warning(
+            "availableInputsChanged notifications are not available on this OS version",
+          )
+          let signal = AsyncSignal<Void>()
+          signal.finish()
+          return signal.events()
         }
       }
 
       /// An asynchronous stream of notifications for when the media services are lost.
-      public var mediaServicesLost: AsyncStream<Void> {
-        AsyncStream<Void>(
+      public var mediaServicesLost: AsyncSignalStream<Void> {
+        AsyncSignalStream<Void>(
           source: center.notifications(named: AVAudioSession.mediaServicesWereLostNotification),
           map: { _ in
             log.warning("Environment: media services were lost")
@@ -254,8 +254,8 @@
       }
 
       /// An asynchronous stream of notifications for when the media services are reset.
-      public var mediaServicesReset: AsyncStream<Void> {
-        AsyncStream<Void>(
+      public var mediaServicesReset: AsyncSignalStream<Void> {
+        AsyncSignalStream<Void>(
           source: center.notifications(named: AVAudioSession.mediaServicesWereResetNotification),
           map: { _ in
             log.warning("Environment: media services were reset")
@@ -265,8 +265,8 @@
       }
 
       /// An asynchronous stream of notifications for when secondary audio should be silenced.
-      public var silenceSecondaryAudioHint: AsyncStream<Void> {
-        AsyncStream<Void>(
+      public var silenceSecondaryAudioHint: AsyncSignalStream<Void> {
+        AsyncSignalStream<Void>(
           source: center.notifications(named: AVAudioSession.silenceSecondaryAudioHintNotification),
           map: { _ in
             log.warning("Environment: silence secondary audio")
