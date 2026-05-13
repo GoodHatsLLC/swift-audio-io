@@ -44,8 +44,8 @@
       }
     }
 
-    private static func stream() -> AsyncStream<UIDeviceOrientation> {
-      let (stream, cont) = AsyncStream.makeStream(of: UIDeviceOrientation.self)
+    private static func stream() -> AsyncSignalStream<UIDeviceOrientation> {
+      let (stream, cont) = AsyncSignalStream.makeStream(of: UIDeviceOrientation.self)
       UIDevice.current.beginGeneratingDeviceOrientationNotifications()
       let cancellable = NotificationCenter.default
         .publisher(for: UIDevice.orientationDidChangeNotification)
