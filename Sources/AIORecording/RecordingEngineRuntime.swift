@@ -14,6 +14,12 @@
 
   private let log = SystemLog.make()
 
+  private enum RecordingRuntimeBlockingDelay {
+    static func sleep(for seconds: TimeInterval) {
+      Thread.sleep(forTimeInterval: seconds)
+    }
+  }
+
   extension AIOEngine {
     var recordingEngineRuntime: RecordingEngineRuntime {
       RecordingEngineRuntime(owner: self)
@@ -854,7 +860,7 @@
             }
             if shouldCancel() { break }
             let sleepMillis = stopRequested ? 1.0 : idleBackoffMillis
-            Thread.sleep(forTimeInterval: sleepMillis / 1000.0)
+            RecordingRuntimeBlockingDelay.sleep(for: sleepMillis / 1000.0)
             if !stopRequested {
               idleBackoffMillis = min(idleBackoffMillis * 2, 8)
             }
@@ -936,7 +942,7 @@
         }
         let timingRead = unsafe timing.read(into: timingScratch)
         guard timingRead > 0 else {
-          Thread.sleep(forTimeInterval: sleepInterval)
+          RecordingRuntimeBlockingDelay.sleep(for: sleepInterval)
           continue
         }
         let packet = unsafe timingScratch[0]
