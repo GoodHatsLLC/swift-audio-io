@@ -4,6 +4,7 @@
   import AVFoundation
   import Foundation
   import Testing
+  import Tools
 
   @_spi(TESTING) @testable import AIOEngine
 
@@ -17,10 +18,10 @@
       let probe = RecordingEventProbe()
 
       engine.onRecordingInterruption = { interruption in
-        await probe.record(interruption)
+        probe.record(interruption)
       }
       engine.onRecordingFailed = {
-        Task { await probe.recordFailure() }
+        probe.recordFailure()
       }
 
       let url = try engine.startTestRecording(configuration: configuration)
@@ -46,7 +47,7 @@
 
       await engine.handleRouteChange(event: event)
 
-      let snapshot = await probe.snapshot()
+      let snapshot = probe.snapshot()
       if session.isInputAvailable {
         #expect(engine.isRecording == true)
         #expect(reinstallCalls.snapshot() == 1)
@@ -82,10 +83,10 @@
       let probe = RecordingEventProbe()
 
       engine.onRecordingInterruption = { interruption in
-        await probe.record(interruption)
+        probe.record(interruption)
       }
       engine.onRecordingFailed = {
-        Task { await probe.recordFailure() }
+        probe.recordFailure()
       }
 
       let url = try engine.startTestRecording(configuration: configuration)
@@ -99,7 +100,7 @@
       }
       #expect(stopped == true)
 
-      let snapshot = await probe.snapshot()
+      let snapshot = probe.snapshot()
       #expect(snapshot.failureCount == 1)
       #expect(
         snapshot.interruptions.contains { interruption in
@@ -336,10 +337,11 @@
       condition: @escaping @MainActor @Sendable () async -> Bool,
     ) async -> Bool {
       let clock = ContinuousClock()
+      let polling = PollingPolicy(interval: .milliseconds(10))
       let deadline = clock.now.advanced(by: timeout)
       while clock.now < deadline {
         if await condition() { return true }
-        try? await Task.sleep(for: .milliseconds(10))
+        try? await polling.waitForNextPoll()
       }
       return await condition()
     }
@@ -391,19 +393,27 @@
     }
   }
 
-  private actor RecordingEventProbe {
-    private(set) var interruptions: [AIOEngine.RecordingInterruption] = []
-    private(set) var failureCount = 0
+  // SAFETY: All mutable state is protected by NSLock, only accessed under lock.
+  private final class RecordingEventProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private var interruptions: [AIOEngine.RecordingInterruption] = []
+    private var failureCount = 0
 
     func record(_ interruption: AIOEngine.RecordingInterruption) {
+      lock.lock()
       interruptions.append(interruption)
+      lock.unlock()
     }
 
     func recordFailure() {
+      lock.lock()
       failureCount += 1
+      lock.unlock()
     }
 
     func snapshot() -> (interruptions: [AIOEngine.RecordingInterruption], failureCount: Int) {
+      lock.lock()
+      defer { lock.unlock() }
       (interruptions, failureCount)
     }
   }
