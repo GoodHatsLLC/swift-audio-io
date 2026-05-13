@@ -254,11 +254,6 @@
             )
             unsafe processor.process(samples)
             unsafe writeIndices.append(processor.currentWriteIndex)
-
-            // Small delay to simulate real audio timing
-            if i % 100 == 0 {
-              try? await Task.sleep(nanoseconds: 1000)
-            }
           }
           return writeIndices
         }

@@ -1,6 +1,11 @@
 // © GoodHatsLLC
 
 #if canImport(UIKit)
+  #if canImport(Darwin)
+    import Darwin
+  #elseif canImport(Glibc)
+    import Glibc
+  #endif
   import Dispatch
   import Foundation
   import Testing
@@ -212,9 +217,22 @@
     }
 
     nonisolated func processBuffer(_: UnsafeBufferPointer<Float>, timing _: BufferTiming) {
-      Thread.sleep(forTimeInterval: delay)
+      blockReceiverQueueForBackpressureProbe(seconds: delay)
     }
 
     nonisolated func endBufferTask() {}
+
+    private func blockReceiverQueueForBackpressureProbe(seconds: TimeInterval) {
+      // Intentionally blocks the receiver queue to verify writer backpressure isolation.
+      var requested = timespec(
+        tv_sec: Int(seconds),
+        tv_nsec: Int((seconds.truncatingRemainder(dividingBy: 1)) * 1_000_000_000),
+      )
+      var remaining = timespec()
+      while unsafe nanosleep(&requested, &remaining) == -1 {
+        requested = remaining
+        remaining = timespec()
+      }
+    }
   }
 #endif
