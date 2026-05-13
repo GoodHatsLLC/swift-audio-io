@@ -505,13 +505,15 @@
         unsafe owner.engine.stop()
       }
       log.info("gracefulStop draining writer sessions")
+      let stopDrainTimeout = owner.stopDrainTimeout
+      let stopDrainTimeoutPolicy = TimeoutPolicy(stopDrainTimeout)
       let drainCompleted = await withTaskGroup(of: Bool.self) { group in
         group.addTask { [self] in
           await stopAndDrainAllWriterSessions(notifyOnFailure: false)
           return true
         }
-        group.addTask { [owner] in
-          try? await Task.sleep(for: owner.stopDrainTimeout)
+        group.addTask {
+          try? await stopDrainTimeoutPolicy.waitForTimeout()
           return false
         }
         let result = await group.next() ?? false
@@ -520,7 +522,7 @@
       }
       if !drainCompleted {
         let url = owner.state[locked: \.recordingURL]
-        let error = WriterDrainTimeoutError(url: url, timeout: owner.stopDrainTimeout)
+        let error = WriterDrainTimeoutError(url: url, timeout: stopDrainTimeout)
         log.error("stopAndDrainAllWriterSessions timed out: \(error, privacy: .public)")
         cancelAllWriterSessions()
         recordWriteFailure(ErrorContext(error), url: url)
