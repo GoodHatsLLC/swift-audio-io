@@ -8,16 +8,24 @@ struct ContinuationTests {
   @Test
   func `yields to awaiters registered before yield`() async throws {
     let continuation = AsyncContinuation<Int>()
+    let firstReady = AsyncContinuation<Void>()
+    let secondReady = AsyncContinuation<Void>()
 
-    async let first: Int = continuation()
-    async let second: Int = continuation()
-    await Task.yield()
-    await Task.yield()
+    let first = ActorOwnedWork {
+      try? firstReady.yield()
+      return await continuation()
+    }
+    let second = ActorOwnedWork {
+      try? secondReady.yield()
+      return await continuation()
+    }
+    await firstReady()
+    await secondReady()
 
     try continuation.yield(42)
 
-    #expect(await first == 42)
-    #expect(await second == 42)
+    #expect(await first.value == 42)
+    #expect(await second.value == 42)
   }
 
   @Test
@@ -55,11 +63,15 @@ struct ContinuationTests {
   @Test
   func `void convenience yield resumes waiters`() async throws {
     let continuation = AsyncContinuation<Void>()
+    let waiterReady = AsyncContinuation<Void>()
 
-    async let waiter: Void = continuation()
-    await Task.yield()
+    let waiter = ActorOwnedWork {
+      try? waiterReady.yield()
+      await continuation()
+    }
+    await waiterReady()
     try continuation.yield()
 
-    await waiter
+    await waiter.value
   }
 }

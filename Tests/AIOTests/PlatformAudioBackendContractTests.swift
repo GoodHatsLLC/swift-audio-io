@@ -94,8 +94,8 @@
         platformAudioBackend: backend,
       )
 
-      let runTask = Task { @MainActor in
-        try await manager.run()
+      let runTask = MainActorOwnedWork {
+        try? await manager.run()
       }
 
       await state.waitForSubscriber()
@@ -105,8 +105,7 @@
       #expect(manager.selectedInput?.id == "mic-b")
       #expect(manager.selectedInput?.channelCount == .stereo)
 
-      runTask.cancel()
-      _ = await runTask.result
+      await runTask.cancel()
     }
 
     @Test
@@ -130,8 +129,8 @@
         platformAudioBackend: backend,
       )
 
-      let runTask = Task { @MainActor in
-        try await manager.run()
+      let runTask = MainActorOwnedWork {
+        try? await manager.run()
       }
 
       await state.waitForSubscriber()
@@ -160,8 +159,7 @@
       #expect(manager.selectedInput?.id == "mic-b")
       #expect(manager.selectedInput?.channelCount == .stereo)
 
-      runTask.cancel()
-      _ = await runTask.result
+      await runTask.cancel()
     }
   }
 #endif

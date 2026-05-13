@@ -143,17 +143,23 @@ struct LiveLevelRingBufferTests {
 
     let totalSamples = 5_000
 
-    let writerTask = Task.detached(priority: .userInitiated) {
+    let writerFinished = AsyncContinuation<Void>()
+    let firstWrite = AsyncContinuation<Void>()
+    let readerStarted = AsyncContinuation<Void>()
+    let writerTask = ActorOwnedWork(priority: .userInitiated) {
       for i in 0..<totalSamples {
         writer.append(Float(i))
-        if i % 32 == 0 {
-          // Yield occasionally to give the reader CPU.
-          await Task.yield()
+        if i == 0 {
+          try? firstWrite.yield()
+          await readerStarted()
         }
       }
+      try? writerFinished.yield()
     }
 
-    let readerTask = Task.detached(priority: .userInitiated) {
+    await firstWrite()
+    let readerTask = ActorOwnedWork(priority: .userInitiated) {
+      try? readerStarted.yield()
       var lastIndex: UInt64 = 0
       var snapshots = 0
       var dest = [Float](repeating: 0, count: 16)
@@ -164,11 +170,11 @@ struct LiveLevelRingBufferTests {
         lastIndex = info.writeIndex
         snapshots += 1
         if snapshots > 1_000_000 { break }  // safety net
-        await Task.yield()
       }
       return lastIndex
     }
 
+    await writerFinished()
     await writerTask.value
     let final = await readerTask.value
     #expect(final == UInt64(totalSamples))
