@@ -74,7 +74,7 @@
         _ = unsafe timing.write(UnsafeBufferPointer(start: pointer, count: 1))
       }
 
-      let task = Task.detached {
+      let work = ActorOwnedWork {
         AIOEngine.receiverLoopSync(
           buffers: buffers,
           timing: timing,
@@ -89,17 +89,14 @@
         )
       }
 
-      let start = ContinuousClock.now
-      while receiver.isEmpty, (ContinuousClock.now - start) < .seconds(1) {
-        try? await Task.sleep(for: .milliseconds(10))
-      }
+      await receiver.received()
 
       let snapshot = receiver.snapshot()
       try #require(snapshot.values == samples)
       try #require(snapshot.timing?.sampleTime == 0)
 
       control.cancelRequested.store(true, ordering: .relaxed)
-      _ = await task.result
+      await work.value
     }
 
     private func read(_ buffer: SPSCRingBuffer<Int>, count: Int) -> [Int] {
@@ -118,6 +115,7 @@
   private final class CapturingReceiver: BufferReceiver, @unchecked Sendable {
     typealias T = Float
     private let control: ReceiverControl
+    private let receivedSignal = AsyncContinuation<Void>()
     private let lock = NSLock()
     private var storedValues: [Float] = []
     private var storedTiming: BufferTiming?
@@ -126,10 +124,8 @@
       self.control = control
     }
 
-    var isEmpty: Bool {
-      lock.lock()
-      defer { lock.unlock() }
-      return storedValues.isEmpty
+    func received() async {
+      await receivedSignal()
     }
 
     func snapshot() -> (values: [Float], timing: BufferTiming?) {
@@ -147,6 +143,7 @@
       storedValues = unsafe Array(data)
       storedTiming = timing
       lock.unlock()
+      try? receivedSignal.yield()
       control.cancelRequested.store(true, ordering: .relaxed)
     }
 

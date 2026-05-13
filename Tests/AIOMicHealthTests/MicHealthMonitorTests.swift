@@ -64,13 +64,10 @@ private struct MonitorHarness: ~Copyable {
   let rmsContinuation: AsyncStream<Float>.Continuation
   let routeContinuation: AsyncStream<AudioRouteChangeEvent>.Continuation
   let monitor: MicHealthMonitor
-  let runTask: Task<Void, Never>
 
   consuming func teardown() async {
     rmsContinuation.finish()
     routeContinuation.finish()
-    runTask.cancel()
-    await runTask.value
   }
 }
 
@@ -87,45 +84,16 @@ private func makeMonitor(
     thresholds: thresholds,
   )
   let monitor = MicHealthMonitor(inputs: inputs)
-  let runTask = Task { await monitor.run() }
   return MonitorHarness(
     clock: clock,
     rmsContinuation: rmsCont,
     routeContinuation: routeCont,
     monitor: monitor,
-    runTask: runTask,
   )
 }
 
-/// Waits briefly for a task to complete without hanging the test if the
-/// expected shutdown behavior regresses.
-private func waitForCompletion(
-  _ task: Task<Void, Never>,
-  timeoutNanoseconds: UInt64 = 150_000_000,
-) async -> Bool {
-  let waiter = Task {
-    await task.value
-    return true
-  }
-  defer { waiter.cancel() }
-
-  return await withTaskGroup(of: Bool.self) { group in
-    group.addTask {
-      await waiter.value
-    }
-    group.addTask {
-      try? await Task.sleep(nanoseconds: timeoutNanoseconds)
-      return false
-    }
-    let completed = await group.next() ?? false
-    group.cancelAll()
-    return completed
-  }
-}
-
 /// Feeds a steady RMS sample while advancing the clock by `duration` in
-/// `steps` equal increments, yielding after each to keep the monitor in
-/// lock-step with virtual time.
+/// `steps` equal increments.
 private func feedRMS(
   _ harness: borrowing MonitorHarness,
   linear: Float,
@@ -329,6 +297,8 @@ struct MicHealthMonitorTests {
   @Test
   func cancelledRunLoop_finalizeStillReturnsAccumulatedEvents() async throws {
     let harness = makeMonitor()
+    let monitor = harness.monitor
+    async let run: Void = monitor.run()
 
     let thresholds = MicHealthThresholds.testFast
     // Get into a degraded state first.
@@ -338,8 +308,7 @@ struct MicHealthMonitorTests {
     // Close the input streams and cancel the run task. Wait for it to exit.
     harness.rmsContinuation.finish()
     harness.routeContinuation.finish()
-    harness.runTask.cancel()
-    await harness.runTask.value
+    await run
 
     // Advance the clock a bit and finalize. The event log must still be
     // intact and closed at the current clock reading.
@@ -353,10 +322,12 @@ struct MicHealthMonitorTests {
   @Test
   func runExitsWhenOneStreamFinishes() async throws {
     let harness = makeMonitor()
+    let monitor = harness.monitor
+    async let run: Void = monitor.run()
 
     harness.rmsContinuation.finish()
 
-    #expect(await waitForCompletion(harness.runTask))
+    await run
 
     await harness.teardown()
   }
