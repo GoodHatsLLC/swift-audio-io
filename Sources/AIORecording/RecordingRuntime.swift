@@ -82,6 +82,7 @@
       let startTime = ContinuousClock.now
       let timeout = owner.reconciliationConfiguration.timeout
       let retryInterval = owner.reconciliationConfiguration.retryInterval
+      let retryPolicy = RetryPolicy(maxAttempts: .max, delay: .constant(retryInterval))
 
       log.info(
         "Starting recording reconciliation (timeout: \(timeout, privacy: .public), interval: \(retryInterval, privacy: .public))",
@@ -110,7 +111,7 @@
           log.info(
             "Transient error during reconciliation: \(error, privacy: .public), retrying...",
           )
-          try? await Task.sleep(for: retryInterval)
+          try? await retryPolicy.wait(afterFailureCount: 1)
           continue
         } catch {
           log.error(

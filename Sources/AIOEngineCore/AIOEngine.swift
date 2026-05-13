@@ -725,6 +725,7 @@
       }
 
       let timeout = writerDrainTimeout
+      let timeoutPolicy = TimeoutPolicy(timeout)
       let outcome = await withTaskGroup(of: WriterDrainOutcome.self) { group in
         group.addTask {
           await session.control.drainSignal.wait()
@@ -735,7 +736,7 @@
           return .targetSatisfied
         }
         group.addTask {
-          try? await Task.sleep(for: timeout)
+          try? await timeoutPolicy.waitForTimeout()
           return .timedOut
         }
 
