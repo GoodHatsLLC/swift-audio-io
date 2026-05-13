@@ -127,11 +127,11 @@
       #expect(abs(initial.duration - 1) < 0.001)
       #expect(abs((initial.time ?? 0)) < 0.05)
 
-      let scrubbed = try #require(try engine.scrub(to: 0.25, updatePlaybackTimer: false))
+      let scrubbed = try #require(try engine.scrub(to: 0.25, updatePlaybackPolling: false))
       #expect(abs((scrubbed.time ?? -1) - 0.25) < 0.001)
       #expect(abs(scrubbed.duration - 1) < 0.001)
 
-      let nearEnd = try #require(try engine.scrub(to: 1, updatePlaybackTimer: false))
+      let nearEnd = try #require(try engine.scrub(to: 1, updatePlaybackPolling: false))
       let expectedUpperBound = Double(fixture.frames(seconds: 1) - 1) / fixture.sampleRate
       #expect(abs((nearEnd.time ?? -1) - expectedUpperBound) < 0.001)
       #expect(abs(nearEnd.duration - 1) < 0.001)

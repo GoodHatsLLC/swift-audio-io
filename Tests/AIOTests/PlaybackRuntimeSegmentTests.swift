@@ -53,7 +53,7 @@
         onComplete: onComplete,
       )
 
-      let playback = try #require(try engine.scrub(to: 0.75, updatePlaybackTimer: false))
+      let playback = try #require(try engine.scrub(to: 0.75, updatePlaybackPolling: false))
       let updated = try #require(engine.playbackState[locked: \.playbackInstance])
       engine.scrubTask = nil
 
@@ -105,7 +105,7 @@
         activeSegment: segment,
       )
 
-      let playback = try #require(try engine.scrub(to: 2, updatePlaybackTimer: false))
+      let playback = try #require(try engine.scrub(to: 2, updatePlaybackPolling: false))
       let updated = try #require(engine.playbackState[locked: \.playbackInstance])
       engine.scrubTask = nil
 
@@ -133,7 +133,7 @@
         activeSegment: segment,
       )
 
-      _ = try engine.scrub(to: 1.25, updatePlaybackTimer: false)
+      _ = try engine.scrub(to: 1.25, updatePlaybackPolling: false)
       let updated = try #require(engine.playbackState[locked: \.playbackInstance])
       engine.scrubTask = nil
 
@@ -154,7 +154,7 @@
         pollingInterval: .seconds(0.5),
       )
 
-      let playback = try #require(try engine.scrub(to: 1.5, updatePlaybackTimer: false))
+      let playback = try #require(try engine.scrub(to: 1.5, updatePlaybackPolling: false))
       let updated = try #require(engine.playbackState[locked: \.playbackInstance])
       engine.scrubTask = nil
 
@@ -166,7 +166,7 @@
       #expect(playback.duration == 4)
 
       do {
-        _ = try engine.scrub(to: 4, updatePlaybackTimer: false)
+        _ = try engine.scrub(to: 4, updatePlaybackPolling: false)
         Issue.record("Expected whole-file scrub at exact duration to fail")
       } catch AIOEngine.AIOError.invalidScrubTime(let details) {
         #expect(details == 4)
