@@ -43,8 +43,8 @@
     }
 
     @MainActor
-    package func resetPlaybackTimer(to instance: PlaybackInstance) {
-      playbackRuntime.resetPlaybackTimer(to: instance)
+    package func resetPlaybackPolling(to instance: PlaybackInstance) {
+      playbackRuntime.resetPlaybackPolling(to: instance)
     }
 
     @concurrent
@@ -70,11 +70,11 @@
     @MainActor
     public func scrub(
       to time: TimeInterval,
-      updatePlaybackTimer: Bool = true,
+      updatePlaybackPolling: Bool = true,
     ) throws(AIOError) -> Playback? {
       try playbackRuntime.scrub(
         to: time,
-        updatePlaybackTimer: updatePlaybackTimer,
+        updatePlaybackPolling: updatePlaybackPolling,
       )
     }
 

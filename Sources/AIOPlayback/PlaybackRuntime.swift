@@ -91,7 +91,7 @@
 
       let playback = owner.getPlayback(for: playbackInstance)
       owner.setPlayback(playback)
-      resetPlaybackTimer(to: playbackInstance)
+      resetPlaybackPolling(to: playbackInstance)
       return playback
     }
 
@@ -197,16 +197,17 @@
 
       let playback = owner.getPlayback(for: playbackInstance)
       owner.setPlayback(playback)
-      resetPlaybackTimer(to: playbackInstance)
+      resetPlaybackPolling(to: playbackInstance)
 
       return playback
     }
 
     @MainActor
-    func resetPlaybackTimer(to instance: PlaybackInstance) {
+    func resetPlaybackPolling(to instance: PlaybackInstance) {
       owner.playbackTask = MainActorOwnedWork { [owner] in
-        let interval = instance.pollingInterval
-        for await _ in AsyncTimerSequence(interval: interval, clock: .suspending) {
+        let pollingPolicy = PollingPolicy(interval: instance.pollingInterval)
+        while !Task.isCancelled {
+          try? await pollingPolicy.waitForNextPoll()
           if Task.isCancelled { return }
           let playback = owner.getPlayback()
           if playback?.id == instance.id {
@@ -258,7 +259,7 @@
     @MainActor
     func scrub(
       to time: TimeInterval,
-      updatePlaybackTimer: Bool = true,
+      updatePlaybackPolling: Bool = true,
     ) throws(AIOEngine.AIOError) -> AIOEngine.Playback? {
       if let initialInstance = owner.playbackState[locked: \.playbackInstance] {
         let playback = owner.getPlayback(for: initialInstance)
@@ -306,8 +307,8 @@
           duration: playback.duration,
         )
         defer { owner.setPlayback(newPlayback) }
-        if updatePlaybackTimer {
-          resetPlaybackTimer(to: newInstance)
+        if updatePlaybackPolling {
+          resetPlaybackPolling(to: newInstance)
         } else {
           owner.playbackTask = nil
         }
@@ -456,7 +457,7 @@
           _ = try await play(url: resume.fileURL, playbackPollingInterval: resume.pollingInterval)
         }
         if clampedTime > 0 {
-          _ = try scrub(to: clampedTime, updatePlaybackTimer: true)
+          _ = try scrub(to: clampedTime, updatePlaybackPolling: true)
         }
         if resume.wasPlaying == false {
           pausePlayback()
