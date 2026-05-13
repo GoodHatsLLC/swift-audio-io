@@ -256,7 +256,7 @@
           onAnalysisFrame: { [weak self] frame in
             guard let self else { return }
             let dispatcher = self.hub.dispatcher()
-            DispatchQueue.main.async { [weak self] in
+            VisualizationMainDelivery.async { [weak self] in
               guard let self else { return }
               if let newTimeDomain = frame.timeDomain {
                 self.timeDomain = newTimeDomain
@@ -278,7 +278,7 @@
           onLatestBufferTiming: { [weak self] timing in
             guard let self else { return }
             let dispatcher = self.hub.dispatcher()
-            DispatchQueue.main.async { [weak self] in
+            VisualizationMainDelivery.async { [weak self] in
               guard let self else { return }
               self.latestBufferTiming = timing
               dispatcher.deliver(.latestBufferTiming(timing))
@@ -288,12 +288,12 @@
             guard let self else { return }
             let dispatcher = self.hub.dispatcher()
             dispatcher.deliver(.lodSnapshotBackground)
-            DispatchQueue.main.async {
+            VisualizationMainDelivery.async {
               dispatcher.deliver(.lodSnapshot)
             }
           },
           onFrequencyLabelsChanged: { [weak self] labels in
-            DispatchQueue.main.async { [weak self] in
+            VisualizationMainDelivery.async { [weak self] in
               self?.frequencyLabels = labels
             }
           },
