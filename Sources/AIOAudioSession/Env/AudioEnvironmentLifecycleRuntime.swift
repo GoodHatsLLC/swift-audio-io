@@ -39,8 +39,14 @@
 
         var isConfigured = false
         var configureAttempt = 0
-        var configureRetryDelay: Duration = .milliseconds(100)
-        let maxConfigureRetryDelay: Duration = .seconds(2)
+        let configureRetryPolicy = RetryPolicy(
+          maxAttempts: .max,
+          delay: .exponential(
+            base: .milliseconds(100),
+            maximum: .seconds(2),
+            maximumExponent: 10,
+          ),
+        )
         while !isConfigured {
           configureAttempt += 1
           do {
@@ -53,6 +59,9 @@
               return
             }
 
+            let configureRetryDelay = configureRetryPolicy.retryDelay(
+              afterFailureCount: configureAttempt,
+            )
             audioEnvironmentLifecycleLog.error(
               """
               Engine failed to configure audio session (attempt \(configureAttempt, privacy: .public)):
@@ -60,10 +69,7 @@
               Retrying in \(configureRetryDelay, privacy: .public)
               """,
             )
-            try? await Task.sleep(for: configureRetryDelay)
-            let nextRetryDelay = configureRetryDelay + configureRetryDelay
-            configureRetryDelay =
-              nextRetryDelay > maxConfigureRetryDelay ? maxConfigureRetryDelay : nextRetryDelay
+            try? await configureRetryPolicy.wait(afterFailureCount: configureAttempt)
           }
         }
 
@@ -168,7 +174,8 @@
               } else {
                 pollInterval = .seconds(30)
               }
-              try? await Task.sleep(for: pollInterval)
+              let pollingPolicy = PollingPolicy(interval: pollInterval)
+              try? await pollingPolicy.waitForNextPoll()
             }
           }
 
