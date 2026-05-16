@@ -183,7 +183,7 @@ xcrun swift test --package-path Packages/AIO
 
 ### Backup (iOS Simulator via raw Xcode CLI)
 ```bash
-xcodebuild test -workspace Recorder.xcworkspace -scheme AIOiOSTests -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -derivedDataPath ./.DerivedData
+xcodebuild test -workspace Recorder.xcworkspace -scheme AIOiOSTests -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -derivedDataPath "${TMPDIR:-/tmp}/RecorderDerivedData/AIOiOSTests"
 ```
 
 ### Claude Code Slash Commands (Optional)
