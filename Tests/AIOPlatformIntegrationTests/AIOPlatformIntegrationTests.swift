@@ -414,7 +414,7 @@
     func snapshot() -> (interruptions: [AIOEngine.RecordingInterruption], failureCount: Int) {
       lock.lock()
       defer { lock.unlock() }
-      (interruptions, failureCount)
+      return (interruptions, failureCount)
     }
   }
 
