@@ -1,9 +1,9 @@
 # AIO Package - Audio I/O Engine
 
 **Location**: `Packages/AIO/`
-**Last Updated**: 2026-04-06
+**Last Updated**: 2026-05-17
 
-This file consolidates the previous `CLAUDE.md` content for this directory. `CLAUDE.md` remains as a symlink for backwards compatibility.
+`CLAUDE.md` in this directory is a symlink to this file.
 
 ## Purpose
 
@@ -129,6 +129,15 @@ Contains:
 - `VisualizationProcessor` for RT-safe ingestion/snapshot work
 - `VisualizationHub` for subscriber bookkeeping and event masking
 
+#### AIOMicHealth
+**Location**: `Sources/AIOMicHealth/`
+**Purpose**: Microphone health monitoring
+
+Contains:
+- `MicHealthMonitor`
+- `MicHealthState`, `MicHealthInputs`, `MicHealthThresholds`
+- `PendingTrackEvent`
+
 ## Refactor Status
 
 The AIO refactor has landed substantially, but not every end-state goal is finished.
@@ -167,6 +176,10 @@ The package has comprehensive test coverage:
 **Location**: `Tests/AudioVisualizationTests/`
 **Tests**: Visualization data generation and performance benchmarks
 
+### AIOMicHealthTests
+**Location**: `Tests/AIOMicHealthTests/`
+**Tests**: Microphone health monitoring
+
 ## Building & Testing
 
 Preferred: use XcodeBuildMCP (MCP server or `xcodebuildmcp` CLI) for builds/tests (workspace + simulator aware). Use raw `xcodebuild` only as a backup when neither is available.
@@ -174,7 +187,7 @@ Preferred: use XcodeBuildMCP (MCP server or `xcodebuildmcp` CLI) for builds/test
 If you're iterating on parts of the package that can run directly on the host (no iOS-only APIs), prefer SwiftPM via `xcrun` for fast feedback.
 
 ### Preferred (XcodeBuildMCP MCP server or CLI)
-See `DETAILS_BUILD_MCP.md`. Use the hosted iOS workspace scheme `AIOiOSTests` (or `AudioVisualizationiOSTests`) with `mcp__XcodeBuildMCP__test_sim`, or run the SwiftPM package schemes `AIOTests`, `ToolsTests`, and `AudioVisualizationTests` directly when simulator hosting is not needed.
+See `docs/HOWTO/DETAILS_BUILD_MCP.md`. Use the hosted iOS workspace scheme `AIOiOSTests` (or `AudioVisualizationiOSTests`) with `mcp__XcodeBuildMCP__test_sim`, or run the SwiftPM test targets `AIOTests`, `ToolsTests`, `AudioVisualizationTests`, and `AIOMicHealthTests` directly via `xcrun swift test` when simulator hosting is not needed.
 
 ### Host SwiftPM (When Compatible)
 ```bash
@@ -258,11 +271,15 @@ See `Sources/AIO.docc/MultiBandVisualization.md` for complete API documentation.
 
 Technical specs and design documents for the audio engine:
 
+- `AIO.md` - DocC catalog landing page
+- `README.md` - DocC catalog overview
+- `Architecture.md` - Package architecture overview
+- `Development.md` - Development guidance
+- `Features.md` - Feature overview
 - `SPEC_AIO.md` - AIO engine spec (architecture, recording pipeline, error handling)
-- `AUDIO_ENGINES.md` - Audio engine design comparison and rationale
 - `SPEC_AUDIO_VIZ.md` - Audio visualization pipeline spec
-- `waveform-and-segment-editing-infrastructure.md` - Waveform rendering and segment editing infrastructure
-- `waveform-memory-optimization-followups.md` - Memory optimization follow-ups for waveform data
+- `DESIGN_THREADING_CONFORMANCE.md` - iOS audio threading conformance design
+- `core-audio-layer-opportunities.md` - Core Audio layer opportunities
 - `MultiBandVisualization.md` - Multi-band LOD API documentation
 - `MultiBandLODContract.md` - Multi-band LOD data contract
 - `VisualizationSubscriptionMigration.md` - migration guide for event-first subscriptions and config validation
