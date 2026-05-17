@@ -29,6 +29,4 @@ targets directly.
 ### Runtime Contracts
 
 - <doc:MultiBandLODContract>
-- <doc:VisualizationSubscriptionMigration>
-- <doc:DESIGN_THREADING_CONFORMANCE>
 - <doc:core-audio-layer-opportunities>

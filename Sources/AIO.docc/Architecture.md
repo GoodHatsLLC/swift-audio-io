@@ -39,5 +39,4 @@ writer/runtime support are not public API.
 - <doc:SPEC_AIO>
 - <doc:SPEC_AUDIO_VIZ>
 - <doc:MultiBandVisualization>
-- <doc:DESIGN_THREADING_CONFORMANCE>
 - <doc:core-audio-layer-opportunities>

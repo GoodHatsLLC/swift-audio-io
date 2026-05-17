@@ -145,5 +145,3 @@ domains:
 - Audio tap thread: realtime buffer capture and receiver fan-out.
 - Writer queue: file I/O and drain/rotation.
 - Playback timer task: periodic playback snapshot updates.
-
-See <doc:DESIGN_THREADING_CONFORMANCE> for the lower-level threading audit.
