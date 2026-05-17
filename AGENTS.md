@@ -278,11 +278,9 @@ Technical specs and design documents for the audio engine:
 - `Features.md` - Feature overview
 - `SPEC_AIO.md` - AIO engine spec (architecture, recording pipeline, error handling)
 - `SPEC_AUDIO_VIZ.md` - Audio visualization pipeline spec
-- `DESIGN_THREADING_CONFORMANCE.md` - iOS audio threading conformance design
 - `core-audio-layer-opportunities.md` - Core Audio layer opportunities
 - `MultiBandVisualization.md` - Multi-band LOD API documentation
 - `MultiBandLODContract.md` - Multi-band LOD data contract
-- `VisualizationSubscriptionMigration.md` - migration guide for event-first subscriptions and config validation
 
 ## Development Guidelines
 
