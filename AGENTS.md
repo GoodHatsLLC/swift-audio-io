@@ -213,7 +213,7 @@ Tests use **Swift Testing** framework (`@Test` macros, `@Suite`), not XCTest.
 ## Key Features
 
 - **Swift 6 Concurrency**: Full strict concurrency checking
-- **Platform Support**: iOS 26+, macCatalyst 26+
+- **Platform Support**: iOS 26+, macOS 26+
 - **Real-time Audio**: Low-latency audio processing
 - **Type Safety**: Strong typing with Swift 6
 - **Modular**: Clear separation between Tools and Engine
@@ -330,7 +330,7 @@ AppLibrary should prefer the AIO-owned runtime contracts re-exported from `AIOEn
 
 The package uses conditional compilation:
 ```swift
-platforms: Platforms.apple  // iOS 26+, macCatalyst 26+
+platforms: Platforms.apple  // iOS 26+, macOS 26+
 ```
 
 Can be disabled with `NO_PLATFORMS` environment variable for testing.
