@@ -65,14 +65,6 @@
     }
 
     @MainActor
-    func stopRecordingWithReconciliation() async -> URL? {
-      owner.wantsRecording = false
-      owner.reconciliationTask = nil
-      guard owner.isRecording else { return nil }
-      return try? await stopRecording()
-    }
-
-    @MainActor
     func reconcileRecordingState(
       desiredState: Bool,
       configuration: RecordingConfiguration,
@@ -101,7 +93,7 @@
         }
 
         do {
-          try await startRecording(configuration: configuration)
+          _ = try await startRecording(configuration: configuration)
           log.info("Recording started successfully after \(elapsed, privacy: .public)")
           owner.lastRecordingStartFailure = nil
           return
@@ -134,7 +126,7 @@
 
     nonisolated func startRecording(
       configuration: RecordingConfiguration,
-    ) async throws(RecordingError) {
+    ) async throws(RecordingError) -> URL {
       do {
         let shouldStopPlayer = await owner.withEngineControlQueue { [weak owner] in
           guard let owner else { return false }
@@ -146,7 +138,7 @@
             unsafe owner.player.stop()
           }
         }
-        try await MainActor.run {
+        return try await MainActor.run {
           if shouldStopPlayer || owner.playback != nil {
             owner.playbackState[locked: \.playbackInstance] = nil
             owner.setPlayback(nil)
@@ -188,6 +180,7 @@
             )
           }
           owner.isRecording = true
+          return url
         }
       } catch let error as RecordingError {
         throw error
