@@ -104,7 +104,7 @@
   public protocol RecordingDriving: Sendable {
     @MainActor var wantsRecording: Bool { get }
     @MainActor var isRecording: Bool { get }
-    var errors: AsyncBroadcaster<any Error> { get }
+    var events: AsyncBroadcaster<AudioIOEvent> { get }
 
     /// Reconciliation-mode start primitive. See
     /// ``AIOEngine/setDesiredRecordingState(_:configuration:)`` for semantics.

@@ -47,11 +47,13 @@
           await MainActor.run {
             guard let owner else { return }
             owner.recordingEngineRuntime.recordWriteFailure(error, url: writer.fileURL)
-            owner.errorSubject.send(
-              RecordingError.fileFailed(
-                operation: .write,
-                url: writer.fileURL,
-                error: error,
+            owner.eventSubject.send(
+              .error(
+                RecordingError.fileFailed(
+                  operation: .write,
+                  url: writer.fileURL,
+                  error: error,
+                ),
               ),
             )
             owner.onRecordingFailed?()
@@ -196,11 +198,13 @@
         )
         recordWriteFailure(ErrorContext(error), url: session.fileURL)
         if notifyOnFailure {
-          owner.errorSubject.send(
-            RecordingError.fileFailed(
-              operation: .write,
-              url: session.fileURL,
-              error: ErrorContext(error),
+          owner.eventSubject.send(
+            .error(
+              RecordingError.fileFailed(
+                operation: .write,
+                url: session.fileURL,
+                error: ErrorContext(error),
+              ),
             ),
           )
           owner.onRecordingFailed?()

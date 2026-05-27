@@ -57,6 +57,7 @@
   #endif
   public typealias AnyErrorManager = AIOAudioSession.AnyErrorManager
   public typealias AudioIOError = AIOAudioSession.AudioIOError
+  public typealias AudioIOEvent = AIOAudioSession.AudioIOEvent
   public typealias BitDepth = AIOAudioSession.BitDepth
   public typealias ChannelCount = AIOAudioSession.ChannelCount
   public typealias EncodingQuality = AIOAudioSession.EncodingQuality
