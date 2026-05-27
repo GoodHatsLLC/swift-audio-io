@@ -26,7 +26,13 @@ public enum EncodingQuality: Int, CaseIterable, Hashable, CustomStringConvertibl
     }
   }
 
-  public var platform: AVAudioQuality {
+  /// AVFoundation escape hatch — bridges the AIO enum to its
+  /// `AVAudioQuality` counterpart. Use this when constructing
+  /// AVAudioRecorder settings or interoperating with AVFoundation APIs
+  /// directly. Mainstream consumers should compose
+  /// ``RecordingConfiguration`` and let AIO emit the file settings.
+  @_spi(AVFoundation)
+  public var avAudio: AVAudioQuality {
     switch self {
     case .minimum: AVAudioQuality.min
     case .low: AVAudioQuality.low

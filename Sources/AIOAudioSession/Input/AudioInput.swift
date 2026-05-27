@@ -16,6 +16,7 @@
       }
     }
 
+    @_spi(AVFoundation)
     public init(port: AVAudioSessionPortDescription) {
       self.port = port
     }
@@ -25,11 +26,13 @@
     }
 
     private let port: AVAudioSessionPortDescription
-    public var avAudio: AVAudioSessionPortDescription {
-      port
-    }
 
-    public var platform: AVAudioSessionPortDescription {
+    /// AVFoundation escape hatch. Consumers should obtain `AudioInput` values
+    /// through ``AudioEnvironmentConfiguring/availableInputs`` rather than
+    /// construct them; this accessor exists for code that must drop down to
+    /// the underlying AVAudioSession objects.
+    @_spi(AVFoundation)
+    public var avAudio: AVAudioSessionPortDescription {
       port
     }
 

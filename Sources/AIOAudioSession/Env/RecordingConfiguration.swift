@@ -187,7 +187,7 @@
           log.error("invalid sample rate: \(sampleRate, privacy: .public)")
           return nil
         }
-        let qualityRawValue = Int(outputConfiguration.quality.platform.rawValue)
+        let qualityRawValue = Int(outputConfiguration.quality.avAudio.rawValue)
         let settings: [String: Any] = [
           AVFormatIDKey: kAudioFormatMPEG4AAC,
           AVSampleRateKey: sampleRate,
@@ -260,7 +260,7 @@
           log.error("invalid sample rate: \(sampleRate, privacy: .public)")
           return nil
         }
-        let qualityRawValue = Int(outputConfiguration.quality.platform.rawValue)
+        let qualityRawValue = Int(outputConfiguration.quality.avAudio.rawValue)
         let settings: [String: Any] = [
           AVFormatIDKey: kAudioFormatMPEG4AAC,
           AVSampleRateKey: sampleRate,

@@ -35,7 +35,7 @@
               do {
                 try env.request(
                   input: env.input
-                    ?? env.availableInputs.first(where: { $0.platform.portType == .builtInMic }),
+                    ?? env.availableInputs.first(where: { $0.avAudio.portType == .builtInMic }),
                 )
               } catch let error as AudioEnvironment.RequestError {
                 throw ManagerError.audioEnvironment(error)
