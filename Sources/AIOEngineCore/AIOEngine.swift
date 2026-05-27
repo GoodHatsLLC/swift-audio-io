@@ -475,11 +475,19 @@
 
     package let clock = ContinuousClock()
 
-    package let errorSubject: Subject<any Error> = .init()
+    package let eventSubject: Subject<AudioIOEvent> = .init()
 
-    /// An asynchronous stream of errors that occur in the audio engine.
-    public var errors: AsyncBroadcaster<any Error> {
-      errorSubject.broadcaster
+    /// The unified event stream for the audio engine.
+    ///
+    /// Subscribe via `for await event in engine.events { ... }` and pattern-match
+    /// on the case. Currently the stream emits ``AudioIOEvent/error(_:)`` cases
+    /// for every engine-level failure that can't be surfaced via a `throws`
+    /// signature (tap-thread conversion failures, async drain failures, session
+    /// deactivation failures). Lifecycle event cases (recording started /
+    /// completed / interrupted, segment rotated, playback updated) are tracked
+    /// for future migration off the `on*` closure callbacks.
+    public var events: AsyncBroadcaster<AudioIOEvent> {
+      eventSubject.broadcaster
     }
 
     /// Returns the most recent failure encountered while starting recording and clears it.
@@ -772,7 +780,7 @@
           case .conversionFailed: "conversionFailed"
           }
         log.error("Tap error: \(description, privacy: .public)")
-        errorSubject.send(error)
+        eventSubject.send(AudioIOEvent.error(error))
       }
       return (poll, handler)
     }

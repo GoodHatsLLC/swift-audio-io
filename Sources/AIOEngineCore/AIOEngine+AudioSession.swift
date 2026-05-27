@@ -107,7 +107,7 @@
         log.error(
           "Failed to delegate audio session deactivation (\(reason, privacy: .public)): \(wrapped, privacy: .public)",
         )
-        errorSubject.send(wrapped)
+        eventSubject.send(AudioIOEvent.error(wrapped))
       }
     }
   }
