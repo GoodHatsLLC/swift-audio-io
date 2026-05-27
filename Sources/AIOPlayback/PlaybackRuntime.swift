@@ -16,7 +16,7 @@
     let owner: AIOEngine
 
     @MainActor
-    func play(url: URL) async throws(AIOEngine.AIOError) -> AIOEngine.Playback {
+    func play(url: URL) async throws(PlaybackError) -> AIOEngine.Playback {
       try await play(url: url, playbackPollingInterval: nil)
     }
 
@@ -24,24 +24,25 @@
     func play(
       url: URL,
       playbackPollingInterval: Duration?,
-    ) async throws(AIOEngine.AIOError) -> AIOEngine.Playback {
+    ) async throws(PlaybackError) -> AIOEngine.Playback {
       guard !owner.isRecording else {
-        throw AIOEngine.AIOError.cannotPlayWhileRecording
+        throw PlaybackError.cannotPlayWhileRecording
       }
 
-      try owner.configureAudioSessionForPlayback()
+      do {
+        try owner.configureAudioSessionForPlayback()
+      } catch let sessionError {
+        throw PlaybackError.session(sessionError)
+      }
 
       let file: AVAudioFile
       do {
         file = try AVAudioFile(forReading: url)
       } catch {
-        throw AIOEngine.AIOError.audioFileFailed(
-          operation: .openForReading, url: url, error: ErrorContext(error),
-        )
+        throw PlaybackError.fileReadFailed(url: url, error: ErrorContext(error))
       }
       guard file.length > 0 else {
-        throw AIOEngine.AIOError.audioFileFailed(
-          operation: .openForReading,
+        throw PlaybackError.fileReadFailed(
           url: url,
           error: ErrorContext(EmptyAudioFileError(url: url)),
         )
@@ -86,7 +87,7 @@
         unsafe owner.player.play()
       }
       if case .failure(let error) = startResult {
-        throw AIOEngine.AIOError.engineStartFailed(error: ErrorContext(error))
+        throw PlaybackError.session(.engineStartFailed(error: ErrorContext(error)))
       }
 
       let playback = owner.getPlayback(for: playbackInstance)
@@ -102,20 +103,22 @@
       endTime: TimeInterval,
       onComplete: (@MainActor @Sendable () -> Void)? = nil,
       playbackPollingInterval: Duration? = nil,
-    ) async throws(AIOEngine.AIOError) -> AIOEngine.Playback {
+    ) async throws(PlaybackError) -> AIOEngine.Playback {
       guard !owner.isRecording else {
-        throw AIOEngine.AIOError.cannotPlayWhileRecording
+        throw PlaybackError.cannotPlayWhileRecording
       }
 
-      try owner.configureAudioSessionForPlayback()
+      do {
+        try owner.configureAudioSessionForPlayback()
+      } catch let sessionError {
+        throw PlaybackError.session(sessionError)
+      }
 
       let file: AVAudioFile
       do {
         file = try AVAudioFile(forReading: url)
       } catch {
-        throw AIOEngine.AIOError.audioFileFailed(
-          operation: .openForReading, url: url, error: ErrorContext(error),
-        )
+        throw PlaybackError.fileReadFailed(url: url, error: ErrorContext(error))
       }
       let sampleRate = file.processingFormat.sampleRate
       let startFrame = AVAudioFramePosition(startTime * sampleRate)
@@ -124,7 +127,7 @@
       // Guard hard invariants first: the start must be inside the file and the
       // caller must have asked for a positive window.
       guard startFrame >= 0, startFrame < file.length, duration > 0 else {
-        throw AIOEngine.AIOError.invalidTimeRange
+        throw PlaybackError.invalidTimeRange
       }
 
       // Clamp the requested frame count to fit within the file. Stored ranges
@@ -137,7 +140,7 @@
       let frameCount = min(requestedFrameCount, maxFrameCount)
 
       guard frameCount > 0 else {
-        throw AIOEngine.AIOError.invalidTimeRange
+        throw PlaybackError.invalidTimeRange
       }
 
       let interval =
@@ -192,7 +195,7 @@
         unsafe owner.player.play()
       }
       if case .failure(let error) = startResult {
-        throw AIOEngine.AIOError.engineStartFailed(error: ErrorContext(error))
+        throw PlaybackError.session(.engineStartFailed(error: ErrorContext(error)))
       }
 
       let playback = owner.getPlayback(for: playbackInstance)
@@ -260,7 +263,7 @@
     func scrub(
       to time: TimeInterval,
       updatePlaybackPolling: Bool = true,
-    ) throws(AIOEngine.AIOError) -> AIOEngine.Playback? {
+    ) throws(PlaybackError) -> AIOEngine.Playback? {
       if let initialInstance = owner.playbackState[locked: \.playbackInstance] {
         let playback = owner.getPlayback(for: initialInstance)
         let file = initialInstance.file
@@ -268,7 +271,7 @@
         guard time >= 0,
           allowsUpperBound ? playback.duration >= time : playback.duration > time
         else {
-          throw AIOEngine.AIOError.invalidScrubTime(details: time)
+          throw PlaybackError.invalidScrubTime(value: time)
         }
         let framePosition =
           if let activeSegment = initialInstance.activeSegment {

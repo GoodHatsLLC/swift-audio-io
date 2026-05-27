@@ -16,9 +16,9 @@
       inputFormat: AVAudioFormat,
       processingFormat: AVAudioFormat,
       tapBufferSize: AVAudioFrameCount,
-    ) throws(AIOError) -> TapConversionArtifacts {
+    ) throws(RecordingError) -> TapConversionArtifacts {
       guard let converter = AVAudioConverter(from: inputFormat, to: processingFormat) else {
-        throw AIOError.formatConversionFailed
+        throw RecordingError.formatConversionFailed
       }
       let tapFrameRatio = processingFormat.sampleRate / inputFormat.sampleRate
       let maxTapFrames = max(
@@ -31,7 +31,7 @@
           frameCapacity: maxTapFrames,
         )
       else {
-        throw AIOError.formatConversionFailed
+        throw RecordingError.formatConversionFailed
       }
       return TapConversionArtifacts(
         converter: converter,
@@ -50,7 +50,7 @@
       configuration: RecordingConfiguration,
       processingFormat: AVAudioFormat,
       stopEngine: Bool,
-    ) throws(AIOError) -> TapInstallResult {
+    ) throws(RecordingError) -> TapInstallResult {
       #if DEBUG
         if let override = testReinstallTapOverride {
           return try override(configuration, processingFormat)
@@ -59,7 +59,7 @@
 
       let installResult = runOnEngineControlQueueResult {
         [weak self] () throws -> TapInstallResult in
-        guard let self else { throw AIOError.engineError }
+        guard let self else { throw RecordingError.engineError }
         dispatchPrecondition(condition: .onQueue(self.engineControlQueue))
 
         // 1. Remove existing tap
@@ -84,22 +84,22 @@
         // 4. Read format — one read, one validation
         let inputFormat = unsafe self.engine.inputNode.inputFormat(forBus: 0)
         guard inputFormat.channelCount > 0 else {
-          throw AIOError.audioSessionNotReady(
-            details: "Input node has no channels (channelCount: 0)",
+          throw RecordingError.session(
+            .notReady(details: "Input node has no channels (channelCount: 0)"),
           )
         }
         guard inputFormat.sampleRate > 0 else {
-          throw AIOError.audioSessionNotReady(
-            details: "Input node has invalid sample rate (sampleRate: 0)",
+          throw RecordingError.session(
+            .notReady(details: "Input node has invalid sample rate (sampleRate: 0)"),
           )
         }
 
         // 5. Create tap configuration
         guard let tapConfig = configuration.tapConfiguration(bus: 0, input: inputFormat) else {
-          throw AIOError.invalidRecordingConfiguration(details: "Cannot create tap configuration")
+          throw RecordingError.invalidConfiguration(details: "Cannot create tap configuration")
         }
         guard tapConfig.bufferSize > 0 else {
-          throw AIOError.invalidRecordingConfiguration(details: "Tap bufferSize is 0")
+          throw RecordingError.invalidConfiguration(details: "Tap bufferSize is 0")
         }
 
         // 6. Install tap with format: nil to match the node's current format
@@ -120,13 +120,13 @@
         unsafe self.engine.prepare()
         let postInstallFormat = unsafe self.engine.inputNode.inputFormat(forBus: 0)
         guard postInstallFormat.channelCount > 0, postInstallFormat.sampleRate > 0 else {
-          throw AIOError.invalidRecordingConfiguration(
+          throw RecordingError.invalidConfiguration(
             details:
               "Format invalid after tap install (channels: \(postInstallFormat.channelCount), sampleRate: \(postInstallFormat.sampleRate))",
           )
         }
         guard postInstallFormat.isEqual(inputFormat) else {
-          throw AIOError.invalidRecordingConfiguration(
+          throw RecordingError.invalidConfiguration(
             details:
               "Format changed after tap install (channels: \(inputFormat.channelCount), sampleRate: \(inputFormat.sampleRate)) -> (channels: \(postInstallFormat.channelCount), sampleRate: \(postInstallFormat.sampleRate))",
           )
@@ -163,7 +163,7 @@
         tapSetupLog.info("Tap installed: \(result.tapFormat, privacy: .public)")
         return result
       case .failure(let error):
-        throw (error as? AIOError) ?? .engineStartFailed(error: ErrorContext(error))
+        throw (error as? RecordingError) ?? .session(.engineStartFailed(error: ErrorContext(error)))
       }
     }
 

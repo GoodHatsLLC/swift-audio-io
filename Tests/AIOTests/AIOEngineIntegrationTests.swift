@@ -211,9 +211,9 @@
       let configuration = makeConfiguration(channels: .init(platform: 4))
       var tapInstallAttempted = false
 
-      engine.setReinstallTapOverride { _, _ throws(AIOEngine.AIOError) in
+      engine.setReinstallTapOverride { _, _ throws(RecordingError) in
         tapInstallAttempted = true
-        throw AIOEngine.AIOError.engineError
+        throw RecordingError.engineError
       }
       defer { engine.setReinstallTapOverride(nil) }
 
@@ -408,7 +408,7 @@
 
       await MainActor.run {
         engine.setReinstallTapOverride {
-          _, processingFormat throws(AIOEngine.AIOError) in
+          _, processingFormat throws(RecordingError) in
           reinstallCalls.increment()
           return try makeMockTapInstallResult(
             tapFormat: unchangedFormat, processingFormat: processingFormat,
@@ -454,7 +454,7 @@
 
       await MainActor.run {
         engine.setReinstallTapOverride {
-          _, processingFormat throws(AIOEngine.AIOError) in
+          _, processingFormat throws(RecordingError) in
           reinstallCalls.increment()
           return try makeMockTapInstallResult(
             tapFormat: routeFormat, processingFormat: processingFormat,
@@ -513,7 +513,7 @@
         engine.setReinstallTapOverride {
           (
             _: RecordingConfiguration, _: AVAudioFormat,
-          ) throws(AIOEngine.AIOError) -> AIOEngine.TapInstallResult in
+          ) throws(RecordingError) -> AIOEngine.TapInstallResult in
           throw .engineError
         }
       }
@@ -589,9 +589,9 @@
   private func makeMockTapInstallResult(
     tapFormat: AVAudioFormat,
     processingFormat: AVAudioFormat,
-  ) throws(AIOEngine.AIOError) -> AIOEngine.TapInstallResult {
+  ) throws(RecordingError) -> AIOEngine.TapInstallResult {
     guard let converter = AVAudioConverter(from: tapFormat, to: processingFormat) else {
-      throw AIOEngine.AIOError.formatConversionFailed
+      throw RecordingError.formatConversionFailed
     }
     guard
       let buffer = AVAudioPCMBuffer(
@@ -599,7 +599,7 @@
         frameCapacity: 1024,
       )
     else {
-      throw AIOEngine.AIOError.formatConversionFailed
+      throw RecordingError.formatConversionFailed
     }
     let artifacts = AIOEngine.TapConversionArtifacts(
       converter: converter,

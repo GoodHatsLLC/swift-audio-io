@@ -236,7 +236,7 @@
       do {
         _ = try engine.startTestRecording(configuration: configuration, enableReceivers: false)
         Issue.record("Expected unsupportedRecordingChannelCount")
-      } catch AIOEngine.AIOError.unsupportedRecordingChannelCount(let requested, let maximum) {
+      } catch RecordingError.unsupportedChannelCount(let requested, let maximum) {
         #expect(requested == 33)
         #expect(maximum == 32)
       } catch {

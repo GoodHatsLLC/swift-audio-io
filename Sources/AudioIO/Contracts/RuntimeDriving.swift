@@ -117,10 +117,10 @@
       configuration: RecordingConfiguration,
     ) async -> Bool
 
-    @MainActor func consumeLastRecordingStartFailure() -> AIOEngine.AIOError?
+    @MainActor func consumeLastRecordingStartFailure() -> RecordingError?
 
-    @MainActor func stopRecording() async throws(AIOEngine.AIOError) -> URL
-    @MainActor func rotateRecordingFile() async throws(AIOEngine.AIOError) -> URL
+    @MainActor func stopRecording() async throws(RecordingError) -> URL
+    @MainActor func rotateRecordingFile() async throws(RecordingError) -> URL
 
     @discardableResult
     func attachBufferReceiver(_ receiver: some BufferReceiver<Float>) async -> BufferReceiverToken
@@ -136,7 +136,7 @@
     }
 
     @MainActor
-    public func consumeLastRecordingStartFailure() -> AIOEngine.AIOError? {
+    public func consumeLastRecordingStartFailure() -> RecordingError? {
       nil
     }
   }

@@ -139,7 +139,8 @@
       @MainActor
       internal func setReinstallTapOverride(
         _ override: (
-          @MainActor (RecordingConfiguration, AVAudioFormat) throws(AIOError) -> TapInstallResult
+          @MainActor (RecordingConfiguration, AVAudioFormat) throws(RecordingError) ->
+            TapInstallResult
         )?,
       ) {
         testReinstallTapOverride = override
@@ -150,12 +151,12 @@
         tapFormat: AVAudioFormat? = nil,
         onCall: (@MainActor @Sendable () -> Void)? = nil,
       ) {
-        setReinstallTapOverride { _, processingFormat throws(AIOError) in
+        setReinstallTapOverride { _, processingFormat throws(RecordingError) in
           onCall?()
           let resolvedTapFormat = tapFormat ?? processingFormat
           guard let converter = AVAudioConverter(from: resolvedTapFormat, to: processingFormat)
           else {
-            throw AIOError.formatConversionFailed
+            throw RecordingError.formatConversionFailed
           }
           guard
             let buffer = AVAudioPCMBuffer(
@@ -163,7 +164,7 @@
               frameCapacity: 1_024,
             )
           else {
-            throw AIOError.formatConversionFailed
+            throw RecordingError.formatConversionFailed
           }
 
           let artifacts = TapConversionArtifacts(
@@ -198,11 +199,11 @@
         outputURL: URL? = nil,
         bufferSize: AVAudioFrameCount = 1024,
         enableReceivers: Bool = true,
-      ) throws(AIOError) -> URL {
+      ) throws(RecordingError) -> URL {
         guard !isRecording else { throw .alreadyRecording }
         try validateRecordingChannelCapacity(for: configuration)
         guard let processingFormat = configuration.processingFormat else {
-          throw .invalidRecordingConfiguration(details: "(processing format)")
+          throw .invalidConfiguration(details: "(processing format)")
         }
 
         lastWriteFailure = nil
@@ -222,7 +223,7 @@
         let sampleRate = Int(processingFormat.sampleRate)
         let channelCount = Int(processingFormat.channelCount)
         guard sampleRate > 0, channelCount > 0 else {
-          throw .invalidRecordingConfiguration(details: "Invalid processing format")
+          throw .invalidConfiguration(details: "Invalid processing format")
         }
         try validateRecordingChannelCapacity(channelCount: channelCount)
 

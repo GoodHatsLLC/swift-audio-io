@@ -16,11 +16,11 @@
 
   extension AIOEngine {
     @MainActor
-    package func configureAudioSessionForPlayback() throws(AIOError) {
+    package func configureAudioSessionForPlayback() throws(SessionError) {
       do {
         try audioSessionDelegate?.setAudioSessionActive(true)
       } catch {
-        throw .audioSessionFailed(operation: .setActive, error: ErrorContext(error))
+        throw .operationFailed(operation: .setActive, error: ErrorContext(error))
       }
     }
 
@@ -29,7 +29,7 @@
       package func applyAudioSessionConfiguration(
         _ session: AVAudioSession,
         configuration: AudioSessionConfiguration,
-      ) throws(AIOError) {
+      ) throws(SessionError) {
         if session.category != configuration.category
           || session.mode != configuration.mode
           || session.categoryOptions != configuration.options
@@ -41,7 +41,7 @@
               options: configuration.options,
             )
           } catch {
-            throw .audioSessionFailed(operation: .setCategory, error: ErrorContext(error))
+            throw .operationFailed(operation: .setCategory, error: ErrorContext(error))
           }
         }
 
@@ -53,7 +53,7 @@
               configuration.allowsHapticsAndSystemSoundsDuringRecording,
             )
           } catch {
-            throw .audioSessionFailed(
+            throw .operationFailed(
               operation: .setAllowHapticsAndSystemSoundsDuringRecording,
               error: ErrorContext(error),
             )
@@ -68,7 +68,7 @@
               configuration.prefersNoInterruptionsFromSystemAlerts,
             )
           } catch {
-            throw .audioSessionFailed(
+            throw .operationFailed(
               operation: .setPrefersNoInterruptionsFromSystemAlerts,
               error: ErrorContext(error),
             )
@@ -83,7 +83,7 @@
               configuration.prefersInterruptionOnRouteDisconnect,
             )
           } catch {
-            throw .audioSessionFailed(
+            throw .operationFailed(
               operation: .setPrefersInterruptionOnRouteDisconnect,
               error: ErrorContext(error),
             )
@@ -100,7 +100,7 @@
       do {
         try audioSessionDelegate?.setAudioSessionActive(false)
       } catch {
-        let wrapped = AIOError.audioSessionFailed(
+        let wrapped = SessionError.operationFailed(
           operation: .setActive,
           error: ErrorContext(error),
         )

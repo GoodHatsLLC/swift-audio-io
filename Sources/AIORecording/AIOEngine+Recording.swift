@@ -86,10 +86,10 @@
     /// Once the engine is ready, it starts recording audio to a temporary file.
     ///
     /// - Parameter configuration: The configuration to use for recording.
-    /// - Throws: An `AIOError` if the recording configuration is invalid or if the engine fails to start.
+    /// - Throws: A ``RecordingError`` if the recording configuration is invalid or if the engine fails to start.
     public nonisolated func startRecording(
       configuration: RecordingConfiguration,
-    ) async throws(AIOError) {
+    ) async throws(RecordingError) {
       try await recordingRuntime.startRecording(configuration: configuration)
     }
 
@@ -173,9 +173,9 @@
     /// setting up the necessary buffers, and installing an audio tap.
     ///
     /// - Parameter configuration: The configuration to use for recording.
-    /// - Throws: An `AIOError` if the configuration is invalid or if the engine fails to warm up.
+    /// - Throws: A ``RecordingError`` if the configuration is invalid or if the engine fails to warm up.
     @MainActor
-    public func warm(configuration: RecordingConfiguration) throws(AIOError) {
+    public func warm(configuration: RecordingConfiguration) throws(RecordingError) {
       try recordingEngineRuntime.warm(configuration: configuration)
     }
 
@@ -191,20 +191,20 @@
 
     package func validateRecordingChannelCapacity(
       channelCount: Int,
-    ) throws(AIOError) {
+    ) throws(RecordingError) {
       try recordingEngineRuntime.validateRecordingChannelCapacity(channelCount: channelCount)
     }
 
     package func validateRecordingChannelCapacity(
       for configuration: RecordingConfiguration,
-    ) throws(AIOError) {
+    ) throws(RecordingError) {
       try recordingEngineRuntime.validateRecordingChannelCapacity(for: configuration)
     }
 
     @MainActor
     func validateEncoderCompatibility(
       for configuration: RecordingConfiguration,
-    ) throws(AIOError) {
+    ) throws(RecordingError) {
       try recordingEngineRuntime.validateEncoderCompatibility(for: configuration)
     }
 
@@ -216,7 +216,7 @@
     @MainActor
     func reconfigureTapForIntervalChange(
       configuration: RecordingConfiguration,
-    ) throws(AIOError) {
+    ) throws(RecordingError) {
       try recordingEngineRuntime.reconfigureTapForIntervalChange(configuration: configuration)
     }
 
@@ -370,9 +370,9 @@
     /// Stops the current recording and returns the URL of the recorded file.
     ///
     /// - Returns: The URL of the recorded file.
-    /// - Throws: An `AIOError.notRecording` error if the engine is not currently recording.
+    /// - Throws: A ``RecordingError/notRecording`` error if the engine is not currently recording.
     @MainActor
-    public func stopRecording() async throws(AIOError) -> URL {
+    public func stopRecording() async throws(RecordingError) -> URL {
       try await recordingRuntime.stopRecording()
     }
 
@@ -394,9 +394,9 @@
     /// 5. Starts a new writer loop
     ///
     /// - Returns: URL of the completed (previous) recording file
-    /// - Throws: `AIOError.notRecording` if not currently recording
+    /// - Throws: ``RecordingError/notRecording`` if not currently recording
     @MainActor
-    public func rotateRecordingFile() async throws(AIOError) -> URL {
+    public func rotateRecordingFile() async throws(RecordingError) -> URL {
       try await recordingRuntime.rotateRecordingFile()
     }
   }

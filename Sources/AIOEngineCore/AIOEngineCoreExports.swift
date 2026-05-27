@@ -5,7 +5,7 @@
   @_exported import AIOContracts
   @_exported import Foundation
   @_exported import Observation
-  // Intentional public surface: AIOError conforms to Tools.AudioError and
-  // AIOEngine.errors returns Tools.AsyncBroadcaster.
+  // Intentional public surface: RecordingError/PlaybackError/SessionError
+  // conform to Tools.AudioError and AIOEngine.errors returns Tools.AsyncBroadcaster.
   @_exported import Tools
 #endif

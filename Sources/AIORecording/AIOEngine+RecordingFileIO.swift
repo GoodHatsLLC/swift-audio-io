@@ -52,7 +52,7 @@
     package func resolveOutputURL(
       for configuration: RecordingConfiguration,
       allowExplicitFile: Bool,
-    ) throws(AIOError) -> (url: URL, protection: OutputFileProtection?) {
+    ) throws(RecordingError) -> (url: URL, protection: OutputFileProtection?) {
       let filename = Self.generateRecordingFilename(extension: configuration.fileExtension)
       #if os(iOS)
         switch configuration.outputDestination {
@@ -72,7 +72,7 @@
               withIntermediateDirectories: true,
             )
           } catch {
-            throw AIOError.audioFileFailed(
+            throw RecordingError.fileFailed(
               operation: .openForWriting, url: directory, error: ErrorContext(error),
             )
           }
@@ -85,7 +85,7 @@
           return resolved
         case .fileURL(let fileURL, let protection):
           guard allowExplicitFile else {
-            throw AIOError.invalidRecordingConfiguration(
+            throw RecordingError.invalidConfiguration(
               details: "Output destination does not support rotation",
             )
           }
@@ -96,7 +96,7 @@
               withIntermediateDirectories: true,
             )
           } catch {
-            throw AIOError.audioFileFailed(
+            throw RecordingError.fileFailed(
               operation: .openForWriting, url: parent, error: ErrorContext(error),
             )
           }
@@ -123,7 +123,7 @@
               withIntermediateDirectories: true,
             )
           } catch {
-            throw AIOError.audioFileFailed(
+            throw RecordingError.fileFailed(
               operation: .openForWriting, url: directory, error: ErrorContext(error),
             )
           }
@@ -135,7 +135,7 @@
           return resolved
         case .fileURL(let fileURL):
           guard allowExplicitFile else {
-            throw AIOError.invalidRecordingConfiguration(
+            throw RecordingError.invalidConfiguration(
               details: "Output destination does not support rotation",
             )
           }
@@ -146,7 +146,7 @@
               withIntermediateDirectories: true,
             )
           } catch {
-            throw AIOError.audioFileFailed(
+            throw RecordingError.fileFailed(
               operation: .openForWriting, url: parent, error: ErrorContext(error),
             )
           }
@@ -172,12 +172,12 @@
     package func makeRecordingWriter(
       url: URL,
       configuration: RecordingConfiguration,
-    ) throws(AIOError) -> any RecordingFileWriter {
+    ) throws(RecordingError) -> any RecordingFileWriter {
       guard let fileSettings = configuration.fileSettings else {
-        throw AIOError.invalidRecordingConfiguration(details: "(file format settings)")
+        throw RecordingError.invalidConfiguration(details: "(file format settings)")
       }
       guard let processingFormat = configuration.processingFormat else {
-        throw AIOError.invalidRecordingConfiguration(details: "processing format")
+        throw RecordingError.invalidConfiguration(details: "processing format")
       }
       switch writerBackend {
       case .avAudioFile:
@@ -185,18 +185,18 @@
           let file = try AVAudioFile(forWriting: url, settings: fileSettings)
           return AVAudioFileWriter(file: file)
         } catch {
-          throw AIOError.audioFileFailed(
+          throw RecordingError.fileFailed(
             operation: .openForWriting, url: url, error: ErrorContext(error),
           )
         }
       case .extAudioFile:
         guard let outputFormat = AVAudioFormat(settings: fileSettings) else {
-          throw AIOError.invalidRecordingConfiguration(details: "file format settings")
+          throw RecordingError.invalidConfiguration(details: "file format settings")
         }
         let diskFormat: AVAudioFormat
         if !outputFormat.isInterleaved, outputFormat.channelCount > 1 {
           guard let channelLayout = outputFormat.channelLayout else {
-            throw AIOError.invalidRecordingConfiguration(
+            throw RecordingError.invalidConfiguration(
               details: "file format channel layout",
             )
           }
@@ -217,7 +217,7 @@
             clientFormat: processingFormat,
           )
         } catch {
-          throw AIOError.audioFileFailed(
+          throw RecordingError.fileFailed(
             operation: .openForWriting, url: url, error: ErrorContext(error),
           )
         }

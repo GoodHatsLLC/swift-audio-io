@@ -1,6 +1,7 @@
 // © GoodHatsLLC
 
 #if canImport(AVFoundation)
+  import AIOAudioSession
   import AIOEngineCore
   package import AVFoundation
   import Foundation
@@ -11,12 +12,12 @@
     }
 
     @MainActor
-    public func play(url: URL) async throws(AIOError) -> Playback {
+    public func play(url: URL) async throws(PlaybackError) -> Playback {
       try await playbackRuntime.play(url: url)
     }
 
     @MainActor
-    public func play(url: URL, playbackPollingInterval: Duration?) async throws(AIOError)
+    public func play(url: URL, playbackPollingInterval: Duration?) async throws(PlaybackError)
       -> Playback
     {
       try await playbackRuntime.play(
@@ -32,7 +33,7 @@
       endTime: TimeInterval,
       onComplete: (@MainActor @Sendable () -> Void)? = nil,
       playbackPollingInterval: Duration? = nil,
-    ) async throws(AIOError) -> Playback {
+    ) async throws(PlaybackError) -> Playback {
       try await playbackRuntime.playSegment(
         url: url,
         startTime: startTime,
@@ -71,7 +72,7 @@
     public func scrub(
       to time: TimeInterval,
       updatePlaybackPolling: Bool = true,
-    ) throws(AIOError) -> Playback? {
+    ) throws(PlaybackError) -> Playback? {
       try playbackRuntime.scrub(
         to: time,
         updatePlaybackPolling: updatePlaybackPolling,
