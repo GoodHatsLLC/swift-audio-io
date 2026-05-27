@@ -37,7 +37,7 @@
 
         #expect(didPrepare, "prepareToRecord() failed for \(fileFormat.description)")
         #expect(
-          recorder.format.sampleRate == configuration.inputConfiguration.sampleRate.rawValue,
+          recorder.format.sampleRate == configuration.inputConfiguration.sampleRate.hz,
           "Unexpected sample rate for \(fileFormat.description): \(recorder.format.sampleRate)",
         )
         #expect(
@@ -51,7 +51,7 @@
     func `wav int24 uses packed24 bit PCM`() throws {
       let configuration = RecordingConfiguration(
         inputConfiguration: .init(
-          sampleRate: .common(.sr48000),
+          sampleRate: .dvd,
           channels: .stereo,
         ),
         outputConfiguration: .init(
@@ -74,7 +74,7 @@
     func `caf int24 uses linear PCM bit depth24`() throws {
       let configuration = RecordingConfiguration(
         inputConfiguration: .init(
-          sampleRate: .common(.sr48000),
+          sampleRate: .dvd,
           channels: .stereo,
         ),
         outputConfiguration: .init(
@@ -94,7 +94,7 @@
     func `flac uses encoder bit depth hint`() throws {
       let configuration = RecordingConfiguration(
         inputConfiguration: .init(
-          sampleRate: .common(.sr48000),
+          sampleRate: .dvd,
           channels: .stereo,
         ),
         outputConfiguration: .init(
@@ -114,7 +114,7 @@
     func `aiff uses big endian linear PCM`() throws {
       let configuration = RecordingConfiguration(
         inputConfiguration: .init(
-          sampleRate: .common(.sr48000),
+          sampleRate: .dvd,
           channels: .stereo,
         ),
         outputConfiguration: .init(
@@ -136,7 +136,7 @@
     private func makeConfiguration(fileFormat: FileFormat) -> RecordingConfiguration {
       RecordingConfiguration(
         inputConfiguration: .init(
-          sampleRate: .common(.sr48000),
+          sampleRate: .dvd,
           channels: .mono,
         ),
         outputConfiguration: .init(

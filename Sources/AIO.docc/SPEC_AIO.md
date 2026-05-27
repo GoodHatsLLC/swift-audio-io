@@ -46,7 +46,7 @@ Primary recording calls:
 ```swift
 let engine = AIOEngine()
 let configuration = RecordingConfiguration(
-  inputConfiguration: .init(sampleRate: .common(.sr48000), channels: .stereo),
+  inputConfiguration: .init(sampleRate: .dvd, channels: .stereo),
   outputConfiguration: .init(fileFormat: .caf, bitDepth: .pcmFloat32, quality: .maximum)
 )
 

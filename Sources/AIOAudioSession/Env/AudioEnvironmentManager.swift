@@ -446,7 +446,7 @@
 
     /// The common sample rates.
     public var commonSampleRates: [SampleRate] {
-      SampleRate.commonCases
+      SampleRate.common
     }
 
     /// The sample rates likely to be honored for the currently selected input.
@@ -518,7 +518,7 @@
         }
 
       return .init(
-        sampleRate: .init(rawValue: sampleRate),
+        sampleRate: SampleRate(sampleRate),
         channels: resolvedChannels,
       )
     }

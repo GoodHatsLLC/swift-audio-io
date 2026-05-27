@@ -104,7 +104,7 @@
       }
       return AVAudioFormat(
         commonFormat: .pcmFormatFloat32,
-        sampleRate: inputConfiguration.sampleRate.platform,
+        sampleRate: inputConfiguration.sampleRate.hz,
         interleaved: false,
         channelLayout: channelLayout,
       )
@@ -142,7 +142,7 @@
     ) -> [String: Any] {
       var settings: [String: Any] = [
         AVFormatIDKey: kAudioFormatLinearPCM,
-        AVSampleRateKey: inputConfiguration.sampleRate.rawValue,
+        AVSampleRateKey: inputConfiguration.sampleRate.hz,
         AVNumberOfChannelsKey: inputConfiguration.channels.platform,
         AVLinearPCMBitDepthKey: bitDepth,
         AVLinearPCMIsFloatKey: isFloat,
@@ -182,7 +182,7 @@
       guard validatesRecordingChannelCount() else { return nil }
       switch outputConfiguration.fileFormat {
       case .aac, .adts:
-        let sampleRate = inputConfiguration.sampleRate.rawValue
+        let sampleRate = inputConfiguration.sampleRate.hz
         guard outputConfiguration.fileFormat.supportsEncodedSampleRate(sampleRate) else {
           log.error("invalid sample rate: \(sampleRate, privacy: .public)")
           return nil
@@ -211,7 +211,7 @@
 
         let settings: [String: Any] = [
           AVFormatIDKey: kAudioFormatFLAC,
-          AVSampleRateKey: inputConfiguration.sampleRate.rawValue,
+          AVSampleRateKey: inputConfiguration.sampleRate.hz,
           AVNumberOfChannelsKey: inputConfiguration.channels.platform,
           AVEncoderBitDepthHintKey: encoderBitDepthHint,
         ]
@@ -255,7 +255,7 @@
       guard validatesRecordingChannelCount() else { return nil }
       switch outputConfiguration.fileFormat {
       case .aac, .adts:
-        let sampleRate = inputConfiguration.sampleRate.rawValue
+        let sampleRate = inputConfiguration.sampleRate.hz
         guard outputConfiguration.fileFormat.supportsEncodedSampleRate(sampleRate) else {
           log.error("invalid sample rate: \(sampleRate, privacy: .public)")
           return nil
@@ -289,7 +289,7 @@
       case .flac:
         let settings: [String: Any] = [
           AVFormatIDKey: kAudioFormatFLAC,
-          AVSampleRateKey: inputConfiguration.sampleRate.rawValue,
+          AVSampleRateKey: inputConfiguration.sampleRate.hz,
           AVNumberOfChannelsKey: inputConfiguration.channels.platform,
           AVEncoderBitDepthHintKey: fileSettings?[AVEncoderBitDepthHintKey] ?? 16,
         ]
@@ -305,7 +305,7 @@
         }
 
         // FLAC validation
-        let sampleRate = inputConfiguration.sampleRate.rawValue
+        let sampleRate = inputConfiguration.sampleRate.hz
 
         // FLAC supports wide range of sample rates
         guard sampleRate <= 655_350,  // FLAC max sample rate
@@ -336,7 +336,7 @@
             ).map {
               AVAudioFormat(
                 commonFormat: commonFormat,
-                sampleRate: inputConfiguration.sampleRate.rawValue,
+                sampleRate: inputConfiguration.sampleRate.hz,
                 interleaved: outputConfiguration.fileFormat.requiresInterleaved,
                 channelLayout: $0,
               )
@@ -350,7 +350,7 @@
         }
 
         // Additional validation for extreme configurations
-        let sampleRate = inputConfiguration.sampleRate.rawValue
+        let sampleRate = inputConfiguration.sampleRate.hz
 
         // Check for reasonable limits
         guard sampleRate <= 192_000,  // 192kHz max
