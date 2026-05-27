@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    name: macOS host + iOS Simulator
+    runs-on: macos-26-arm64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode 26.5
+        run: sudo xcode-select -s /Applications/Xcode_26.5.app/Contents/Developer
+
+      - name: Toolchain info
+        run: |
+          xcodebuild -version
+          xcrun swift --version
+          xcrun simctl list devicetypes | head -30
+
+      - name: SwiftPM tests (macOS host)
+        run: xcrun swift test --package-path .
+
+      - name: iOS Simulator tests
+        run: |
+          xcodebuild test \
+            -scheme AIO-Package \
+            -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' \
+            -skipPackagePluginValidation
