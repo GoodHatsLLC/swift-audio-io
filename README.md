@@ -69,8 +69,9 @@ func runAIOQuickstart() async throws {
     )
   )
 
-  try await engine.startRecording(configuration: configuration)
+  let recordingURL = try await engine.startRecording(configuration: configuration)
   let recordedFile = try await engine.stopRecording()
+  _ = recordingURL  // typically equal to `recordedFile` for non-rotating sessions
 
   _ = try await engine.play(url: recordedFile)
   await engine.stopPlayback()

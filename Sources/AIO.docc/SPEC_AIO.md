@@ -38,8 +38,8 @@ The engine supports the declared channel matrix enforced by `FileFormat`:
 - FLAC: up to 8 channels.
 - WAV, CAF, and AIFF: up to 32 PCM channels.
 
-Unsupported channel counts fail with a typed ``AIOEngine/AIOError`` before the engine
-installs a recording tap.
+Unsupported channel counts fail with ``RecordingError/unsupportedChannelCount(requested:maximum:)``
+before the engine installs a recording tap.
 
 Primary recording calls:
 
@@ -50,9 +50,20 @@ let configuration = RecordingConfiguration(
   outputConfiguration: .init(fileFormat: .caf, bitDepth: .pcmFloat32, quality: .maximum)
 )
 
-try await engine.startRecording(configuration: configuration)
-let fileURL = try await engine.stopRecording()
+let recordingURL = try await engine.startRecording(configuration: configuration)
+let savedURL = try await engine.stopRecording()
 ```
+
+The canonical ``AIOEngine/startRecording(configuration:)`` is a single-shot, typed-throws
+call that returns the destination URL as soon as the engine is producing output. For
+fire-and-forget reconciliation semantics (background retry on transient session failures)
+see the `@_spi(Advanced)` ``AIOEngine/setDesiredRecordingState(_:configuration:)`` and
+``AIOEngine/startRecordingWithReconciliation(configuration:)`` variants.
+
+Errors surfaced after recording is underway (tap-thread conversion failures, async writer
+drain failures, deactivation failures from state transitions) arrive on the
+``AIOEngine/events`` stream as ``AudioIOEvent/error(_:)`` cases — `for await event in
+engine.events { if case .error(let err) = event { ... } }`.
 
 Segmented recording uses ``AIOEngine/rotateRecordingFile()`` to close the current file and
 continue capture into a new file without reinstalling the tap.

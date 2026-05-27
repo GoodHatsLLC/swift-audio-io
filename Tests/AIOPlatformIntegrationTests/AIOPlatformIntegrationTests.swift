@@ -235,12 +235,12 @@
 
       do {
         _ = try engine.startTestRecording(configuration: configuration, enableReceivers: false)
-        Issue.record("Expected unsupportedRecordingChannelCount")
+        Issue.record("Expected unsupportedChannelCount")
       } catch RecordingError.unsupportedChannelCount(let requested, let maximum) {
         #expect(requested == 33)
         #expect(maximum == 32)
       } catch {
-        Issue.record("Expected unsupportedRecordingChannelCount, got \(error)")
+        Issue.record("Expected unsupportedChannelCount, got \(error)")
       }
 
       #expect(engine.isRecording == false)
