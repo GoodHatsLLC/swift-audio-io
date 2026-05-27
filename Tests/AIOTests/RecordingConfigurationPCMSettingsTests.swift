@@ -3,7 +3,7 @@
 #if canImport(AVFoundation)
   import AVFoundation
   import Testing
-  @testable import AIOAudioSession
+  @_spi(AVFoundation) @testable import AIOAudioSession
   @testable import AudioIO
 
   struct RecordingConfigurationPCMSettingsTests {
@@ -20,7 +20,7 @@
         )
         #expect(
           (qualityValue as? Int)
-            == Int(configuration.outputConfiguration.quality.platform.rawValue),
+            == Int(configuration.outputConfiguration.quality.avAudio.rawValue),
         )
       }
     }

@@ -19,9 +19,17 @@
         }
       }
 
+      /// AVFoundation escape hatch. Consumers should obtain `AudioSource` values
+      /// through ``AudioEnvironmentConfiguring/availableSources`` or
+      /// ``AudioInput/availableSources`` rather than construct them; this
+      /// accessor exists for code that must drop down to the underlying
+      /// AVAudioSession objects.
+      @_spi(AVFoundation)
       public let avAudio: AVAudioSessionDataSourceDescription
-      public var platform: AVAudioSessionDataSourceDescription {
-        avAudio
+
+      @_spi(AVFoundation)
+      public init(avAudio: AVAudioSessionDataSourceDescription) {
+        self.avAudio = avAudio
       }
 
       public var id: String {
@@ -81,7 +89,17 @@
     }
 
     public struct PolarPattern: Hashable, Sendable, Identifiable {
+      /// AVFoundation escape hatch. Consumers should use the named static
+      /// members (`.omnidirectional`, `.cardioid`, `.subcardioid`, `.stereo`)
+      /// rather than construct values directly.
+      @_spi(AVFoundation)
       public let avAudio: AVAudioSession.PolarPattern
+
+      @_spi(AVFoundation)
+      public init(avAudio: AVAudioSession.PolarPattern) {
+        self.avAudio = avAudio
+      }
+
       public var id: String {
         avAudio.rawValue
       }

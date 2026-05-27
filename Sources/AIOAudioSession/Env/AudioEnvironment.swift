@@ -64,7 +64,7 @@
     /// - Throws: An error if the input cannot be set.
     public func request(input: AudioInput?) throws(RequestError) {
       do {
-        try session.setPreferredInput(input?.platform)
+        try session.setPreferredInput(input?.avAudio)
       } catch {
         throw .operationFailed(operation: .setPreferredInput, error: ErrorContext(error))
       }
@@ -114,7 +114,7 @@
         throw .noActiveAudioInputForDataSource
       }
       do {
-        try activeInput.setPreferredDataSource(source?.platform)
+        try activeInput.setPreferredDataSource(source?.avAudio)
       } catch {
         throw .operationFailed(operation: .setPreferredDataSource, error: ErrorContext(error))
       }
