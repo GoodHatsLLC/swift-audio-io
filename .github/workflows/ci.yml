@@ -13,7 +13,7 @@ concurrency:
 jobs:
   test:
     name: macOS host + iOS Simulator
-    runs-on: macos-26-arm64
+    runs-on: macos-26
 
     steps:
       - name: Checkout
