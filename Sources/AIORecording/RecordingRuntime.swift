@@ -120,7 +120,7 @@
           "Reconciliation failed, resetting wantsRecording to false. Last error: \(lastError?.localizedDescription ?? "none", privacy: .public)",
         )
         owner.wantsRecording = false
-        owner.onReconciliationFailed?(true)
+        owner.eventSubject.send(AudioIOEvent.reconciliationFailed(desiredRecording: true))
       }
     }
 
@@ -170,7 +170,7 @@
             throw RecordingError.session(.engineStartFailed(error: ErrorContext(error)))
           }
           let fileFormat = configuration.outputConfiguration.fileFormat.rawValue
-          owner.onRecordingStarted?(url, fileFormat)
+          owner.eventSubject.send(AudioIOEvent.recordingStarted(url: url, format: fileFormat))
           owner.startFileWriteLoop(flushing: buffers, of: processingFormat, to: writeWriter)
           if let receiverBuffers, let receiverTiming {
             owner.startReceiverLoop(
@@ -268,7 +268,7 @@
       log.info(
         "✅ Recording stopped: \(url.lastPathComponent, privacy: .public) size=\(finalSize, privacy: .public)",
       )
-      owner.onRecordingCompleted?()
+      owner.eventSubject.send(AudioIOEvent.recordingCompleted)
       return url
     }
 
@@ -334,7 +334,7 @@
       owner.startFileWriteLoop(flushing: newBuffers, of: format, to: newWriter)
 
       let fileFormat = configuration.outputConfiguration.fileFormat.rawValue
-      owner.onRecordingStarted?(newURL, fileFormat)
+      owner.eventSubject.send(AudioIOEvent.recordingStarted(url: newURL, format: fileFormat))
 
       log.info("📼 Rotated recording file to: \(newURL.lastPathComponent, privacy: .public)")
 

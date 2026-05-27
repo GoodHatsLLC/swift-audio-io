@@ -255,15 +255,8 @@
       let engine = AIOEngine()
       let configuration = makeConfiguration()
       let probe = RouteFaultProbe()
-
-      await MainActor.run {
-        engine.onRecordingInterruption = { interruption in
-          probe.record(interruption)
-        }
-        engine.onRecordingFailed = {
-          probe.recordFailure()
-        }
-      }
+      let bridge = await probe.bridge(to: engine)
+      defer { bridge.cancel() }
 
       let url = try await engine.startTestRecording(configuration: configuration)
       defer { try? FileManager.default.removeItem(at: url) }
@@ -293,16 +286,17 @@
 
       #expect(await engine.isRecording == false)
 
-      let snapshot = probe.snapshot()
-      #expect(snapshot.failureCount == 1)
-      #expect(
-        snapshot.interruptions.contains { interruption in
-          if case .stoppedByInterruption(let reason) = interruption {
-            return reason == "No suitable audio route available"
+      let captured = await waitUntil(timeout: .seconds(2)) {
+        let snapshot = probe.snapshot()
+        return snapshot.failureCount == 1
+          && snapshot.interruptions.contains { interruption in
+            if case .stoppedByInterruption(let reason) = interruption {
+              return reason == "No suitable audio route available"
+            }
+            return false
           }
-          return false
-        },
-      )
+      }
+      #expect(captured == true)
     }
 
     @Test
@@ -343,12 +337,8 @@
       let engine = AIOEngine()
       let configuration = makeConfiguration()
       let probe = RouteFaultProbe()
-
-      await MainActor.run {
-        engine.onRecordingInterruption = { interruption in
-          probe.record(interruption)
-        }
-      }
+      let bridge = await probe.bridge(to: engine)
+      defer { bridge.cancel() }
 
       let url = try await engine.startTestRecording(configuration: configuration)
       defer { try? FileManager.default.removeItem(at: url) }
@@ -377,18 +367,17 @@
       #expect(continued == true)
       #expect(await engine.isRecording == true)
 
-      let snapshot = probe.snapshot()
-      #expect(snapshot.interruptions.isEmpty == false)
-      #expect(
-        snapshot.interruptions.contains { interruption in
+      let captured = await waitUntil(timeout: .seconds(2)) {
+        probe.snapshot().interruptions.contains { interruption in
           if case .routeChangeContinuing(_, let qualityChange) = interruption {
             guard let qualityChange else { return false }
             return qualityChange.currentChannels == 2
               && abs(qualityChange.currentSampleRate - 16000) < 0.5
           }
           return false
-        },
-      )
+        }
+      }
+      #expect(captured == true)
 
       _ = try await engine.stopRecording()
     }
@@ -438,12 +427,8 @@
       let configuration = makeConfiguration()
       let probe = RouteFaultProbe()
       let reinstallCalls = LockedCounter()
-
-      await MainActor.run {
-        engine.onRecordingInterruption = { interruption in
-          probe.record(interruption)
-        }
-      }
+      let bridge = await probe.bridge(to: engine)
+      defer { bridge.cancel() }
 
       let url = try await engine.startTestRecording(configuration: configuration)
       defer { try? FileManager.default.removeItem(at: url) }
@@ -475,18 +460,17 @@
         engine.setReinstallTapOverride(nil)
       }
 
-      let snapshot = probe.snapshot()
-      #expect(snapshot.interruptions.isEmpty == false)
-      #expect(
-        snapshot.interruptions.contains { interruption in
+      let captured = await waitUntil(timeout: .seconds(2)) {
+        probe.snapshot().interruptions.contains { interruption in
           if case .routeChangeContinuing(_, let qualityChange) = interruption {
             guard let qualityChange else { return false }
             return qualityChange.currentChannels == 2
               && abs(qualityChange.currentSampleRate - 16000) < 0.5
           }
           return false
-        },
-      )
+        }
+      }
+      #expect(captured == true)
 
       _ = try await engine.stopRecording()
     }
@@ -496,15 +480,8 @@
       let engine = AIOEngine()
       let configuration = makeConfiguration()
       let probe = RouteFaultProbe()
-
-      await MainActor.run {
-        engine.onRecordingInterruption = { interruption in
-          probe.record(interruption)
-        }
-        engine.onRecordingFailed = {
-          probe.recordFailure()
-        }
-      }
+      let bridge = await probe.bridge(to: engine)
+      defer { bridge.cancel() }
 
       let url = try await engine.startTestRecording(configuration: configuration)
       defer { try? FileManager.default.removeItem(at: url) }
@@ -530,16 +507,17 @@
 
       #expect(await engine.isRecording == false)
 
-      let snapshot = probe.snapshot()
-      #expect(snapshot.failureCount == 1)
-      #expect(
-        snapshot.interruptions.contains { interruption in
-          if case .stoppedByInterruption(let reason) = interruption {
-            return reason == "Route change reconfiguration failed"
+      let captured = await waitUntil(timeout: .seconds(2)) {
+        let snapshot = probe.snapshot()
+        return snapshot.failureCount == 1
+          && snapshot.interruptions.contains { interruption in
+            if case .stoppedByInterruption(let reason) = interruption {
+              return reason == "Route change reconfiguration failed"
+            }
+            return false
           }
-          return false
-        },
-      )
+      }
+      #expect(captured == true)
     }
 
     private func makeConfiguration(
@@ -679,6 +657,43 @@
       defer { lock.unlock() }
       (interruptions, failureCount)
     }
+
+    /// Subscribes to `engine.events` and routes recording-lifecycle cases
+    /// to this probe for the lifetime of the returned task.
+    @MainActor
+    func bridge(to engine: AIOEngine) async -> Task<Void, Never> {
+      let probe = self
+      let task = Task { @MainActor in
+        for await event in engine.events {
+          switch event {
+          case .recordingInterruption(let interruption):
+            probe.record(interruption)
+          case .recordingFailed:
+            probe.recordFailure()
+          default:
+            break
+          }
+        }
+      }
+      // Yield once so the subscriber registers with the broadcaster
+      // before the caller drives the engine.
+      await Task.yield()
+      return task
+    }
+  }
+
+  private func waitUntil(
+    timeout: Duration,
+    condition: @escaping @Sendable () async -> Bool,
+  ) async -> Bool {
+    let clock = ContinuousClock()
+    let polling = PollingPolicy(interval: .milliseconds(10))
+    let deadline = clock.now.advanced(by: timeout)
+    while clock.now < deadline {
+      if await condition() { return true }
+      try? await polling.waitForNextPoll()
+    }
+    return await condition()
   }
 
   // SAFETY: All mutable state is protected by NSLock, only accessed under lock.

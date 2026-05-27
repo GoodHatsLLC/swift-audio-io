@@ -30,9 +30,11 @@
           stopEngine: true,
         )
         applyTapInstallResult(result, processingFormat: processingFormat)
-        await onRecordingInterruption?(
-          .routeChangeContinuing(event: event, qualityChange: nil),
+        let interruption = RecordingInterruption.routeChangeContinuing(
+          event: event,
+          qualityChange: nil,
         )
+        eventSubject.send(AudioIOEvent.recordingInterruption(interruption))
       } catch {
         await handleUnrecoverableInterruption(
           reason: "Route change reconfiguration failed: \(error.localizedDescription)",
@@ -91,9 +93,10 @@
     private func handleUnrecoverableInterruption(reason: String) async {
       guard isRecording || wantsRecording else { return }
       reconciliationTask = nil
-      await onRecordingInterruption?(.stoppedByInterruption(reason: reason))
+      let interruption = RecordingInterruption.stoppedByInterruption(reason: reason)
+      eventSubject.send(AudioIOEvent.recordingInterruption(interruption))
       await gracefulStop()
-      onRecordingFailed?()
+      eventSubject.send(AudioIOEvent.recordingFailed)
     }
 
     @MainActor
