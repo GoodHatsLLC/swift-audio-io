@@ -1,7 +1,7 @@
 # AIO Package - Audio I/O Engine
 
 **Location**: `Packages/AIO/`
-**Last Updated**: 2026-05-17
+**Last Updated**: 2026-05-27
 
 `CLAUDE.md` in this directory is a symlink to this file.
 
@@ -50,7 +50,9 @@ Contains:
 
 Contains:
 - `AIOEngineExports.swift` re-exporting the internal runtime targets
-- AIO-owned runtime contracts used by AppLibrary (`RecordingDriving`, `AudioEnvironmentDriving`, `OutputConfigurationProviding`)
+- AIO-owned runtime contracts used by AppLibrary (`RecordingDriving`,
+  `AudioEnvironmentDriving`, `AudioEnvironmentConfiguring`,
+  `AudioEnvironmentEventSubscribing`, `OutputConfigurationProviding`)
 - interruption and testing facade extensions
 
 ### Internal Runtime Targets
