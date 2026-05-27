@@ -7,6 +7,8 @@
   import Tools
   @testable import AIOAudioSession
   @testable import AudioIO
+  @testable import AIORecording
+  @testable import AIORecordingSupport
 
   struct SPSCRingBufferTests {
     @Test
