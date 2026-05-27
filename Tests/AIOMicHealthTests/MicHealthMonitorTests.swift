@@ -416,8 +416,7 @@ struct MicHealthMonitorTests {
         // expected
       } else {
         Issue.record(
-          "expected still .degraded(.routeLost) before healthy signal, got "
-            + "\(harness.monitor.currentState)",
+          "expected still .degraded(.routeLost) before healthy signal, got \(harness.monitor.currentState)",
         )
       }
 
