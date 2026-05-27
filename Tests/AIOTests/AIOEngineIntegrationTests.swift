@@ -8,7 +8,9 @@
   import Tools
 
   @testable import AIOAudioSession
-  @_spi(TESTING) @testable import AudioIO
+  @_spi(Advanced) @_spi(TESTING) @testable import AudioIO
+  @testable import AIORecording
+  @testable import AIORecordingSupport
 
   struct AIOEngineIntegrationTests {
     @Test
@@ -490,7 +492,7 @@
         engine.setReinstallTapOverride {
           (
             _: RecordingConfiguration, _: AVAudioFormat,
-          ) throws(RecordingError) -> AIOEngine.TapInstallResult in
+          ) throws(RecordingError) -> TapInstallResult in
           throw .engineError
         }
       }
@@ -567,7 +569,7 @@
   private func makeMockTapInstallResult(
     tapFormat: AVAudioFormat,
     processingFormat: AVAudioFormat,
-  ) throws(RecordingError) -> AIOEngine.TapInstallResult {
+  ) throws(RecordingError) -> TapInstallResult {
     guard let converter = AVAudioConverter(from: tapFormat, to: processingFormat) else {
       throw RecordingError.formatConversionFailed
     }
@@ -579,7 +581,7 @@
     else {
       throw RecordingError.formatConversionFailed
     }
-    let artifacts = AIOEngine.TapConversionArtifacts(
+    let artifacts = TapConversionArtifacts(
       converter: converter,
       inputFormat: tapFormat,
       convertedBuffer: buffer,
@@ -590,7 +592,7 @@
       outputFormat: processingFormat,
       bufferSize: 1024,
     )
-    return AIOEngine.TapInstallResult(
+    return TapInstallResult(
       tapFormat: tapFormat,
       artifacts: artifacts,
       tapConfiguration: tapConfig,
@@ -655,7 +657,7 @@
     func snapshot() -> (interruptions: [AIOEngine.RecordingInterruption], failureCount: Int) {
       lock.lock()
       defer { lock.unlock() }
-      (interruptions, failureCount)
+      return (interruptions, failureCount)
     }
 
     /// Subscribes to `engine.events` and routes recording-lifecycle cases
