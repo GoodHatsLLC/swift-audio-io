@@ -1,0 +1,27 @@
+## Xcode user data
+xcuserdata/
+
+## XcodeGen-generated projects
+Examples/**/*.xcodeproj/
+
+## SwiftPM
+Package.resolved
+.build/
+.swiftpm/
+.spm/
+
+## Build artifacts
+DerivedData/
+*.xcarchive
+*.ipa
+*.dSYM
+*.dSYM.zip
+*.hmap
+
+## Editor / OS
+.DS_Store
+*.swp
+*.swo
+
+## Logs
+*.log

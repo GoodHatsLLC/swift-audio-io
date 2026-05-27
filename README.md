@@ -1,125 +1,97 @@
-# AIO
+# AudioIO
 
-AIO is a Swift audio I/O package. Import `AudioIO` for recording, file and segment
-playback, audio-session configuration types, and live visualization.
+A Swift audio I/O engine for iOS and macOS: recording, playback, level-of-detail visualization data, and microphone-health monitoring. Built on AVFoundation, with Swift 6 strict concurrency and typed throws throughout.
 
-## License
+> **Status: pre-1.0.** APIs may change between `0.x` releases. We commit to SemVer starting at `1.0.0`. See [ROADMAP.md](ROADMAP.md).
 
-AIO is licensed under the GNU Affero General Public License, version 3 only
-(`AGPL-3.0-only`). See `LICENSE`.
+## Install
 
-## Quickstart
+Add to your `Package.swift`:
+
+```swift
+dependencies: [
+    .package(url: "https://github.com/GoodHatsLLC/swift-audio-io.git", from: "0.1.0"),
+],
+targets: [
+    .target(name: "MyApp", dependencies: [
+        .product(name: "AudioIO", package: "swift-audio-io"),
+    ]),
+]
+```
+
+## Quick example
 
 ```swift
 import AudioIO
 
-@MainActor
-func runAIOQuickstart() async throws {
-  let engine = AIOEngine()
+let engine = AIOEngine()
 
-  let visualization = AudioVisualizationEngine(
-    configuration: .init(sampleRate: 48_000)
-  )
-  let receiverToken = await engine.attachBufferReceiver(visualization)
-  defer { receiverToken.invalidate() }
-
-  let visualizationSubscription = visualization.subscribe(
-    request: VisualizationRequest(
-      work: VisualizationWork(
-        lod: LODWork(
-          configuration: MultiBandLODConfiguration(
-            bandCount: 5,
-            lodRatio: 128,
-            bufferSeconds: 300,
-            sampleRate: 48_000
-          ),
-          publishRateHz: 60
-        ),
-        analysis: AnalysisWork(
-          updateRateHz: 30,
-          timeDomain: .realTime
-        )
-      ),
-      eventMask: [.lodSnapshot, .timeDomain]
-    )
-  ) { event in
-    switch event {
-    case .lodSnapshot:
-      _ = visualization.withCurrentLODSnapshotRef { snapshot in
-        snapshot.bandCount
-      }
-    case .timeDomain(let data):
-      _ = data.rmsLevel
-    default:
-      break
-    }
-  }
-  defer { visualizationSubscription.cancel() }
-  visualization.startVisualization()
-
-  let configuration = RecordingConfiguration(
+// Configure and start recording.
+let configuration = RecordingConfiguration(
     inputConfiguration: InputConfiguration(
-      sampleRate: .dvd,
-      channels: .stereo
+        sampleRate: .dvd,           // 48 kHz; or .cd / .hiRes96 / 44_100 literal
+        channels: .mono
     ),
     outputConfiguration: OutputConfiguration(
-      fileFormat: .caf,
-      bitDepth: .pcmFloat32,
-      quality: .maximum
+        fileFormat: .caf,
+        bitDepth: .pcmFloat32,
+        quality: .maximum
     )
-  )
+)
 
-  let recordingURL = try await engine.startRecording(configuration: configuration)
-  let recordedFile = try await engine.stopRecording()
-  _ = recordingURL  // typically equal to `recordedFile` for non-rotating sessions
+// startRecording returns the URL the engine is writing to.
+let recordingURL = try await engine.startRecording(configuration: configuration)
 
-  _ = try await engine.play(url: recordedFile)
-  await engine.stopPlayback()
-
-  _ = try await engine.playSegment(
-    url: recordedFile,
-    startTime: 0,
-    endTime: 1
-  )
-  _ = try engine.scrub(to: 0.25)
-  await engine.stopPlayback()
+// Observe engine events as they happen.
+for await event in engine.events {
+    switch event {
+    case .error(let error):
+        print("Error: \(error)")
+    }
 }
 ```
 
-This quickstart is mirrored by `AIOQuickstart.swift` in the AIO test target and is
-type-checked by `xcrun swift test --package-path Packages/AIO`, which runs in CircleCI
-on every push as part of `build-test`.
+For a complete recording-and-playback demo with a live waveform, see [`Examples/AudioIODemo`](Examples/AudioIODemo).
 
-## Verification
+## Platforms
 
-```bash
-xcrun swift test --package-path Packages/AIO
-```
+| Platform | Minimum | Status |
+|----------|---------|--------|
+| iOS      | 26.0    | Primary |
+| macOS    | 26.0    | Primary |
+| Swift    | 6.3     | Required |
+| Xcode    | 26.0    | Required |
 
-CircleCI's `build-test` workflow runs the broader AIO gate on every push. It includes
-the package SwiftPM tests, the workspace-only `AIOPlatformIntegrationTests` scheme for
-iOS Simulator audio-session / segment playback / channel-matrix / writer-drain /
-rotation coverage, and the macOS / iOS harness UI test schemes. Reproduce locally with
-`./bin/test.sh --all`.
+Other Apple platforms (tvOS, watchOS, visionOS) are not currently supported. See [ROADMAP.md](ROADMAP.md).
 
-## Release Versioning
+## What's in the box
 
-AIO follows Semantic Versioning for the public API exposed by the declared SwiftPM
-library products: `AudioIO`, `AudioSignals`, and `Tools`.
+- **Recording**: pluggable output formats (CAF, WAV, AIFF, AAC, ADTS, FLAC), interruption handling, route-change recovery.
+- **Playback**: file and segment scheduling, scrubbing, mixer amplitude control.
+- **Visualization**: real-time multi-band LOD data for waveform rendering. UI is your problem (see philosophy below).
+- **Mic health**: input-level monitoring with configurable thresholds.
 
-- Before `1.0.0`, minor releases may include source-breaking API changes, but every
-  break must be called out in `CHANGELOG.md`.
-- At and after `1.0.0`, source-breaking public API changes require a major-version
-  bump.
-- Patch releases are for compatible fixes only.
-- `@_spi(TESTING)` and DEBUG-only helpers are not part of the semver-stable public API.
+## Philosophy
 
-## Release CI Matrix
+AudioIO is an *engine*, not a UI toolkit. The library deliberately excludes:
 
-CircleCI's `build-test` workflow runs the gate on every push. Locally, reproduce with
-`./bin/test.sh --all`.
+- SwiftUI bindings and `@Environment` extensions.
+- Combine publishers.
+- Waveform views or any other rendering code.
 
-| Declared platform | Required gate |
-| --- | --- |
-| macOS 26.2 | `xcrun swift test --package-path Packages/AIO` and `AIOHarnessMacUITests` on macOS |
-| iOS 26.2 | `AIOPlatformIntegrationTests` and `AIOHarnessiOSUITests` on iOS Simulator |
+See [NOT_AUDIO_IO.md](NOT_AUDIO_IO.md) for the full list and reasoning. Examples demonstrate how to glue AudioIO to SwiftUI in ~15 lines.
+
+## Documentation
+
+- DocC catalog: hosted at [goodhats.github.io/swift-audio-io](https://goodhats.github.io/swift-audio-io) (post-1.0).
+- API surface: every public type is exercised in `Tests/PublicAPISnapshotTests` — that file is the canonical "what's stable" reference until DocC ships.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Please read [NOT_AUDIO_IO.md](NOT_AUDIO_IO.md) before opening a feature request.
+
+## License
+
+Apache-2.0. See [LICENSE](LICENSE).
+
+AudioIO was extracted from the [Recorder‽](https://recorderapp.com) app by GoodHats LLC.
