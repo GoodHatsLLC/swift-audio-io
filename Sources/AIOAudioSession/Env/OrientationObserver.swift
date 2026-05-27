@@ -3,9 +3,7 @@
 #if canImport(UIKit) && !os(macOS)
 
   public import AVFAudio
-  import Combine
   public import Observation
-  import SwiftUI
   import Tools
   public import UIKit
 
@@ -44,29 +42,28 @@
       }
     }
 
+    @MainActor
     private static func stream() -> AsyncSignalStream<UIDeviceOrientation> {
-      let (stream, cont) = AsyncSignalStream.makeStream(of: UIDeviceOrientation.self)
-      UIDevice.current.beginGeneratingDeviceOrientationNotifications()
-      let cancellable = NotificationCenter.default
-        .publisher(for: UIDevice.orientationDidChangeNotification)
-        .map { _ in UIDevice.current.orientation }
-        .sink { _ in
-          cont.finish()
-        } receiveValue: { value in
-          cont.yield(value)
-        }
-      let c = Transferring(cancellable)
-      let terminationTasks = AsyncTaskRunner()
-      cont.onTermination = { _ in
-        terminationTasks.run { [c, terminationTasks] in
-          await MainActor.run {
-            c.value.cancel()
+      let observerRunner = AsyncTaskRunner()
+      let terminationRunner = AsyncTaskRunner()
+      let signal = AsyncSignal<UIDeviceOrientation>(
+        bufferingPolicy: .unbounded,
+        terminationHandler: { _ in
+          observerRunner.cancelAllNow()
+          terminationRunner.run { @MainActor in
             UIDevice.current.endGeneratingDeviceOrientationNotifications()
           }
-          _ = terminationTasks
+        },
+      )
+      UIDevice.current.beginGeneratingDeviceOrientationNotifications()
+      observerRunner.run { @MainActor in
+        for await _ in NotificationCenter.default.notifications(
+          named: UIDevice.orientationDidChangeNotification,
+        ) {
+          signal.yield(UIDevice.current.orientation)
         }
       }
-      return stream
+      return signal.events()
     }
   }
 #endif
