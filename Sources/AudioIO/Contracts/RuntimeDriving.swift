@@ -86,6 +86,14 @@
     public protocol AudioInputPickingEnvironment: AudioEnvironmentConfiguring {
       var session: AVAudioSession { get }
     }
+  #else
+    // On macOS the AVAudioSession-bound input picker doesn't exist. Aliasing
+    // to `AudioEnvironmentConfiguring` lets cross-platform views (e.g.
+    // `ConfigurationView`, `RecordingSheetView`) constrain their generic on
+    // `AudioInputPickingEnvironment` uniformly; the iOS-only call sites that
+    // need the stricter `session: AVAudioSession` member are themselves
+    // guarded by `#if os(iOS)`.
+    public typealias AudioInputPickingEnvironment = AudioEnvironmentConfiguring
   #endif
 
   @MainActor
