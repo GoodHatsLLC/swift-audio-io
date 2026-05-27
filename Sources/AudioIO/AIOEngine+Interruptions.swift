@@ -67,12 +67,11 @@
           to: result.tapFormat,
           reason: describeRouteChangeReason(event.reason),
         )
-        await onRecordingInterruption?(
-          .routeChangeContinuing(
-            event: event,
-            qualityChange: qualityChange,
-          ),
+        let interruption = RecordingInterruption.routeChangeContinuing(
+          event: event,
+          qualityChange: qualityChange,
         )
+        eventSubject.send(AudioIOEvent.recordingInterruption(interruption))
 
         log.info("Continued recording after route change")
       } catch {
@@ -198,9 +197,9 @@
       reconciliationTask = nil
 
       let interruption = RecordingInterruption.stoppedByInterruption(reason: reason)
-      await onRecordingInterruption?(interruption)
+      eventSubject.send(AudioIOEvent.recordingInterruption(interruption))
       await gracefulStop()
-      onRecordingFailed?()
+      eventSubject.send(AudioIOEvent.recordingFailed)
     }
 
     func createQualityChange(

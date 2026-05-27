@@ -50,11 +50,8 @@
   ///
   /// ### Handling Events
   ///
-  /// - ``onRecordingInterruption``
-  /// - ``onRecordingStarted``
-  /// - ``onRecordingCompleted``
-  /// - ``onRecordingFailed``
-  /// - ``errors``
+  /// - ``events``
+  /// - ``AudioIOEvent``
   ///
   /// ### Attaching Receivers
   ///
@@ -162,43 +159,6 @@
       /// Segment playback reports segment duration; whole-file playback reports file duration.
       public let duration: TimeInterval
     }
-
-    // MARK: - Callbacks
-
-    // These callbacks intentionally remain single-owner MainActor hooks. Buffer
-    // delivery is multi-consumer and token-scoped; engine lifecycle ownership is
-    // centralized by the app/composition root and uses assignment to replace the
-    // active owner explicitly.
-
-    /// A callback that is invoked when a recording interruption occurs.
-    @MainActor public var onRecordingInterruption:
-      (@Sendable @MainActor (RecordingInterruption) async -> Void)?
-
-    /// A callback that is invoked when a recording starts.
-    ///
-    /// - Parameter url: The URL of the recording file.
-    /// - Parameter format: The format of the recording file.
-    @MainActor public var onRecordingStarted: (@Sendable @MainActor (URL, String) -> Void)?
-    /// A callback that is invoked when a recording completes successfully.
-    @MainActor public var onRecordingCompleted: (@Sendable @MainActor () -> Void)?
-    /// A callback that is invoked when a recording fails.
-    @MainActor public var onRecordingFailed: (@Sendable @MainActor () -> Void)?
-    /// Called when a recording segment is completed (file rotated).
-    /// The handler receives the URL of the completed segment and its format.
-    @MainActor public var onSegmentCompleted: (@Sendable @MainActor (URL, String) -> Void)?
-
-    /// Called when the engine fails to reconcile the desired recording state
-    /// with the actual state after the configured timeout.
-    ///
-    /// - Parameter desiredState: The state that could not be achieved.
-    @MainActor public var onReconciliationFailed: (@Sendable @MainActor (Bool) -> Void)?
-    /// Called when the playback item or playback state changes (play/pause/stop), excluding time ticks.
-    @MainActor public var onPlaybackStateChanged: (@Sendable @MainActor (Playback?) -> Void)?
-    /// Called on every playback update including time ticks.
-    ///
-    /// Use this to mirror playback state into a local `@Observable` stored property
-    /// so that SwiftUI observation reliably fires for downstream views.
-    @MainActor public var onPlaybackUpdated: (@Sendable @MainActor (Playback?) -> Void)?
 
     // MARK: - Thread Domains
 
@@ -479,13 +439,12 @@
 
     /// The unified event stream for the audio engine.
     ///
-    /// Subscribe via `for await event in engine.events { ... }` and pattern-match
-    /// on the case. Currently the stream emits ``AudioIOEvent/error(_:)`` cases
-    /// for every engine-level failure that can't be surfaced via a `throws`
-    /// signature (tap-thread conversion failures, async drain failures, session
-    /// deactivation failures). Lifecycle event cases (recording started /
-    /// completed / interrupted, segment rotated, playback updated) are tracked
-    /// for future migration off the `on*` closure callbacks.
+    /// Subscribe via `for await event in engine.events { ... }` and
+    /// pattern-match on the case. The stream is the canonical surface for
+    /// engine notifications — engine-level errors, recording lifecycle
+    /// (started / completed / failed / interrupted /
+    /// reconciliation-failed), and playback lifecycle (state changes and
+    /// per-tick updates). See ``AudioIOEvent`` for the full case list.
     public var events: AsyncBroadcaster<AudioIOEvent> {
       eventSubject.broadcaster
     }
@@ -676,9 +635,9 @@
       let newSignature = PlaybackStateSignature(playback: playback)
       if previousSignature != newSignature, lastPlaybackStateSignature != newSignature {
         lastPlaybackStateSignature = newSignature
-        onPlaybackStateChanged?(playback)
+        eventSubject.send(AudioIOEvent.playbackStateChanged(playback))
       }
-      onPlaybackUpdated?(playback)
+      eventSubject.send(AudioIOEvent.playbackUpdated(playback))
     }
 
     package func getPlayback() -> Playback? {

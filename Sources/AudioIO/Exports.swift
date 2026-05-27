@@ -57,7 +57,6 @@
   #endif
   public typealias AnyErrorManager = AIOAudioSession.AnyErrorManager
   public typealias AudioIOError = AIOAudioSession.AudioIOError
-  public typealias AudioIOEvent = AIOAudioSession.AudioIOEvent
   public typealias BitDepth = AIOAudioSession.BitDepth
   public typealias ChannelCount = AIOAudioSession.ChannelCount
   public typealias EncodingQuality = AIOAudioSession.EncodingQuality
@@ -95,6 +94,7 @@
   // MARK: - AIOEngineCore re-exports
 
   public typealias AIOEngine = AIOEngineCore.AIOEngine
+  public typealias AudioIOEvent = AIOEngineCore.AudioIOEvent
   public typealias VerboseError = AIOEngineCore.VerboseError
 
   // MARK: - AIOMicHealth re-exports

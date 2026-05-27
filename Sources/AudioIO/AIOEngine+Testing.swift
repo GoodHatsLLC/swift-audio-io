@@ -380,12 +380,11 @@
             previousRoute: nil,
             session: AVAudioSession.sharedInstance(),
           )
-          await onRecordingInterruption?(
-            .routeChangeContinuing(
-              event: event,
-              qualityChange: qualityChange,
-            ),
+          let interruption = RecordingInterruption.routeChangeContinuing(
+            event: event,
+            qualityChange: qualityChange,
           )
+          eventSubject.send(AudioIOEvent.recordingInterruption(interruption))
           return true
         }
 

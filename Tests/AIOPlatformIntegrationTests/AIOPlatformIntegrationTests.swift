@@ -16,13 +16,8 @@
       let engine = AIOEngine()
       let configuration = makeRecordingConfiguration(fileFormat: .caf, channelCount: 1)
       let probe = RecordingEventProbe()
-
-      engine.onRecordingInterruption = { interruption in
-        probe.record(interruption)
-      }
-      engine.onRecordingFailed = {
-        probe.recordFailure()
-      }
+      let bridge = await probe.bridge(to: engine)
+      defer { bridge.cancel() }
 
       let url = try engine.startTestRecording(configuration: configuration)
       defer { try? FileManager.default.removeItem(at: url) }
@@ -47,32 +42,35 @@
 
       await engine.handleRouteChange(event: event)
 
-      let snapshot = probe.snapshot()
       if session.isInputAvailable {
+        let captured = await waitUntil(timeout: .seconds(2)) {
+          probe.snapshot().interruptions.contains { interruption in
+            if case .routeChangeContinuing = interruption { return true }
+            return false
+          }
+        }
+        #expect(captured == true)
+
+        let snapshot = probe.snapshot()
         #expect(engine.isRecording == true)
         #expect(reinstallCalls.snapshot() == 1)
         #expect(snapshot.failureCount == 0)
-        #expect(
-          snapshot.interruptions.contains { interruption in
-            if case .routeChangeContinuing = interruption {
-              return true
-            }
-            return false
-          },
-        )
         _ = try await engine.stopRecording()
       } else {
+        let captured = await waitUntil(timeout: .seconds(2)) {
+          let snapshot = probe.snapshot()
+          return snapshot.failureCount >= 1
+            && snapshot.interruptions.contains { interruption in
+              if case .stoppedByInterruption(let reason) = interruption {
+                return reason == "No audio input available"
+              }
+              return false
+            }
+        }
+        #expect(captured == true)
+
         #expect(engine.isRecording == false)
         #expect(reinstallCalls.snapshot() == 0)
-        #expect(snapshot.failureCount == 1)
-        #expect(
-          snapshot.interruptions.contains { interruption in
-            if case .stoppedByInterruption(let reason) = interruption {
-              return reason == "No audio input available"
-            }
-            return false
-          },
-        )
       }
     }
 
@@ -81,13 +79,8 @@
       let engine = AIOEngine()
       let configuration = makeRecordingConfiguration(fileFormat: .caf, channelCount: 1)
       let probe = RecordingEventProbe()
-
-      engine.onRecordingInterruption = { interruption in
-        probe.record(interruption)
-      }
-      engine.onRecordingFailed = {
-        probe.recordFailure()
-      }
+      let bridge = await probe.bridge(to: engine)
+      defer { bridge.cancel() }
 
       let url = try engine.startTestRecording(configuration: configuration)
       defer { try? FileManager.default.removeItem(at: url) }
@@ -96,7 +89,7 @@
       await engine.handleInterruption(type: .began, options: nil)
 
       let stopped = await waitUntil(timeout: .seconds(2)) {
-        engine.isRecording == false
+        engine.isRecording == false && probe.snapshot().failureCount == 1
       }
       #expect(stopped == true)
 
@@ -415,6 +408,29 @@
       lock.lock()
       defer { lock.unlock() }
       return (interruptions, failureCount)
+    }
+
+    /// Subscribes to `engine.events` and routes recording-lifecycle cases
+    /// to this probe for the lifetime of the returned task.
+    @MainActor
+    func bridge(to engine: AIOEngine) async -> Task<Void, Never> {
+      let probe = self
+      let task = Task { @MainActor in
+        for await event in engine.events {
+          switch event {
+          case .recordingInterruption(let interruption):
+            probe.record(interruption)
+          case .recordingFailed:
+            probe.recordFailure()
+          default:
+            break
+          }
+        }
+      }
+      // Yield once so the subscriber registers with the broadcaster
+      // before the caller drives the engine.
+      await Task.yield()
+      return task
     }
   }
 

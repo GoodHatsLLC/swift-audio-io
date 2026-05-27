@@ -56,7 +56,7 @@
                 ),
               ),
             )
-            owner.onRecordingFailed?()
+            owner.eventSubject.send(AudioIOEvent.recordingFailed)
           }
         }
       }
@@ -207,7 +207,7 @@
               ),
             ),
           )
-          owner.onRecordingFailed?()
+          owner.eventSubject.send(AudioIOEvent.recordingFailed)
         }
       }
     }
@@ -384,7 +384,7 @@
       } catch {
         log.error("Failed to warm engine: \(error, privacy: .public)")
         hardStop()
-        owner.onRecordingFailed?()
+        owner.eventSubject.send(AudioIOEvent.recordingFailed)
         throw error
       }
     }
