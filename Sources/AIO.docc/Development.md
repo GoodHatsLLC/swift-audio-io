@@ -19,7 +19,7 @@ SwiftPM package tests on the macOS host, plus the workspace-only
 ## Quickstart Rot Check
 
 The public quickstart in `Packages/AIO/README.md` is mirrored by
-`Tests/AIOTests/AIOQuickstart.swift`. The mirrored file imports only `AIOEngine` and is
+`Tests/AIOTests/AIOQuickstart.swift`. The mirrored file imports only `AudioIO` and is
 compiled by the AIO package test suite so API drift breaks CI instead of documentation.
 
 To run only that check:

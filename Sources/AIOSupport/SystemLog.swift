@@ -18,7 +18,7 @@ package enum SystemLog {
     if let subsystem = Bundle.main.bundleIdentifier, !subsystem.isEmpty {
       return subsystem
     }
-    return "AIOEngine"
+    return "AudioIO"
   }()
 
   private static func normalizedCategory(from fileID: String) -> String {

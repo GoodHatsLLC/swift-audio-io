@@ -12,7 +12,7 @@ AIO (Audio I/O) is the core audio recording and processing engine for Recorderâ€
 ## Architecture
 
 The package still exposes three public library products, but the implementation is now split by
-runtime ownership rather than treating `AIOEngine` as the only meaningful target.
+runtime ownership rather than treating `AudioIO` as the only meaningful target.
 
 ### Public Products
 
@@ -44,12 +44,12 @@ Contains:
 **Dependencies**:
 - Tools (local)
 
-#### AIOEngine
-**Location**: `Sources/AIOEngine/`
+#### AudioIO
+**Location**: `Sources/AudioIO/`
 **Purpose**: Source-compatible compatibility facade and re-export layer
 
 Contains:
-- `AIOEngineExports.swift` re-exporting the internal runtime targets
+- `Exports.swift` re-exporting the internal runtime targets
 - AIO-owned runtime contracts used by AppLibrary (`RecordingDriving`,
   `AudioEnvironmentDriving`, `AudioEnvironmentConfiguring`,
   `AudioEnvironmentEventSubscribing`, `OutputConfigurationProviding`)
@@ -160,7 +160,7 @@ Still active:
 The package exposes three public library products:
 - **Tools**: Core utilities library (for standalone use)
 - **AudioSignals**: Visualization data layer (depends on Tools only)
-- **AIOEngine**: Public engine surface that re-exports the internal AIO runtime targets
+- **AudioIO**: Public engine surface that re-exports the internal AIO runtime targets
 
 ## Testing
 
@@ -300,7 +300,7 @@ Technical specs and design documents for the audio engine:
 
 ### Dependencies
 - Tools should have minimal dependencies
-- AIOEngine can depend on Tools
+- AudioIO can depend on Tools
 - Keep external dependencies to minimum
 
 ## Integration
@@ -316,7 +316,7 @@ The package is referenced via local path from AppLibrary:
 
 Changes to AIO require rebuilding AppLibrary.
 
-AppLibrary should prefer the AIO-owned runtime contracts re-exported from `AIOEngine`:
+AppLibrary should prefer the AIO-owned runtime contracts re-exported from `AudioIO`:
 - `RecordingDriving`
 - `AudioEnvironmentDriving`
 - `OutputConfigurationProviding`

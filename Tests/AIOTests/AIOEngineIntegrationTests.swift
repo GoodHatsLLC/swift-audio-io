@@ -8,7 +8,7 @@
   import Tools
 
   @testable import AIOAudioSession
-  @_spi(TESTING) @testable import AIOEngine
+  @_spi(TESTING) @testable import AudioIO
 
   struct AIOEngineIntegrationTests {
     @Test

@@ -5,7 +5,7 @@
   import Foundation
   import Testing
 
-  @testable import AIOEngine
+  @testable import AudioIO
 
   @MainActor
   struct PlaybackRuntimeSegmentTests {

@@ -11,7 +11,7 @@
   import Testing
 
   @testable import AIOAudioSession
-  @_spi(TESTING) import AIOEngine
+  @_spi(TESTING) import AudioIO
   import Tools
 
   struct AIOEngineReceiverTests {

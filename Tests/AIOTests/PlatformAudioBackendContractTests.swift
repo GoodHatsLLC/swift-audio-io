@@ -4,7 +4,7 @@
   import Foundation
   import Testing
   @testable import AIOAudioSession
-  @testable import AIOEngine
+  @testable import AudioIO
   import Tools
 
   struct PlatformAudioBackendContractTests {
