@@ -4,29 +4,55 @@
   @TechnologyRoot
 }
 
-AIO is a Swift audio I/O package for recording, playback, audio-session coordination,
-and real-time audio visualization.
+A Swift audio I/O package for recording, playback, audio-session coordination, and real-time visualization on iOS and macOS.
 
-Import ``AudioIO`` for the primary public surface. The umbrella product re-exports
-the recording, playback, session, visualization, and signal-processing types needed
-to build a recorder or audio-analysis workflow without importing implementation
-targets directly.
+## Overview
+
+AudioIO ships three SwiftPM library products:
+
+- **`AudioIO`** — the public umbrella. Recording, playback, audio-session management, real-time visualization, and the unified events stream. Import this for almost everything.
+- **`AudioSignals`** — pure signal-domain types and offline LOD extraction. Use standalone if you want waveform-data shapes without the recording/playback stack.
+- **`Tools`** — utility primitives (`AsyncBroadcaster`, `Subject`, `SPSCRingBuffer`) intentionally surfaced because they appear in AudioIO's public contracts.
+
+Recording, playback, visualization, and the audio-session surface are all driven through a single ``AIOEngine`` instance, with notifications flowing through one unified ``AIOEngine/events`` stream.
+
+## Prerelease status
+
+AudioIO is pre-`0.1.0` and being extracted from the Recorder‽ app. The public API can change between minor versions. Pin to an exact version if that worries you; semver commitments begin at `1.0.0`. The roadmap describes how `0.x` evolves.
 
 ## Topics
 
-### Start Here
+### Start here
 
-- <doc:SPEC_AIO>
-- <doc:SPEC_AUDIO_VIZ>
-- <doc:MultiBandVisualization>
+- <doc:GettingStarted>
 
-### Package Reference
+### Concept topics
 
-- <doc:Architecture>
-- <doc:Features>
-- <doc:Development>
+- <doc:PlatformMatrix>
+- <doc:ThreadingModel>
+- <doc:ErrorHandling>
+- <doc:Events>
 
-### Runtime Contracts
+### API surfaces
 
-- <doc:MultiBandLODContract>
-- <doc:core-audio-layer-opportunities>
+- <doc:Recording>
+- <doc:Playback>
+- <doc:AudioSession>
+- <doc:Visualization>
+
+### The engine
+
+- ``AIOEngine``
+- ``AudioVisualizationEngine``
+- ``AudioEnvironmentManager``
+
+### The events stream
+
+- ``AudioIOEvent``
+
+### Error types
+
+- ``AudioIOError``
+- ``RecordingError``
+- ``PlaybackError``
+- ``SessionError``
