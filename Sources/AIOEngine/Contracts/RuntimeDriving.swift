@@ -6,7 +6,41 @@
   import AIOEngineCore
   import AIORecording
   import Foundation
+  public import Observation
   import Tools
+
+  #if os(iOS)
+    public import AVFAudio
+  #endif
+
+  public typealias AudioEnvironmentError = AudioEnvironmentManager.ManagerError
+
+  @MainActor
+  public protocol AudioEnvironmentEventSubscribing: AnyObject, Sendable {
+    @discardableResult
+    func addRouteChangeSubscriber(
+      _ handler: @escaping @Sendable @MainActor (AudioRouteChangeEvent) async -> Void,
+    ) -> UUID
+
+    @discardableResult
+    func addInterruptionSubscriber(
+      _ handler:
+        @escaping @Sendable @MainActor (AudioInterruptionType, AudioInterruptionOptions?)
+        async -> Void,
+    ) -> UUID
+
+    @discardableResult
+    func addMediaServicesLostSubscriber(
+      _ handler: @escaping @Sendable @MainActor () async -> Void,
+    ) -> UUID
+
+    @discardableResult
+    func addMediaServicesResetSubscriber(
+      _ handler: @escaping @Sendable @MainActor () async -> Void,
+    ) -> UUID
+
+    func removeSubscriber(_ id: UUID)
+  }
 
   @MainActor
   public protocol AudioEnvironmentDriving: AnyObject, Sendable {
@@ -18,12 +52,41 @@
     var sampleRate: SampleRate { get }
     var channels: ChannelCount { get }
 
-    func applyStereo() async throws(AudioEnvironmentManager.ManagerError)
-    func setAudioSessionActive(_ active: Bool) throws(AudioEnvironmentManager.ManagerError)
+    func applyStereo() async throws(AudioEnvironmentError)
+    func setAudioSessionActive(_ active: Bool) throws(AudioEnvironmentError)
 
-    func readySignal() async throws(AudioEnvironmentManager.ManagerError)
-    func run() async throws(AudioEnvironmentManager.ManagerError)
+    func readySignal() async throws(AudioEnvironmentError)
+    func run() async throws(AudioEnvironmentError)
   }
+
+  @MainActor
+  public protocol AudioEnvironmentConfiguring: AudioEnvironmentDriving, Observable {
+    var audioSessionActive: Bool { get set }
+    var sampleRate: SampleRate { get set }
+    var selectedInput: AudioInput? { get set }
+    var selectedSource: AudioSource? { get set }
+    var useMeasurement: Bool { get set }
+
+    var availableInputs: [AudioInput] { get }
+    var availableSources: [AudioSource] { get }
+    var availableChannelCountsForSelectedSource: [ChannelCount] { get }
+    var likelySupportedSampleRates: [SampleRate] { get }
+
+    func applyMono() async throws(AudioEnvironmentError)
+    func applySourceConfiguration(
+      source: AudioSource,
+      channelCount: ChannelCount,
+      polarPattern: PolarPattern?,
+      persistPreference: Bool,
+    ) async throws(AudioEnvironmentError)
+  }
+
+  #if os(iOS)
+    @MainActor
+    public protocol AudioInputPickingEnvironment: AudioEnvironmentConfiguring {
+      var session: AVAudioSession { get }
+    }
+  #endif
 
   @MainActor
   public protocol OutputConfigurationProviding: AnyObject {
@@ -71,7 +134,12 @@
   }
 
   extension AIOEngine: RecordingDriving {}
+  extension AudioEnvironmentManager: AudioEnvironmentEventSubscribing {}
   extension AudioEnvironmentManager: AudioEnvironmentDriving {}
+  extension AudioEnvironmentManager: AudioEnvironmentConfiguring {}
+  #if os(iOS)
+    extension AudioEnvironmentManager: AudioInputPickingEnvironment {}
+  #endif
   extension OutputConfigurationManager: OutputConfigurationProviding {}
 
 #endif
