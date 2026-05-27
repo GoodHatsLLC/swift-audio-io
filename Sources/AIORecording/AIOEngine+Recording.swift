@@ -18,21 +18,25 @@
   extension AIOEngine {
     // MARK: - Recording State Management
 
-    /// Sets the desired recording state and attempts to reconcile it with the actual state.
+    /// Sets the desired recording state and asynchronously reconciles it with the
+    /// actual engine state. Spawns a background reconciliation task that retries
+    /// `startRecording(configuration:)` on transient failures (e.g.
+    /// ``SessionError/notReady(details:)``) until either recording starts, the
+    /// configured ``ReconciliationConfiguration/timeout`` elapses, or a
+    /// non-transient ``RecordingError`` surfaces.
     ///
-    /// This method manages the recording lifecycle with automatic retry logic.
-    /// When requesting to start recording, the engine will repeatedly attempt
-    /// to warm up and start until either:
-    /// - Recording starts successfully
-    /// - The reconciliation timeout expires
-    /// - A non-transient error occurs
-    ///
-    /// When requesting to stop recording, the engine stops immediately.
+    /// This is an advanced, fire-and-forget alternative to the canonical
+    /// ``AIOEngine/startRecording(configuration:)`` method. Use it when you
+    /// need to drive an external state machine (the recorder's UI keeps
+    /// `wantsRecording` displayed regardless of underlying engine state) or to
+    /// recover from system interruptions where a single-shot start would
+    /// race the audio session bring-up.
     ///
     /// - Parameters:
     ///   - desiredState: Whether recording should be active.
     ///   - configuration: The recording configuration to use when starting.
     ///                    Required when `desiredState` is `true`.
+    @_spi(Advanced)
     @MainActor
     public func setDesiredRecordingState(
       _ desiredState: Bool,
@@ -41,31 +45,22 @@
       recordingRuntime.setDesiredRecordingState(desiredState, configuration: configuration)
     }
 
-    /// Starts recording with automatic reconciliation and returns when complete.
-    ///
-    /// This is a convenience method that combines setting the desired state and
-    /// waiting for reconciliation to complete. Use this when you need to know
-    /// whether recording started successfully.
+    /// Starts recording with automatic reconciliation and awaits completion.
+    /// Equivalent to calling ``setDesiredRecordingState(_:configuration:)``
+    /// with `true` and then awaiting the reconciliation task, returning
+    /// whether the engine reached `isRecording = true` within the configured
+    /// timeout. See ``setDesiredRecordingState(_:configuration:)`` for the
+    /// retry semantics.
     ///
     /// - Parameter configuration: The recording configuration to use.
     /// - Returns: `true` if recording started successfully, `false` if reconciliation
     ///            failed after the timeout period or a non-transient error occurred.
+    @_spi(Advanced)
     @MainActor
     public func startRecordingWithReconciliation(
       configuration: RecordingConfiguration,
     ) async -> Bool {
       await recordingRuntime.startRecordingWithReconciliation(configuration: configuration)
-    }
-
-    /// Stops recording.
-    ///
-    /// This is a convenience method that sets the desired state to false
-    /// and waits for the recording to stop.
-    ///
-    /// - Returns: The URL of the recorded file, or `nil` if not recording.
-    @MainActor
-    public func stopRecordingWithReconciliation() async -> URL? {
-      await recordingRuntime.stopRecordingWithReconciliation()
     }
 
     /// Attempts to reconcile the desired recording state with the actual state.
@@ -80,16 +75,26 @@
       )
     }
 
-    /// Starts recording audio with the specified configuration.
+    /// Starts recording audio with the specified configuration and returns the
+    /// destination URL once the engine is producing output.
     ///
-    /// This method first stops any active playback and then warms up the engine with the provided configuration.
-    /// Once the engine is ready, it starts recording audio to a temporary file.
+    /// This is the canonical single-shot entry point: stops any active playback,
+    /// warms the engine for the requested configuration, opens the output file,
+    /// and starts the tap. The returned `URL` points at the file the engine is
+    /// writing to (resolved from
+    /// ``RecordingConfiguration/outputDestination``).
+    ///
+    /// If you want automatic retry on transient session failures, see the
+    /// `@_spi(Advanced)` ``setDesiredRecordingState(_:configuration:)`` and
+    /// ``startRecordingWithReconciliation(configuration:)`` alternatives.
     ///
     /// - Parameter configuration: The configuration to use for recording.
-    /// - Throws: A ``RecordingError`` if the recording configuration is invalid or if the engine fails to start.
+    /// - Returns: The URL of the recording file currently being written.
+    /// - Throws: A ``RecordingError`` if the recording configuration is invalid
+    ///   or if the engine fails to start.
     public nonisolated func startRecording(
       configuration: RecordingConfiguration,
-    ) async throws(RecordingError) {
+    ) async throws(RecordingError) -> URL {
       try await recordingRuntime.startRecording(configuration: configuration)
     }
 

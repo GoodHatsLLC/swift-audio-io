@@ -29,7 +29,13 @@
   // back onto `@_exported import`. Migrate behind a protocol contract first.
   @_exported import AIOMicHealth
   @_exported import AIOPlayback
-  @_exported import AIORecording
+  // AIORecording is re-exported with @_spi(Advanced) so that the
+  // reconciliation-mode start API (setDesiredRecordingState /
+  // startRecordingWithReconciliation) — gated behind @_spi(Advanced) on the
+  // concrete AIOEngine and on the RecordingDriving protocol — can be reached
+  // from `@_spi(Advanced) import AudioIO` consumers. Mainstream callers
+  // see only the canonical startRecording(configuration:) entry point.
+  @_spi(Advanced) @_exported import AIORecording
   @_exported import AIOVisualization
   @_exported import AudioSignals
 
