@@ -2,7 +2,7 @@
 
 AIO exposes three public SwiftPM products:
 
-- `AIOEngine`: the public umbrella for recording, playback, session management,
+- `AudioIO`: the public umbrella for recording, playback, session management,
   visualization, and signal-processing integration.
 - `AudioSignals`: signal-processing types that can be used without the full engine.
 - `Tools`: shared concurrency and utility primitives that are intentionally public when
@@ -27,7 +27,7 @@ Internally, AIO is split by runtime ownership:
 
 ## Public Boundary
 
-Consumers should import `AIOEngine` first. Direct imports of subtargets are only needed
+Consumers should import `AudioIO` first. Direct imports of subtargets are only needed
 for narrow advanced use, such as depending on `AudioSignals` without recording/playback.
 
 The umbrella intentionally re-exports the submodules whose public symbols are part of the

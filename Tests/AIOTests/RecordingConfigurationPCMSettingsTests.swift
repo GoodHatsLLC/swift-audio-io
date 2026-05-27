@@ -4,7 +4,7 @@
   import AVFoundation
   import Testing
   @testable import AIOAudioSession
-  @testable import AIOEngine
+  @testable import AudioIO
 
   struct RecordingConfigurationPCMSettingsTests {
     @Test

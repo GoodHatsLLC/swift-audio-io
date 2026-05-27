@@ -1,6 +1,6 @@
 # AIO
 
-AIO is a Swift audio I/O package. Import `AIOEngine` for recording, file and segment
+AIO is a Swift audio I/O package. Import `AudioIO` for recording, file and segment
 playback, audio-session configuration types, and live visualization.
 
 ## License
@@ -11,7 +11,7 @@ AIO is licensed under the GNU Affero General Public License, version 3 only
 ## Quickstart
 
 ```swift
-import AIOEngine
+import AudioIO
 
 @MainActor
 func runAIOQuickstart() async throws {
@@ -104,7 +104,7 @@ rotation coverage, and the macOS / iOS harness UI test schemes. Reproduce locall
 ## Release Versioning
 
 AIO follows Semantic Versioning for the public API exposed by the declared SwiftPM
-library products: `AIOEngine`, `AudioSignals`, and `Tools`.
+library products: `AudioIO`, `AudioSignals`, and `Tools`.
 
 - Before `1.0.0`, minor releases may include source-breaking API changes, but every
   break must be called out in `CHANGELOG.md`.

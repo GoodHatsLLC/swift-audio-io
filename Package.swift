@@ -31,8 +31,8 @@ let package = Package(
       targets: ["AudioSignals"],
     ),
     .library(
-      name: "AIOEngine",
-      targets: ["AIOEngine"],
+      name: "AudioIO",
+      targets: ["AudioIO"],
     ),
   ],
   dependencies: [
@@ -159,7 +159,7 @@ let package = Package(
       swiftSettings: swiftSettings(),
     ),
     .target(
-      name: "AIOEngine",
+      name: "AudioIO",
       dependencies: [
         "AIOAudioSession",
         "AIOContracts",
@@ -178,12 +178,12 @@ let package = Package(
     ),
     .testTarget(
       name: "AIOTests",
-      dependencies: ["AIOAudioSession", "AIOEngine", "AIORecordingSupport"],
+      dependencies: ["AIOAudioSession", "AudioIO", "AIORecordingSupport"],
       swiftSettings: swiftSettings(),
     ),
     .testTarget(
       name: "AudioVisualizationTests",
-      dependencies: ["AIOEngine", "AudioSignals"],
+      dependencies: ["AudioIO", "AudioSignals"],
       swiftSettings: swiftSettings(),
     ),
     .testTarget(

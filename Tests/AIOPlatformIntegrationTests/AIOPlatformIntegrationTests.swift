@@ -6,7 +6,7 @@
   import Testing
   import Tools
 
-  @_spi(TESTING) @testable import AIOEngine
+  @_spi(TESTING) @testable import AudioIO
 
   @Suite(.serialized)
   @MainActor

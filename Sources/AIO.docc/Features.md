@@ -1,6 +1,6 @@
 # Features
 
-AIO's public features are grouped around the ``AIOEngine`` umbrella product:
+AIO's public features are grouped around the ``AudioIO`` umbrella product:
 
 - Recording with typed configuration, multi-channel format validation, rotation, and
   writer-drain protection.

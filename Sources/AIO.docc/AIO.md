@@ -7,7 +7,7 @@
 AIO is a Swift audio I/O package for recording, playback, audio-session coordination,
 and real-time audio visualization.
 
-Import ``AIOEngine`` for the primary public surface. The umbrella product re-exports
+Import ``AudioIO`` for the primary public surface. The umbrella product re-exports
 the recording, playback, session, visualization, and signal-processing types needed
 to build a recorder or audio-analysis workflow without importing implementation
 targets directly.

@@ -1,11 +1,11 @@
 # AIO Public Engine Spec
 
-`AIOEngine` is the public umbrella product for AIO's recording, playback,
+`AudioIO` is the public umbrella product for AIO's recording, playback,
 audio-session, visualization, and signal-processing APIs.
 
 ## Products
 
-- `AIOEngine`: primary product for app integration.
+- `AudioIO`: primary product for app integration.
 - `AudioSignals`: standalone signal-processing and waveform data types.
 - `Tools`: public utility types that are intentionally used by AIO contracts, such as
   `AsyncBroadcaster`.
@@ -15,7 +15,7 @@ audio-session, visualization, and signal-processing APIs.
 Start with:
 
 ```swift
-import AIOEngine
+import AudioIO
 ```
 
 The umbrella re-exports the session, recording, playback, visualization, mic-health, and

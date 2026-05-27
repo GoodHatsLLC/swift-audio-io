@@ -2,7 +2,7 @@
 
 #if canImport(AVFAudio)
   @testable import AIOAudioSession
-  import AIOEngine
+  import AudioIO
   import AudioSignals
   import Foundation
   import Testing

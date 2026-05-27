@@ -5,7 +5,7 @@
   import Testing
 
   @testable import AIOAudioSession
-  @_spi(TESTING) import AIOEngine
+  @_spi(TESTING) import AudioIO
 
   struct AIOEngineBufferCapacityTests {
     @Test

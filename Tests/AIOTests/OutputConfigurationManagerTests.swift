@@ -4,7 +4,7 @@ import Foundation
 import Testing
 
 @testable import AIOAudioSession
-@testable import AIOEngine
+@testable import AudioIO
 
 struct OutputConfigurationManagerTests {
   @MainActor

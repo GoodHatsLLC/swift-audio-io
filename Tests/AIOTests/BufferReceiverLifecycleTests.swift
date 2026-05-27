@@ -5,7 +5,7 @@ import Testing
 import Tools
 
 @testable import AIOAudioSession
-@testable import AIOEngine
+@testable import AudioIO
 
 struct BufferReceiverLifecycleTests {
   @Test

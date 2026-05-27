@@ -1,7 +1,7 @@
 // © GoodHatsLLC
 
 #if canImport(AVFoundation)
-  import AIOEngine
+  import AudioIO
   import AudioSignals
   import Foundation
   import Testing

@@ -6,7 +6,7 @@ stores min, max, and RMS values at a configurable level of detail.
 ## Quick Start
 
 ```swift
-import AIOEngine
+import AudioIO
 
 let visualization = AudioVisualizationEngine()
 let subscription = visualization.subscribe(
