@@ -168,8 +168,8 @@
       do {
         _ = try engine.scrub(to: 4, updatePlaybackPolling: false)
         Issue.record("Expected whole-file scrub at exact duration to fail")
-      } catch AIOEngine.AIOError.invalidScrubTime(let details) {
-        #expect(details == 4)
+      } catch PlaybackError.invalidScrubTime(let value) {
+        #expect(value == 4)
       } catch {
         Issue.record("Expected invalidScrubTime, got \(error)")
       }

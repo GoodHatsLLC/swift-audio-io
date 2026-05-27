@@ -48,7 +48,7 @@
             guard let owner else { return }
             owner.recordingEngineRuntime.recordWriteFailure(error, url: writer.fileURL)
             owner.errorSubject.send(
-              AIOEngine.AIOError.audioFileFailed(
+              RecordingError.fileFailed(
                 operation: .write,
                 url: writer.fileURL,
                 error: error,
@@ -197,7 +197,7 @@
         recordWriteFailure(ErrorContext(error), url: session.fileURL)
         if notifyOnFailure {
           owner.errorSubject.send(
-            AIOEngine.AIOError.audioFileFailed(
+            RecordingError.fileFailed(
               operation: .write,
               url: session.fileURL,
               error: ErrorContext(error),
@@ -294,7 +294,7 @@
     }
 
     @MainActor
-    func warm(configuration: RecordingConfiguration) throws(AIOEngine.AIOError) {
+    func warm(configuration: RecordingConfiguration) throws(RecordingError) {
       guard !owner.isRecording, !owner.isPlaying else {
         return
       }
@@ -302,18 +302,18 @@
       try validateEncoderCompatibility(for: configuration)
 
       guard let processingFormat = configuration.processingFormat else {
-        throw AIOEngine.AIOError.invalidRecordingConfiguration(details: "(processing format)")
+        throw RecordingError.invalidConfiguration(details: "(processing format)")
       }
 
       let sampleRate = Int(processingFormat.sampleRate)
       let channelCount = Int(processingFormat.channelCount)
       guard sampleRate > 0, channelCount > 0 else {
-        throw AIOEngine.AIOError.audioSessionNotReady(
-          details: "Invalid format: \(sampleRate)Hz, \(channelCount)ch",
+        throw RecordingError.session(
+          .notReady(details: "Invalid format: \(sampleRate)Hz, \(channelCount)ch"),
         )
       }
       guard sampleRate < Int.max / channelCount / 2 else {
-        throw AIOEngine.AIOError.hardwareNotSupported
+        throw RecordingError.hardwareNotSupported
       }
       try validateRecordingChannelCapacity(channelCount: channelCount)
 
@@ -337,9 +337,13 @@
         }
       }
 
-      do {
+      do throws(RecordingError) {
         log.info("warming with config: \(configuration, privacy: .public)")
-        try owner.configureAudioSession(for: configuration)
+        do {
+          try owner.configureAudioSession(for: configuration)
+        } catch let sessionError {
+          throw RecordingError.session(sessionError)
+        }
 
         owner.recordingSampleTimeAtomic.store(0, ordering: .relaxed)
 
@@ -397,7 +401,7 @@
 
     func validateRecordingChannelCapacity(
       channelCount: Int,
-    ) throws(AIOEngine.AIOError) {
+    ) throws(RecordingError) {
       try validateRecordingChannelCapacity(
         channelCount: channelCount,
         maximum: Self.currentMaximumRecordingChannelCount,
@@ -406,7 +410,7 @@
 
     func validateRecordingChannelCapacity(
       for configuration: RecordingConfiguration,
-    ) throws(AIOEngine.AIOError) {
+    ) throws(RecordingError) {
       try validateRecordingChannelCapacity(
         channelCount: configuration.inputConfiguration.channels.count,
         maximum: min(
@@ -419,14 +423,14 @@
     private func validateRecordingChannelCapacity(
       channelCount: Int,
       maximum: Int,
-    ) throws(AIOEngine.AIOError) {
+    ) throws(RecordingError) {
       guard channelCount > 0 else {
-        throw AIOEngine.AIOError.invalidRecordingConfiguration(
+        throw RecordingError.invalidConfiguration(
           details: "Channel count must be at least 1.",
         )
       }
       guard channelCount <= maximum else {
-        throw AIOEngine.AIOError.unsupportedRecordingChannelCount(
+        throw RecordingError.unsupportedChannelCount(
           requested: channelCount,
           maximum: maximum,
         )
@@ -436,13 +440,13 @@
     @MainActor
     func validateEncoderCompatibility(
       for configuration: RecordingConfiguration,
-    ) throws(AIOEngine.AIOError) {
+    ) throws(RecordingError) {
       let fileFormat = configuration.outputConfiguration.fileFormat
       guard fileFormat == .aac || fileFormat == .adts else { return }
 
       let sampleRate = configuration.inputConfiguration.sampleRate.hz
       guard fileFormat.supportsEncodedSampleRate(sampleRate) else {
-        throw AIOEngine.AIOError.unsupportedEncodedSampleRate(
+        throw RecordingError.unsupportedEncodedSampleRate(
           fileFormat: fileFormat,
           sampleRate: sampleRate,
           supportedSampleRates: FileFormat.aacCompatibleSampleRates,
@@ -453,7 +457,7 @@
     @MainActor
     func reconfigureTapForIntervalChange(
       configuration: RecordingConfiguration,
-    ) throws(AIOEngine.AIOError) {
+    ) throws(RecordingError) {
       guard let processingFormat = owner.state.withLock({ $0.tapConverterOutputFormat }) else {
         return
       }

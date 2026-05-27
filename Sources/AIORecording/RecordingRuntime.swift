@@ -88,7 +88,7 @@
         "Starting recording reconciliation (timeout: \(timeout, privacy: .public), interval: \(retryInterval, privacy: .public))",
       )
 
-      var lastError: AIOEngine.AIOError?
+      var lastError: RecordingError?
 
       while !Task.isCancelled, owner.wantsRecording {
         let elapsed = ContinuousClock.now - startTime
@@ -134,7 +134,7 @@
 
     nonisolated func startRecording(
       configuration: RecordingConfiguration,
-    ) async throws(AIOEngine.AIOError) {
+    ) async throws(RecordingError) {
       do {
         let shouldStopPlayer = await owner.withEngineControlQueue { [weak owner] in
           guard let owner else { return false }
@@ -166,7 +166,7 @@
             let writeWriter = writer,
             let url
           else {
-            throw AIOEngine.AIOError.invalidRecordingConfiguration(
+            throw RecordingError.invalidConfiguration(
               details: "state after warm(configuration:) was invalid",
             )
           }
@@ -175,7 +175,7 @@
             try unsafe owner.engine.start()
           }
           if case .failure(let error) = startResult {
-            throw AIOEngine.AIOError.engineStartFailed(error: ErrorContext(error))
+            throw RecordingError.session(.engineStartFailed(error: ErrorContext(error)))
           }
           let fileFormat = configuration.outputConfiguration.fileFormat.rawValue
           owner.onRecordingStarted?(url, fileFormat)
@@ -189,10 +189,10 @@
           }
           owner.isRecording = true
         }
-      } catch let error as AIOEngine.AIOError {
+      } catch let error as RecordingError {
         throw error
       } catch {
-        throw .engineStartFailed(error: ErrorContext(error))
+        throw .session(.engineStartFailed(error: ErrorContext(error)))
       }
     }
 
@@ -236,23 +236,23 @@
     }
 
     @MainActor
-    func stopRecording() async throws(AIOEngine.AIOError) -> URL {
+    func stopRecording() async throws(RecordingError) -> URL {
       guard let url = owner.state[locked: \.recordingURL], owner.isRecording else {
-        throw AIOEngine.AIOError.notRecording
+        throw RecordingError.notRecording
       }
       await owner.gracefulStop()
       let fileExists = FileManager.default.fileExists(atPath: url.path)
       let fileSize = owner.fileSizeValue(for: url)
       let failure = owner.consumeWriteFailure()
       if !fileExists {
-        throw AIOEngine.AIOError.audioFileFailed(
+        throw RecordingError.fileFailed(
           operation: .write,
           url: url,
           error: ErrorContext(MissingAudioFileError(url: url)),
         )
       }
       if let size = fileSize, size == 0 {
-        throw AIOEngine.AIOError.audioFileFailed(
+        throw RecordingError.fileFailed(
           operation: .write,
           url: url,
           error: ErrorContext(EmptyAudioFileError(url: url)),
@@ -264,7 +264,7 @@
             "⚠️ Writer drain timed out but file exists with data; continuing stop for \(url.lastPathComponent, privacy: .public)",
           )
         } else {
-          throw AIOEngine.AIOError.audioFileFailed(
+          throw RecordingError.fileFailed(
             operation: .write,
             url: failure.url,
             error: failure.error,
@@ -280,7 +280,7 @@
     }
 
     @MainActor
-    func rotateRecordingFile() async throws(AIOEngine.AIOError) -> URL {
+    func rotateRecordingFile() async throws(RecordingError) -> URL {
       guard owner.isRecording,
         let (currentURL, configuration, format): (URL, RecordingConfiguration, AVAudioFormat) =
           owner.state.withLock({
@@ -293,7 +293,7 @@
             return Optional((url, config, format))
           })
       else {
-        throw AIOEngine.AIOError.notRecording
+        throw RecordingError.notRecording
       }
 
       let (newURL, protection): (URL, OutputFileProtection?) = try owner.resolveOutputURL(
@@ -306,7 +306,7 @@
       let sampleRate = Int(format.sampleRate)
       let channelCount = Int(format.channelCount)
       guard sampleRate > 0, channelCount > 0 else {
-        throw AIOEngine.AIOError.invalidRecordingConfiguration(details: "Invalid processing format")
+        throw RecordingError.invalidConfiguration(details: "Invalid processing format")
       }
 
       let newBuffers = owner.makeAudioBuffers(

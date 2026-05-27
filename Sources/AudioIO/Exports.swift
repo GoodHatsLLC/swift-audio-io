@@ -50,6 +50,7 @@
     public typealias AudioSessionSnapshot = AIOAudioSession.AudioSessionSnapshot
   #endif
   public typealias AnyErrorManager = AIOAudioSession.AnyErrorManager
+  public typealias AudioIOError = AIOAudioSession.AudioIOError
   public typealias BitDepth = AIOAudioSession.BitDepth
   public typealias ChannelCount = AIOAudioSession.ChannelCount
   public typealias EncodingQuality = AIOAudioSession.EncodingQuality
@@ -63,13 +64,16 @@
   #endif
   public typealias OutputConfiguration = AIOAudioSession.OutputConfiguration
   public typealias OutputConfigurationManager = AIOAudioSession.OutputConfigurationManager
+  public typealias PlaybackError = AIOAudioSession.PlaybackError
   public typealias PolarPattern = AIOAudioSession.PolarPattern
   public typealias RecordingConfiguration = AIOAudioSession.RecordingConfiguration
+  public typealias RecordingError = AIOAudioSession.RecordingError
   public typealias RecordingFilename = AIOAudioSession.RecordingFilename
   public typealias ReconciliationConfiguration = AIOAudioSession.ReconciliationConfiguration
   public typealias ReportedError = AIOAudioSession.ReportedError
   public typealias Reporter = AIOAudioSession.Reporter
   public typealias SampleRate = AIOAudioSession.SampleRate
+  public typealias SessionError = AIOAudioSession.SessionError
   public typealias SourceLocation = AIOAudioSession.SourceLocation
   public typealias TypeDescribable = AIOAudioSession.TypeDescribable
 

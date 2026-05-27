@@ -77,130 +77,6 @@
       case delegated(setActive: @MainActor @Sendable (Bool) throws -> Void)
     }
 
-    /// Errors that can occur during audio engine operations.
-    public enum AIOError: AudioError, LocalizedError {
-      public enum AudioSessionOperation: String, Sendable, Equatable, CustomStringConvertible {
-        case setCategory
-        case setPreferredSampleRate
-        case setPreferredIOBufferDuration
-        case setPreferredInputNumberOfChannels
-        case setAllowHapticsAndSystemSoundsDuringRecording
-        case setPrefersNoInterruptionsFromSystemAlerts
-        case setPrefersInterruptionOnRouteDisconnect
-        case setActive
-        case setPreferredInput
-        case overrideOutputAudioPort
-
-        public var description: String {
-          rawValue
-        }
-      }
-
-      public enum AudioFileOperation: String, Sendable, Equatable, CustomStringConvertible {
-        case openForReading
-        case openForWriting
-        case write
-
-        public var description: String {
-          rawValue
-        }
-      }
-
-      /// The operation could not be completed because the engine is not currently recording.
-      case notRecording
-      /// The operation could not be completed because the engine is not currently playing audio.
-      case notPlaying
-      /// The operation could not be completed because the engine is already recording.
-      case alreadyRecording
-      /// The operation could not be completed because playback is not allowed while recording.
-      case cannotPlayWhileRecording
-      /// A generic error occurred in the audio engine.
-      case engineError
-      /// The audio format conversion failed.
-      case formatConversionFailed
-      /// The hardware does not support the requested configuration.
-      case hardwareNotSupported
-      /// The audio session is not ready.
-      case audioSessionNotReady(details: String)
-      /// The recording configuration is invalid.
-      case invalidRecordingConfiguration(details: String)
-      /// The requested recording channel count exceeds the selected format/runtime capacity.
-      case unsupportedRecordingChannelCount(requested: Int, maximum: Int)
-      /// The selected output encoder does not support the requested sample rate.
-      case unsupportedEncodedSampleRate(
-        fileFormat: FileFormat,
-        sampleRate: Double,
-        supportedSampleRates: [Double],
-      )
-      /// The scrub time is invalid.
-      case invalidScrubTime(details: Double)
-      /// The scrub track is invalid.
-      case invalidScrubTrack
-      /// The specified time range is invalid for segment playback.
-      case invalidTimeRange
-      /// The underlying `AVAudioEngine` failed to start.
-      case engineStartFailed(error: ErrorContext)
-      /// A system audio session operation failed.
-      case audioSessionFailed(operation: AudioSessionOperation, error: ErrorContext)
-      /// An audio file operation failed.
-      case audioFileFailed(operation: AudioFileOperation, url: URL?, error: ErrorContext)
-
-      public var errorDescription: String? {
-        switch self {
-        case .notRecording: return "Not currently recording"
-        case .notPlaying: return "Not currently playing"
-        case .alreadyRecording: return "Already recording"
-        case .cannotPlayWhileRecording: return "Cannot play audio while recording"
-        case .engineError: return "Audio engine error"
-        case .formatConversionFailed: return "Failed to convert audio format"
-        case .hardwareNotSupported: return "Hardware configuration not supported"
-        case .audioSessionNotReady(let details):
-          return "Audio session not ready: \(details)"
-        case .invalidRecordingConfiguration(let details):
-          return "The recording configuration was not valid. \(details)"
-        case .unsupportedRecordingChannelCount(let requested, let maximum):
-          return
-            "Recording \(requested)-channel audio is not supported by the selected format/runtime. The current maximum is \(maximum) channels."
-        case .unsupportedEncodedSampleRate(let fileFormat, let sampleRate, let supportedRates):
-          let requested = Int((sampleRate / 1000).rounded())
-          let supportedDescription =
-            supportedRates
-            .map { Int(($0 / 1000).rounded()) }
-            .map { "\($0)kHz" }
-            .joined(separator: ", ")
-          return
-            "The selected \(fileFormat.description) format does not support \(requested)kHz. Supported rates: \(supportedDescription)"
-        case .invalidScrubTime(let details):
-          return "Progress can only be scrubbed between 0..<1. (value: \(details))"
-        case .invalidScrubTrack:
-          return "A track must be playing to be scrubbed to a time"
-        case .invalidTimeRange:
-          return "The specified time range is invalid"
-        case .engineStartFailed(let error):
-          return "Audio engine failed to start: \(error)"
-        case .audioSessionFailed(let operation, let error):
-          return "Audio session operation '\(operation)' failed: \(error)"
-        case .audioFileFailed(let operation, let url, let error):
-          return
-            "Audio file operation '\(operation)' failed for \(url?.lastPathComponent ?? "missing URL"): \(error)"
-        }
-      }
-
-      public var description: String {
-        errorDescription ?? String(describing: self)
-      }
-
-      /// Returns `true` if this error might be transient and worth retrying.
-      public var isTransient: Bool {
-        switch self {
-        case .audioSessionNotReady:
-          true
-        default:
-          false
-        }
-      }
-    }
-
     /// An event representing a change in audio quality.
     public struct AudioQualityChange: Sendable {
       public init(
@@ -563,8 +439,8 @@
       set { recordingRuntimeContext.lastWriteFailure = newValue }
     }
 
-    @MainActor package var lastRecordingStartFailure: AIOError? {
-      get { recordingRuntimeContext.lastRecordingStartFailure as? AIOError }
+    @MainActor package var lastRecordingStartFailure: RecordingError? {
+      get { recordingRuntimeContext.lastRecordingStartFailure as? RecordingError }
       set { recordingRuntimeContext.lastRecordingStartFailure = newValue }
     }
 
@@ -572,7 +448,8 @@
       /// Test hook: when set, `reinstallTap()` calls this instead of touching AVAudioEngine.
       @MainActor package var testReinstallTapOverride:
         (
-          @MainActor (RecordingConfiguration, AVAudioFormat) throws(AIOError) -> TapInstallResult
+          @MainActor (RecordingConfiguration, AVAudioFormat) throws(RecordingError) ->
+            TapInstallResult
         )?
     #endif
 
@@ -607,7 +484,7 @@
 
     /// Returns the most recent failure encountered while starting recording and clears it.
     @MainActor
-    public func consumeLastRecordingStartFailure() -> AIOError? {
+    public func consumeLastRecordingStartFailure() -> RecordingError? {
       defer { lastRecordingStartFailure = nil }
       return lastRecordingStartFailure
     }
@@ -882,7 +759,7 @@
       }
       let handler: @Sendable (TapErrorCode) -> Void = { [weak self] code in
         guard let self else { return }
-        let error: AIOError =
+        let error: RecordingError =
           switch code {
           case .converterMissing, .bufferTooSmall, .conversionFailed:
             .formatConversionFailed

@@ -18,7 +18,7 @@
       do {
         try engine.warm(configuration: configuration)
         Issue.record("Expected unsupportedRecordingChannelCount")
-      } catch AIOEngine.AIOError.unsupportedRecordingChannelCount(
+      } catch RecordingError.unsupportedChannelCount(
         let requested,
         let maximum
       ) {
@@ -39,7 +39,7 @@
       do {
         try engine.validateRecordingChannelCapacity(for: configuration)
         Issue.record("Expected unsupportedRecordingChannelCount")
-      } catch AIOEngine.AIOError.unsupportedRecordingChannelCount(
+      } catch RecordingError.unsupportedChannelCount(
         let requested,
         let maximum
       ) {

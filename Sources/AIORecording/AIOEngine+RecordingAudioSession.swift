@@ -13,11 +13,13 @@
 
   extension AIOEngine {
     @MainActor
-    package func configureAudioSession(for configuration: RecordingConfiguration) throws(AIOError) {
+    package func configureAudioSession(
+      for configuration: RecordingConfiguration,
+    ) throws(SessionError) {
       do {
         try audioSessionDelegate?.setAudioSessionActive(true)
       } catch {
-        throw .audioSessionFailed(operation: .setActive, error: ErrorContext(error))
+        throw .operationFailed(operation: .setActive, error: ErrorContext(error))
       }
 
       #if os(iOS)
@@ -28,7 +30,7 @@
         do {
           try session.setPreferredSampleRate(configuration.inputConfiguration.sampleRate.hz)
         } catch {
-          throw .audioSessionFailed(operation: .setPreferredSampleRate, error: ErrorContext(error))
+          throw .operationFailed(operation: .setPreferredSampleRate, error: ErrorContext(error))
         }
 
         let preferredDuration = calculatePreferredBufferDuration(
@@ -37,7 +39,7 @@
         do {
           try session.setPreferredIOBufferDuration(preferredDuration)
         } catch {
-          throw .audioSessionFailed(
+          throw .operationFailed(
             operation: .setPreferredIOBufferDuration, error: ErrorContext(error),
           )
         }
@@ -49,7 +51,7 @@
         do {
           try session.setPreferredInputNumberOfChannels(Int(channelCount))
         } catch {
-          throw .audioSessionFailed(
+          throw .operationFailed(
             operation: .setPreferredInputNumberOfChannels,
             error: ErrorContext(error),
           )
@@ -58,7 +60,7 @@
         do {
           try session.setActive(true)
         } catch {
-          throw .audioSessionFailed(operation: .setActive, error: ErrorContext(error))
+          throw .operationFailed(operation: .setActive, error: ErrorContext(error))
         }
 
         recordingSessionLog.info(
