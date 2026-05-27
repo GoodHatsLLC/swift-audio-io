@@ -3,7 +3,6 @@
 import AIOSupport
 public import Foundation
 public import Observation
-public import SwiftUI
 public import Tools
 import os
 
@@ -143,8 +142,4 @@ public final class ErrorManager: Sendable {
   public var debugReport: Reporter<any Error> {
     reporter(visibility: .debug)
   }
-}
-
-extension EnvironmentValues {
-  @Entry public var errorManager: ErrorManager = .init()
 }
