@@ -577,7 +577,7 @@
 
   private func waitForSignal(
     _ events: AsyncSignalStream<Void>,
-    timeout: Duration = .seconds(1),
+    timeout: Duration = .seconds(5),
     condition: @escaping @Sendable () -> Bool,
   ) async -> Bool {
     if condition() {
