@@ -84,7 +84,7 @@
 
     /// The current sample rate.
     public var sampleRate: SampleRate {
-      SampleRate(rawValue: session.sampleRate)
+      SampleRate(session.sampleRate)
     }
 
     /// Requests a specific sample rate.
@@ -96,7 +96,7 @@
     /// - Throws: An error if the sample rate cannot be set.
     public func request(sampleRate: SampleRate) throws(RequestError) {
       do {
-        try session.setPreferredSampleRate(sampleRate.platform)
+        try session.setPreferredSampleRate(sampleRate.hz)
       } catch {
         throw .operationFailed(operation: .setPreferredSampleRate, error: ErrorContext(error))
       }

@@ -34,8 +34,8 @@
               if persistPreference {
                 persistInputPreferencesIfNeeded { prefs in
                   var rejected = Set(prefs.rejectedSampleRatesHz ?? [])
-                  rejected.insert(newValue.rawValue)
-                  rejected.remove(actual.rawValue)
+                  rejected.insert(newValue.hz)
+                  rejected.remove(actual.hz)
                   prefs.rejectedSampleRatesHz = rejected.sorted()
                 }
               }
@@ -43,7 +43,7 @@
             }
             if persistPreference {
               persistInputPreferencesIfNeeded { prefs in
-                prefs.sampleRateHz = actual.rawValue
+                prefs.sampleRateHz = actual.hz
               }
             }
           }
@@ -58,10 +58,10 @@
           )
           if persistPreference {
             persistInputPreferencesIfNeeded { prefs in
-              prefs.sampleRateHz = actual.rawValue
+              prefs.sampleRateHz = actual.hz
               var rejected = Set(prefs.rejectedSampleRatesHz ?? [])
-              rejected.insert(newValue.rawValue)
-              rejected.remove(actual.rawValue)
+              rejected.insert(newValue.hz)
+              rejected.remove(actual.hz)
               prefs.rejectedSampleRatesHz = rejected.sorted()
             }
           }
@@ -98,7 +98,7 @@
             selectedSource: selectedSource,
           )
           persistInputPreferencesIfNeeded { prefs in
-            prefs.sampleRateHz = owner.env.sampleRate.rawValue
+            prefs.sampleRateHz = owner.env.sampleRate.hz
             prefs.channelCount = owner.channels.count
             prefs.sourceId = owner.env.source?.id
           }

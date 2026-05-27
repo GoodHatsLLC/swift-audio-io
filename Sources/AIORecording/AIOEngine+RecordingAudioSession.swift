@@ -26,13 +26,13 @@
         try applyAudioSessionConfiguration(session, configuration: recordingSessionConfiguration)
 
         do {
-          try session.setPreferredSampleRate(configuration.inputConfiguration.sampleRate.platform)
+          try session.setPreferredSampleRate(configuration.inputConfiguration.sampleRate.hz)
         } catch {
           throw .audioSessionFailed(operation: .setPreferredSampleRate, error: ErrorContext(error))
         }
 
         let preferredDuration = calculatePreferredBufferDuration(
-          sampleRate: configuration.inputConfiguration.sampleRate.platform,
+          sampleRate: configuration.inputConfiguration.sampleRate.hz,
         )
         do {
           try session.setPreferredIOBufferDuration(preferredDuration)

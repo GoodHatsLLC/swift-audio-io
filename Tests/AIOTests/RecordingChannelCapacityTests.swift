@@ -171,7 +171,7 @@
     ) -> RecordingConfiguration {
       RecordingConfiguration(
         inputConfiguration: InputConfiguration(
-          sampleRate: SampleRate.common(.sr48000),
+          sampleRate: .dvd,
           channels: channels,
         ),
         outputConfiguration: OutputConfiguration(

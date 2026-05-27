@@ -107,11 +107,11 @@ public enum FileFormat: String, CaseIterable, CustomStringConvertible, Sendable,
   }
 
   public func supports(sampleRate: SampleRate) -> Bool {
-    supportsEncodedSampleRate(sampleRate.rawValue)
+    supportsEncodedSampleRate(sampleRate.hz)
   }
 
   public var compatibleCommonSampleRates: [SampleRate] {
-    SampleRate.commonCases.filter { supports(sampleRate: $0) }
+    SampleRate.common.filter { supports(sampleRate: $0) }
   }
 
   package func recordingChannelLayout(

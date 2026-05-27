@@ -43,7 +43,7 @@
         if let prefs = owner.preferenceStore.preferences(for: inputId) {
           if canApplyPreferences {
             if let sampleRateHz = prefs.sampleRateHz {
-              owner.sampleRate = SampleRate(rawValue: sampleRateHz)
+              owner.sampleRate = SampleRate(sampleRateHz)
             }
 
             if let channelCount = prefs.channelCount {

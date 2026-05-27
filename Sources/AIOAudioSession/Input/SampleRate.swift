@@ -1,59 +1,57 @@
 // © GoodHatsLLC
 
-public struct SampleRate: RawRepresentable, Hashable, Codable, CustomStringConvertible,
-  Identifiable, Sendable, TypeDescribable, Comparable
+/// A sample rate, in hertz.
+///
+/// Construct via an integer literal (`let rate: SampleRate = 48_000`), the
+/// numeric initializers (`SampleRate(48_000)`), or the named statics
+/// (`.cd`, `.dvd`, `.hiRes96`, `.hiRes192`).
+///
+/// Codable shape: `{ "hz": <Double> }` — keyed container, not a bare scalar.
+/// This is a public, persistence-relevant contract.
+public struct SampleRate: ExpressibleByIntegerLiteral, Hashable, Codable,
+  CustomStringConvertible, Identifiable, Sendable, TypeDescribable, Comparable
 {
-  public var rawValue: RawValue
-  public var platform: Double {
-    rawValue
+  /// The sample rate in hertz. AVFoundation APIs accept `Double` sample rates.
+  public let hz: Double
+
+  public init(integerLiteral value: Int) {
+    self.hz = Double(value)
   }
 
-  public init(rawValue: Double) {
-    self.rawValue = rawValue
+  public init(_ hz: Double) {
+    self.hz = hz
   }
 
-  public init(common: Common) {
-    rawValue = common.rawValue
+  public init(_ hz: Int) {
+    self.hz = Double(hz)
   }
 
   public static let typeDescription: String = "Sample Rate"
-  public var id: Self {
-    self
-  }
+
+  public var id: Self { self }
 
   public var description: String {
-    "\(platform / 1000.0) kHz"
-  }
-
-  public static var commonCases: [SampleRate] {
-    SampleRate.Common.allCases.map(SampleRate.init(common:))
+    "\(hz / 1000.0) kHz"
   }
 
   public static func < (lhs: SampleRate, rhs: SampleRate) -> Bool {
-    lhs.rawValue < rhs.rawValue
+    lhs.hz < rhs.hz
   }
 }
 
 extension SampleRate {
-  public static func common(_ value: Common) -> SampleRate {
-    SampleRate(rawValue: value.rawValue)
-  }
+  /// Audio CD — 44.1 kHz.
+  public static let cd: SampleRate = 44_100
+  /// DVD audio / pro audio standard — 48 kHz.
+  public static let dvd: SampleRate = 48_000
+  /// High-resolution audio — 96 kHz.
+  public static let hiRes96: SampleRate = 96_000
+  /// Maximum high-resolution audio — 192 kHz.
+  public static let hiRes192: SampleRate = 192_000
 
-  public enum Common: Double, CaseIterable, Comparable, Sendable, Codable {
-    case sr16000 = 16000
-    case sr22050 = 22050
-    case sr24000 = 24000
-    case sr44100 = 44100
-    case sr48000 = 48000
-    case sr96000 = 96000
-    case sr192000 = 192_000
-
-    public static func < (lhs: Common, rhs: Common) -> Bool {
-      lhs.rawValue < rhs.rawValue
-    }
-
-    public var rate: SampleRate {
-      .init(common: self)
-    }
-  }
+  /// Common sample rates in ascending order. Useful for building UI selectors
+  /// when the consumer wants to enumerate standard choices.
+  public static let common: [SampleRate] = [
+    16_000, 22_050, 24_000, 32_000, 44_100, 48_000, 96_000, 192_000,
+  ]
 }

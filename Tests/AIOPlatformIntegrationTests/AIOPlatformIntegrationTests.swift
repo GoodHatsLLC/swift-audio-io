@@ -292,7 +292,7 @@
     ) -> RecordingConfiguration {
       RecordingConfiguration(
         inputConfiguration: InputConfiguration(
-          sampleRate: .common(.sr48000),
+          sampleRate: .dvd,
           channels: .init(platform: AVAudioChannelCount(channelCount)),
         ),
         outputConfiguration: OutputConfiguration(

@@ -48,7 +48,7 @@ func aioQuickstart() async throws {
 
   let configuration = RecordingConfiguration(
     inputConfiguration: InputConfiguration(
-      sampleRate: .common(.sr48000),
+      sampleRate: .dvd,
       channels: .stereo,
     ),
     outputConfiguration: OutputConfiguration(

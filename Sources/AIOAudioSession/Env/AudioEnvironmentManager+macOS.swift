@@ -57,7 +57,7 @@
       _selectedInput = nil
       _availableSources = []
       _selectedSource = nil
-      _sampleRate = .common(.sr48000)
+      _sampleRate = .dvd
       _channels = .mono
     }
 
@@ -130,7 +130,7 @@
     }
 
     public var likelySupportedSampleRates: [SampleRate] {
-      Array(Set(SampleRate.commonCases + [_sampleRate])).sorted()
+      Array(Set(SampleRate.common + [_sampleRate])).sorted()
     }
 
     public var sampleRate: SampleRate {

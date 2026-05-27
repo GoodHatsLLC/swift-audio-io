@@ -440,7 +440,7 @@
       let fileFormat = configuration.outputConfiguration.fileFormat
       guard fileFormat == .aac || fileFormat == .adts else { return }
 
-      let sampleRate = configuration.inputConfiguration.sampleRate.rawValue
+      let sampleRate = configuration.inputConfiguration.sampleRate.hz
       guard fileFormat.supportsEncodedSampleRate(sampleRate) else {
         throw AIOEngine.AIOError.unsupportedEncodedSampleRate(
           fileFormat: fileFormat,

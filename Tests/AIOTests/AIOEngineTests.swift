@@ -12,7 +12,7 @@
     @Test
     func `configuration creates format`() throws {
       let config = RecordingConfiguration(
-        inputConfiguration: InputConfiguration(sampleRate: .common(.sr48000), channels: .stereo),
+        inputConfiguration: InputConfiguration(sampleRate: .dvd, channels: .stereo),
         outputConfiguration: .init(fileFormat: .aac, bitDepth: .pcmFloat32, quality: .high),
       )
       #expect(config.fileFormat?.sampleRate == 48000)
@@ -22,7 +22,7 @@
     @Test
     func `AAC rejects unsupported encoder sample rate`() throws {
       let config = RecordingConfiguration(
-        inputConfiguration: InputConfiguration(sampleRate: .common(.sr96000), channels: .mono),
+        inputConfiguration: InputConfiguration(sampleRate: .hiRes96, channels: .mono),
         outputConfiguration: .init(fileFormat: .aac, bitDepth: .pcmFloat32, quality: .high),
       )
 
@@ -33,7 +33,7 @@
     @Test
     func `ADTS rejects unsupported encoder sample rate`() throws {
       let config = RecordingConfiguration(
-        inputConfiguration: InputConfiguration(sampleRate: .common(.sr96000), channels: .mono),
+        inputConfiguration: InputConfiguration(sampleRate: .hiRes96, channels: .mono),
         outputConfiguration: .init(fileFormat: .adts, bitDepth: .pcmFloat32, quality: .high),
       )
 
@@ -44,11 +44,11 @@
     @Test
     func `AAC compatible common sample rate matrix`() {
       let expectedAACRates: [SampleRate] = [
-        .common(.sr16000),
-        .common(.sr22050),
-        .common(.sr24000),
-        .common(.sr44100),
-        .common(.sr48000),
+        16_000,
+        22_050,
+        24_000,
+        44_100,
+        48_000,
       ]
       #expect(FileFormat.aac.compatibleCommonSampleRates == expectedAACRates)
       #expect(FileFormat.adts.compatibleCommonSampleRates == expectedAACRates)
@@ -56,7 +56,7 @@
 
     @Test
     func `PCM and FLAC support all common sample rates`() {
-      let allCommonRates = SampleRate.commonCases
+      let allCommonRates = SampleRate.common
       #expect(FileFormat.wav.compatibleCommonSampleRates == allCommonRates)
       #expect(FileFormat.caf.compatibleCommonSampleRates == allCommonRates)
       #expect(FileFormat.aiff.compatibleCommonSampleRates == allCommonRates)
@@ -67,7 +67,7 @@
     func `tap configuration preserves bus`() throws {
       let configuration = RecordingConfiguration(
         inputConfiguration: .init(
-          sampleRate: .common(.sr48000),
+          sampleRate: .dvd,
           channels: .stereo,
         ),
         outputConfiguration: .init(

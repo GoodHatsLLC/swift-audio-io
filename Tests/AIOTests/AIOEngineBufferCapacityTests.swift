@@ -48,7 +48,7 @@
 
     private func makeConfiguration(channels: ChannelCount) -> RecordingConfiguration {
       let input = InputConfiguration(
-        sampleRate: SampleRate.common(.sr48000),
+        sampleRate: .dvd,
         channels: channels,
       )
       let output = OutputConfiguration(

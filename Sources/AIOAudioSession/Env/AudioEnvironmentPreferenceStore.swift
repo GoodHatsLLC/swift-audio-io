@@ -58,7 +58,7 @@
       var prefs =
         inputPreferencesById[inputId]
         ?? InputPreferences(
-          sampleRateHz: currentSampleRate.rawValue,
+          sampleRateHz: currentSampleRate.hz,
           channelCount: isConfiguredForStereo ? 2 : 1,
           sourceId: currentSourceId,
         )
