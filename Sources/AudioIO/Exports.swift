@@ -110,13 +110,17 @@
 
   // MARK: - AIOVisualization re-exports
 
+  public typealias AnalysisWork = AIOVisualization.AnalysisWork
   public typealias AudioVisualizationEngine = AIOVisualization.AudioVisualizationEngine
+  public typealias FrequencyDomainWork = AIOVisualization.FrequencyDomainWork
+  public typealias LODWork = AIOVisualization.LODWork
   public typealias VisualizationDriving = AIOVisualization.VisualizationDriving
   public typealias VisualizationEvent = AIOVisualization.VisualizationEvent
   public typealias VisualizationEventMask = AIOVisualization.VisualizationEventMask
   public typealias VisualizationRequest = AIOVisualization.VisualizationRequest
   public typealias VisualizationSink = AIOVisualization.VisualizationSink
   public typealias VisualizationSubscription = AIOVisualization.VisualizationSubscription
+  public typealias VisualizationWork = AIOVisualization.VisualizationWork
 
   // MARK: - AudioSignals re-exports
 
@@ -133,13 +137,10 @@
   public typealias FrequencyBucketMode = AudioSignals.FrequencyBucketMode
   public typealias FrequencyBucketer = AudioSignals.FrequencyBucketer
   public typealias FrequencyDomainData = AudioSignals.FrequencyDomainData
-  public typealias FrequencyDomainWork = AudioSignals.FrequencyDomainWork
   public typealias FrequencyWeighting = AudioSignals.FrequencyWeighting
   public typealias LODChannel = AudioSignals.LODChannel
   public typealias LODSnapshot = AudioSignals.LODSnapshot
   public typealias LODSnapshotRef = AudioSignals.LODSnapshotRef
-  public typealias LODWork = AudioSignals.LODWork
-  public typealias AnalysisWork = AudioSignals.AnalysisWork
   public typealias MultiBandLODConfiguration = AudioSignals.MultiBandLODConfiguration
   public typealias MultiBandLODProcessor = AudioSignals.MultiBandLODProcessor
   public typealias MultiBandLODSnapshot = AudioSignals.MultiBandLODSnapshot
@@ -160,5 +161,4 @@
   public typealias StandardBands = AudioSignals.StandardBands
   public typealias TimeDomainData = AudioSignals.TimeDomainData
   public typealias VisualizationRateDefaults = AudioSignals.VisualizationRateDefaults
-  public typealias VisualizationWork = AudioSignals.VisualizationWork
 #endif
