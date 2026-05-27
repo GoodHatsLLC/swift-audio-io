@@ -5,7 +5,7 @@ Make a recording, observe playback, and subscribe to engine events in under thir
 ## Add the package
 
 ```swift
-.package(url: "https://github.com/goodhats/swift-audio-io", from: "0.1.0"),
+.package(url: "https://github.com/GoodHatsLLC/swift-audio-io", from: "0.1.0"),
 ```
 
 Add `AudioIO` as a target dependency:
