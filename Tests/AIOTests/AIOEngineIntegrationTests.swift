@@ -223,11 +223,11 @@
       #expect(tapInstallAttempted == false)
 
       switch engine.consumeLastRecordingStartFailure() {
-      case .unsupportedRecordingChannelCount(let requested, let maximum):
+      case .unsupportedChannelCount(let requested, let maximum):
         #expect(requested == 4)
         #expect(maximum == 2)
       case let other:
-        Issue.record("Expected unsupportedRecordingChannelCount, got \(String(describing: other))")
+        Issue.record("Expected unsupportedChannelCount, got \(String(describing: other))")
       }
     }
 

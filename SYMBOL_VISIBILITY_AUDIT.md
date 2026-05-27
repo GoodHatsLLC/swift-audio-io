@@ -2,6 +2,23 @@
 
 Date: 2026-05-02
 
+> **Historical snapshot.** This audit reflects the AIO surface as of
+> 2026-05-02, *before* the M1 (surface narrowing) and M2 (API ergonomics) work
+> for the AudioIO open-source extraction. Names and policies recorded below
+> have since changed substantially: the umbrella target is now `AudioIO`
+> (renamed from `AIOEngine` in M1.1a), the engine error type was split into
+> `RecordingError` / `PlaybackError` / `SessionError` under an `AudioIOError`
+> marker protocol (M2.2), and the engine event surface unified into
+> `events: AsyncBroadcaster<AudioIOEvent>` (M2.1).
+>
+> For the current public-surface fixture, read
+> `Packages/AIO/Sources/AudioIO/Exports.swift` (the live typealias list) and
+> `Tests/AIOTests/PublicAPISnapshot.swift` (the compile-time canary).
+>
+> For the M1/M2 change log, read `docs/aio-extraction/PROGRESS.md`.
+>
+> This file is retained for archaeological context only.
+
 This audit covers `Packages/AIO/Sources` after the AIO public-readiness pass. AIO
 uses an umbrella target (`AIOEngine`) that intentionally re-exports focused
 submodules, so a broad `public` search is only a starting point.
