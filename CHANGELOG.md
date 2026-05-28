@@ -1,28 +1,40 @@
 # Changelog
 
-All notable changes to AIO are recorded here.
+All notable changes to AudioIO are recorded here.
 
-The format follows Keep a Changelog categories, and releases follow the versioning
-policy in `README.md`.
+The format follows [Keep a Changelog](https://keepachangelog.com) categories, and
+releases follow the versioning policy in `README.md` and `ROADMAP.md`.
 
 ## Unreleased
 
+Nothing yet.
+
+## 0.1.0 - 2026-05-28
+
+Initial public release, extracted from the Recorder‽ app. This is the start of the
+`0.x` line — the public API may change between minor versions until `1.0.0`.
+
 ### Added
 
-- AGPL-3.0-only package license.
-- AIO release gate documentation for host SwiftPM, iOS Simulator, and macOS harness
-  coverage.
-- Symbol visibility audit notes for the public open-source surface.
+- **`AudioIO`** umbrella product: recording, playback, audio-session coordination,
+  real-time visualization, and microphone-health monitoring, driven through a single
+  `AIOEngine`.
+- **`AudioSignals`** product: signal-domain data types (`TimeDomainData`,
+  `FrequencyDomainData`, `BeatInfo`) and multi-band LOD waveform extraction
+  (`MultiBandLODProcessor`, `OfflineLODExtractor`), usable without the recording stack.
+- **`Tools`** product: async/concurrency primitives (`AsyncBroadcaster`, `Subject`,
+  `SPSCRingBuffer`) surfaced because they appear in AudioIO's public contracts.
+- Unified `AIOEngine.events: AsyncBroadcaster<AudioIOEvent>` stream carrying every
+  engine-level error and recording/playback lifecycle transition.
+- Per-domain typed errors (`RecordingError`, `PlaybackError`, `SessionError`) under
+  the `AudioIOError` marker protocol.
+- Canonical `startRecording(configuration:) async throws(RecordingError) -> URL`
+  entry point; reconciliation-mode recording behind `@_spi(Advanced)`.
+- DocC catalog with externally-focused topics (Getting Started, Platform Matrix,
+  Threading Model, Error Handling, Events) and per-surface reference docs.
+- `Examples/AudioIODemo`: a minimum-viable iOS + macOS sample app.
+- Apache-2.0 license.
 
-### Changed
+### Platforms
 
-- Narrowed package-internal audio-session helpers that were not part of the exported
-  AIO contract.
-
-### Fixed
-
-- Nothing yet.
-
-## 0.1.0 - TBD
-
-Initial public-source baseline.
+- iOS 26+, macOS 26+. Swift 6.2 with strict concurrency.
