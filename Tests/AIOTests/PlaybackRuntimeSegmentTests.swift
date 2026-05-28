@@ -175,6 +175,52 @@
       }
     }
 
+    @Test
+    func `paused playback reports the last observed time, not the start frame`() throws {
+      let fixture = try makeFixture()
+      defer { fixture.cleanup() }
+      let engine = AIOEngine()
+      let instance = PlaybackInstance(
+        id: .init(),
+        file: fixture.file,
+        startFrame: 0,
+        pollingInterval: .seconds(0.5),
+      )
+      engine.playbackState[locked: \.playbackInstance] = instance
+      engine.playbackState[locked: \.lastObservedPlaybackTime] = ObservedPlaybackTime(
+        instanceID: instance.id,
+        time: 1.5,
+      )
+
+      // The player never rendered, so `getPlayback` takes its node-less
+      // fallback path — the same path a paused node hits.
+      let playback = engine.getPlayback(for: instance)
+
+      #expect(playback.time == 1.5)
+    }
+
+    @Test
+    func `paused fallback ignores an observed time from a different instance`() throws {
+      let fixture = try makeFixture()
+      defer { fixture.cleanup() }
+      let engine = AIOEngine()
+      let instance = PlaybackInstance(
+        id: .init(),
+        file: fixture.file,
+        startFrame: fixture.frames(seconds: 0.75),
+        pollingInterval: .seconds(0.5),
+      )
+      engine.playbackState[locked: \.playbackInstance] = instance
+      engine.playbackState[locked: \.lastObservedPlaybackTime] = ObservedPlaybackTime(
+        instanceID: .init(),
+        time: 1.5,
+      )
+
+      let playback = engine.getPlayback(for: instance)
+
+      #expect(playback.time == 0.75)
+    }
+
     private func makeFixture() throws -> AudioFixture {
       try AudioFixture(duration: 4, sampleRate: sampleRate)
     }

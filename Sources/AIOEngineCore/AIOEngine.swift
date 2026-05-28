@@ -649,11 +649,20 @@
       guard let nodeTime = unsafe player.lastRenderTime,
         let playerTime = unsafe player.playerTime(forNodeTime: nodeTime)
       else {
+        // The node can't report a live position (paused, or not yet
+        // rendering). The node still holds the real position and resumes from
+        // it, so report the last observed position rather than snapping back to
+        // the segment start. Falls back to the start frame only when no live
+        // position has been observed for this instance (fresh play / seek).
+        let memo = playbackState[locked: \.lastObservedPlaybackTime]
+        let fallbackTime =
+          (memo?.instanceID == instance.id ? memo?.time : nil)
+          ?? instance.playbackTime(forAbsoluteFrame: instance.startFrame)
         return unsafe Playback(
           id: instance.id,
           file: instance.file.url,
           isPlaying: player.isPlaying,
-          time: instance.playbackTime(forAbsoluteFrame: instance.startFrame),
+          time: fallbackTime,
           duration: instance.duration,
         )
       }
@@ -663,12 +672,17 @@
       let renderedFrames = AVAudioFramePosition(
         timeInPlayer * instance.file.processingFormat.sampleRate)
       let currentAbsoluteFrame = instance.startFrame + renderedFrames
+      let liveTime = instance.playbackTime(forAbsoluteFrame: currentAbsoluteFrame)
+      playbackState[locked: \.lastObservedPlaybackTime] = ObservedPlaybackTime(
+        instanceID: instance.id,
+        time: liveTime,
+      )
 
       return unsafe Playback(
         id: instance.id,
         file: instance.file.url,
         isPlaying: player.isPlaying,
-        time: instance.playbackTime(forAbsoluteFrame: currentAbsoluteFrame),
+        time: liveTime,
         duration: instance.duration,
       )
     }
