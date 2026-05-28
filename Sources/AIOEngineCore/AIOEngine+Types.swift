@@ -30,6 +30,20 @@
 
   package struct PlaybackRuntimeState {
     package var playbackInstance: PlaybackInstance?
+    /// The most recent position derived from a live node render, kept so a
+    /// paused node (which can't report `lastRenderTime`) reports where it
+    /// actually sits instead of snapping back to the segment start frame.
+    package var lastObservedPlaybackTime: ObservedPlaybackTime?
+  }
+
+  package struct ObservedPlaybackTime: Equatable {
+    package init(instanceID: UUID, time: TimeInterval) {
+      self.instanceID = instanceID
+      self.time = time
+    }
+
+    package let instanceID: UUID
+    package let time: TimeInterval
   }
 
   package struct PlaybackSegment: Equatable {

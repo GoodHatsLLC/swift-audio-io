@@ -9,6 +9,18 @@ releases follow the versioning policy in `README.md` and `ROADMAP.md`.
 
 Nothing yet.
 
+## 0.1.1 - 2026-05-28
+
+### Fixed
+
+- Paused playback now reports the current position instead of resetting
+  `AIOEngine.Playback.time` to the segment start frame. While an
+  `AVAudioPlayerNode` is paused it cannot report `lastRenderTime`, so
+  `getPlayback(for:)` previously fell back to the start frame on every poll;
+  it now returns the last observed position for the active playback instance.
+  Consumers driving a playhead from `Playback.time` no longer see it jump to
+  the start of the track on pause.
+
 ## 0.1.0 - 2026-05-28
 
 Initial public release, extracted from the Recorder‽ app. This is the start of the
