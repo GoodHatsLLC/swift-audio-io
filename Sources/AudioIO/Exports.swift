@@ -64,7 +64,12 @@
   public typealias ErrorManaging = AIOAudioSession.ErrorManaging
   public typealias FileFormat = AIOAudioSession.FileFormat
   public typealias InputConfiguration = AIOAudioSession.InputConfiguration
-  public typealias MockErrorManager = AIOAudioSession.MockErrorManager
+  // `MockErrorManager` is `#if DEBUG`-only in AIOAudioSession, so the re-export
+  // must carry the same gate — otherwise release/archive builds fail to resolve
+  // a type that was never compiled into the module.
+  #if DEBUG
+    public typealias MockErrorManager = AIOAudioSession.MockErrorManager
+  #endif
   #if canImport(UIKit) && !os(macOS)
     public typealias OrientationObserver = AIOAudioSession.OrientationObserver
   #endif
