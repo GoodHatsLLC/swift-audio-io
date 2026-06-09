@@ -27,7 +27,7 @@
   ///   stop, or interruption-driven stop.
   /// - ``reconciliationFailed(desiredRecording:)`` — the engine couldn't
   ///   reach the desired recording state within the reconciliation
-  ///   timeout. Only relevant when using the `@_spi(Advanced)`
+  ///   timeout. Only relevant when using the
   ///   ``AIOEngine/setDesiredRecordingState(_:configuration:)`` entry
   ///   point.
   /// - ``playbackStateChanged(_:)`` — play/pause/stop transitions
@@ -63,7 +63,7 @@
     /// The engine couldn't reach the desired recording state within the
     /// reconciliation timeout.
     ///
-    /// Only relevant when using the `@_spi(Advanced)`
+    /// Only relevant when using the
     /// ``AIOEngine/setDesiredRecordingState(_:configuration:)`` entry
     /// point; the canonical
     /// ``AIOEngine/startRecording(configuration:)`` surface returns

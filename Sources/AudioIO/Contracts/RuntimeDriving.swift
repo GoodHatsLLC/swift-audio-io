@@ -4,7 +4,7 @@
   import AIOAudioSession
   import AIOContracts
   import AIOEngineCore
-  @_spi(Advanced) import AIORecording
+  import AIORecording
   import Foundation
   public import Observation
   import Tools
@@ -108,11 +108,9 @@
 
     /// Reconciliation-mode start primitive. See
     /// ``AIOEngine/setDesiredRecordingState(_:configuration:)`` for semantics.
-    /// Marked `@_spi(Advanced)` because the canonical entry point is
-    /// ``AIOEngine/startRecording(configuration:)``; consumers that need the
-    /// retry-until-warm state machine should opt in explicitly with
-    /// `@_spi(Advanced) import AudioIO`.
-    @_spi(Advanced)
+    /// This fire-and-forget, retry-until-warm entry point complements the
+    /// canonical ``AIOEngine/startRecording(configuration:)``; it is useful for
+    /// brittle bring-up paths (notably system audio), so it is public.
     @MainActor
     func setDesiredRecordingState(
       _ desiredState: Bool,
@@ -121,7 +119,6 @@
 
     /// Awaitable form of ``setDesiredRecordingState(_:configuration:)``. See
     /// ``AIOEngine/startRecordingWithReconciliation(configuration:)``.
-    @_spi(Advanced)
     @MainActor
     func startRecordingWithReconciliation(
       configuration: RecordingConfiguration,
@@ -131,7 +128,6 @@
     /// trying to start recording. Cleared on read. Surfaces failures that
     /// the fire-and-forget ``setDesiredRecordingState(_:configuration:)``
     /// can't return directly.
-    @_spi(Advanced)
     @MainActor func consumeLastRecordingStartFailure() -> RecordingError?
 
     @MainActor func stopRecording() async throws(RecordingError) -> URL
@@ -153,13 +149,11 @@
   }
 
   extension RecordingDriving {
-    @_spi(Advanced)
     @MainActor
     public func setDesiredRecordingState(_ desiredState: Bool) {
       setDesiredRecordingState(desiredState, configuration: nil)
     }
 
-    @_spi(Advanced)
     @MainActor
     public func consumeLastRecordingStartFailure() -> RecordingError? {
       nil

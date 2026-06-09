@@ -36,7 +36,6 @@
     ///   - desiredState: Whether recording should be active.
     ///   - configuration: The recording configuration to use when starting.
     ///                    Required when `desiredState` is `true`.
-    @_spi(Advanced)
     @MainActor
     public func setDesiredRecordingState(
       _ desiredState: Bool,
@@ -55,7 +54,6 @@
     /// - Parameter configuration: The recording configuration to use.
     /// - Returns: `true` if recording started successfully, `false` if reconciliation
     ///            failed after the timeout period or a non-transient error occurred.
-    @_spi(Advanced)
     @MainActor
     public func startRecordingWithReconciliation(
       configuration: RecordingConfiguration,
@@ -84,8 +82,8 @@
     /// writing to (resolved from
     /// ``RecordingConfiguration/outputDestination``).
     ///
-    /// If you want automatic retry on transient session failures, see the
-    /// `@_spi(Advanced)` ``setDesiredRecordingState(_:configuration:)`` and
+    /// If you want automatic retry on transient startup failures, see the
+    /// ``setDesiredRecordingState(_:configuration:)`` and
     /// ``startRecordingWithReconciliation(configuration:)`` alternatives.
     ///
     /// - Parameter configuration: The configuration to use for recording.

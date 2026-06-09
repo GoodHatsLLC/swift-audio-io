@@ -34,15 +34,15 @@ let savedURL = try await engine.stopRecording()
 
 ### Fire-and-forget reconciliation
 
-For fire-and-forget semantics with background retry on transient session failures, opt into the `@_spi(Advanced)` reconciliation entry points:
+For fire-and-forget semantics with background retry on transient startup failures (notably Core Audio system-audio bring-up), use the reconciliation entry points:
 
 ```swift
-@_spi(Advanced) import AudioIO
+import AudioIO
 
 engine.setDesiredRecordingState(true, configuration: configuration)
 ```
 
-These are part of the SPI tier and not covered by SemVer — they exist for power users who accept tighter coupling. See ``AIOEngine/setDesiredRecordingState(_:configuration:)`` and ``AIOEngine/startRecordingWithReconciliation(configuration:)``.
+These complement the canonical ``AIOEngine/startRecording(configuration:)``: they keep retrying while the desired state stays `true` until the engine warms, the timeout elapses, or a non-transient ``RecordingError`` surfaces. Read ``AIOEngine/consumeLastRecordingStartFailure()`` to recover the failure behind a fire-and-forget start. See ``AIOEngine/setDesiredRecordingState(_:configuration:)`` and ``AIOEngine/startRecordingWithReconciliation(configuration:)``.
 
 ## Segmented recording
 

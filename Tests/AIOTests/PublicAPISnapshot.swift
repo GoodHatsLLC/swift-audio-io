@@ -81,6 +81,20 @@ func publicAPISnapshot_AIOEngineCore() throws {
   _ = VerboseError.self
 }
 
+// Pins the reconciliation-mode start API as public (promoted from
+// `@_spi(Advanced)`). Compile-time only — never invoked; the references
+// type-check the public signatures so a future re-gating fails the build.
+@MainActor
+func publicAPISnapshot_reconciliationStartAPI(
+  engine: AIOEngine,
+  configuration: RecordingConfiguration,
+) async {
+  engine.setDesiredRecordingState(true, configuration: configuration)
+  engine.setDesiredRecordingState(true)
+  _ = await engine.startRecordingWithReconciliation(configuration: configuration)
+  _ = engine.consumeLastRecordingStartFailure()
+}
+
 @Test("Public API snapshot — AIOMicHealth re-exports compile via AudioIO")
 func publicAPISnapshot_AIOMicHealth() throws {
   _ = MicHealthInputs.self

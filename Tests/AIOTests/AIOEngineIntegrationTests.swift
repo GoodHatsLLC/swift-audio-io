@@ -8,7 +8,7 @@
   import Tools
 
   @testable import AIOAudioSession
-  @_spi(Advanced) @_spi(TESTING) @testable import AudioIO
+  @_spi(TESTING) @testable import AudioIO
   @testable import AIORecording
   @testable import AIORecordingSupport
 
