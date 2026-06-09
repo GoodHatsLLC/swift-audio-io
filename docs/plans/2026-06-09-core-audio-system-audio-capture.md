@@ -15,6 +15,47 @@ Status: proposed (revised after design review)
 > `CATapDescription.bundleIDs` / `processRestoreEnabled` (macOS 26+) and the process-tap
 > APIs (macOS 14.2+) need no `@available` gates.
 
+## Implementation status
+
+Landed on `main` (each step build- and test-gated; microphone behavior verified
+byte-for-byte; 214 unit tests pass, build clean):
+
+- **Phase 1 — public configuration surface (done).** `RecordingInput` /
+  `MicrophoneRecordingInput`; source-specific `RecordingConfiguration` with a
+  `format` accessor and a migration convenience initializer; macOS
+  `SystemAudioRecordingInput` / `SystemAudioProcessSelection` /
+  `SystemAudioProcessObjectID`; the object-ID-first **process discovery API**
+  (`SystemAudioProcess`, `SystemAudioProcessCatalog`, PID→object translation);
+  new `RecordingError` cases + the OSStatus→`isTransient` retry classifier; the
+  reconciliation start API promoted to public. Exports + API snapshot updated.
+- **Phase 2 — backend boundary (done).** `RecordingCaptureBackend` +
+  `RecordingState.activeBackend`; `hardStop`/`gracefulStop`/`cleanUp` dispatch on
+  the active backend; `cleanUp()` is the single idempotent teardown point.
+- **Phase 3 — Core Audio backend (done, on-device validation pending).** The
+  realtime-safe lock-free handoff (`SystemAudioSampleHandoff`: IOProc-side memcpy
+  + timing capture, pump-side rebuild) is **unit-tested** (samples + host/sample
+  time round-trip; drop-on-full never blocks). `CoreAudioTapDescriptionBuilder`
+  is **unit-tested**. `CoreAudioProcessTapSession` + `CoreAudioSystemAudioBackend`
+  (tap/aggregate/IOProc + non-realtime source pump) compile clean.
+- **Phase 4 — lifecycle wiring (done, on-device validation pending).** `warm()` /
+  `startRecording` route `.systemAudio` through the backend and the shared
+  converter/writer/receiver/timing pipeline; mono/stereo channel validation is
+  unit-tested.
+
+Pending (require a real macOS audio session + `NSAudioCaptureUsageDescription` +
+TCC permission, which CI/unit tests cannot provide — the Phase 0 spike and the
+Phase 5 smoke test):
+
+- On-device verification that tap creation prompts for the system-audio
+  permission, samples flow end-to-end into a non-empty playable file, self
+  exclusion prevents feedback, and cleanup leaves no aggregate devices/taps.
+- Confirm the IOProc-delivered source format/channel layout/timing fields and
+  `recordingTimingSnapshot()` against a live tap.
+- `rotateRecordingFile` / route-change behavior under a live system-audio backend.
+- **Phase 5 — demo + Recorder adoption** (`Examples/AudioIODemo` system-audio
+  mode; pointing Recorder at this implementation and deleting its app-local
+  recorder) — separate target/repo, not yet started.
+
 ## Goal
 
 Move Recorder's macOS Core Audio system-audio capture capability into
