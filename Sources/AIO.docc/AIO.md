@@ -36,6 +36,7 @@ AudioIO is pre-`0.1.0` and being extracted from the Recorder‽ app. The public 
 ### API surfaces
 
 - <doc:Recording>
+- <doc:SystemAudioCapture>
 - <doc:Playback>
 - <doc:AudioSession>
 - <doc:Visualization>

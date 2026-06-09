@@ -23,6 +23,7 @@ The following surfaces are `#if os(iOS)`-gated and not available on macOS:
 ## What's macOS-only
 
 - ``AIOEngine/handleRouteChange(event:)`` reaches a macOS-specific code path for engine-driven tap reinstall; the iOS path goes through `AVAudioSession` notifications subscribed via ``AudioEnvironmentManager``.
+- **System-audio capture** — the `RecordingInput.systemAudio` case and the `SystemAudioRecordingInput` / `SystemAudioProcessSelection` / `SystemAudioProcessObjectID` / `SystemAudioProcess` / `SystemAudioProcessCatalog` types are `#if os(macOS)` (Core Audio process taps have no iOS equivalent). A configuration that compiles on iOS can only select the microphone. See <doc:SystemAudioCapture>.
 
 ## What's symmetric
 

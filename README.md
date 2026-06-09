@@ -1,6 +1,6 @@
 # AudioIO
 
-A Swift audio I/O engine for iOS and macOS: recording, playback, level-of-detail visualization data, and microphone-health monitoring. Built on AVFoundation, with Swift 6 strict concurrency and typed throws throughout.
+A Swift audio I/O engine for iOS and macOS: microphone and (macOS) system-audio recording, playback, level-of-detail visualization data, and microphone-health monitoring. Built on AVFoundation, with Swift 6 strict concurrency and typed throws throughout.
 
 > **Status: pre-1.0.** APIs may change between `0.x` releases. We commit to SemVer starting at `1.0.0`. See [ROADMAP.md](ROADMAP.md).
 
@@ -51,7 +51,26 @@ for await event in engine.events {
 }
 ```
 
-For a complete recording-and-playback demo with a live waveform, see [`Examples/AudioIODemo`](Examples/AudioIODemo).
+### System audio (macOS)
+
+On macOS you can record what other apps are playing via a Core Audio process tap — same engine, same events, same files, only the `input` differs:
+
+```swift
+// Capture all system audio, excluding this app (avoids a feedback loop).
+let configuration = RecordingConfiguration(
+    input: .systemAudio(
+        SystemAudioRecordingInput(
+            format: InputConfiguration(sampleRate: .dvd, channels: .stereo)
+        )
+    ),
+    outputConfiguration: OutputConfiguration(fileFormat: .caf, bitDepth: .pcmFloat32, quality: .maximum)
+)
+let url = try await engine.startRecording(configuration: configuration)
+```
+
+The host app must declare `NSAudioCaptureUsageDescription`; the first capture triggers the macOS audio-recording permission prompt. Discover and target specific processes with `SystemAudioProcessCatalog`. See the DocC article *System Audio Capture* and the demo's System Audio mode.
+
+For a complete recording-and-playback demo with a live waveform — including a macOS system-audio mode for manual verification — see [`Examples/AudioIODemo`](Examples/AudioIODemo).
 
 ## Platforms
 
@@ -66,7 +85,8 @@ Other Apple platforms (tvOS, watchOS, visionOS) are not currently supported. See
 
 ## What's in the box
 
-- **Recording**: pluggable output formats (CAF, WAV, AIFF, AAC, ADTS, FLAC), interruption handling, route-change recovery.
+- **Recording**: microphone and (macOS) system-audio capture behind one configuration; pluggable output formats (CAF, WAV, AIFF, AAC, ADTS, FLAC), interruption handling, route-change recovery.
+- **System audio (macOS)**: Core Audio process-tap capture with include/exclude process selection, a process-discovery API, and self-exclusion to prevent feedback.
 - **Playback**: file and segment scheduling, scrubbing, mixer amplitude control.
 - **Visualization**: real-time multi-band LOD data for waveform rendering. UI is your problem (see philosophy below).
 - **Mic health**: input-level monitoring with configurable thresholds.

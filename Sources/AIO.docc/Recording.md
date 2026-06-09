@@ -4,19 +4,39 @@ Configure inputs and outputs, drive the engine, and observe lifecycle events.
 
 ## Configuration
 
-Recording is configured by ``RecordingConfiguration``:
+Recording is configured by ``RecordingConfiguration``: a capture source, an
+output encoding, and a destination.
 
-- ``InputConfiguration`` chooses the ``SampleRate`` and ``ChannelCount``.
+### Capture sources
+
+``RecordingConfiguration/input`` is a ``RecordingInput`` — the capture source and
+its source-specific options:
+
+- ``MicrophoneRecordingInput`` — the `AVAudioEngine` input tap (iOS and macOS).
+  Owns the `tapInterval`.
+- `SystemAudioRecordingInput` — a macOS Core Audio process tap that records what
+  other apps are playing. See <doc:SystemAudioCapture>.
+
+Each input carries an ``InputConfiguration`` (its ``SampleRate`` and
+``ChannelCount``), which you read source-agnostically via
+``RecordingConfiguration/format``. For microphone recording you can use the
+convenience initializer
+``RecordingConfiguration/init(inputConfiguration:outputConfiguration:tapInterval:outputDestination:)``,
+which builds a ``MicrophoneRecordingInput`` for you.
+
+### Output
+
 - ``OutputConfiguration`` chooses the ``FileFormat``, ``BitDepth``, and ``EncodingQuality``.
 - `outputDestination` selects a temporary file, a directory, or an explicit file URL.
 
 The engine enforces the declared channel matrix:
 
-| Format | Max channels |
+| Source / format | Max channels |
 |---|---|
 | AAC, ADTS | 8 (AAC channel layouts) |
 | FLAC | 8 |
 | WAV, CAF, AIFF | 32 (PCM) |
+| System audio (any format) | 2 (mono / stereo mixdown) |
 
 Unsupported channel counts fail with ``RecordingError/unsupportedChannelCount(requested:maximum:)`` before the engine installs a recording tap.
 
@@ -67,6 +87,8 @@ See <doc:Events> for the full subscription pattern.
 ### Configuration
 
 - ``RecordingConfiguration``
+- ``RecordingInput``
+- ``MicrophoneRecordingInput``
 - ``InputConfiguration``
 - ``OutputConfiguration``
 - ``SampleRate``
@@ -75,11 +97,23 @@ See <doc:Events> for the full subscription pattern.
 - ``BitDepth``
 - ``EncodingQuality``
 
+### System audio (macOS)
+
+- <doc:SystemAudioCapture>
+- ``SystemAudioRecordingInput``
+- ``SystemAudioProcessSelection``
+- ``SystemAudioProcessCatalog``
+- ``SystemAudioProcess``
+- ``SystemAudioProcessObjectID``
+
 ### Engine surface
 
 - ``AIOEngine/startRecording(configuration:)``
 - ``AIOEngine/stopRecording()``
 - ``AIOEngine/rotateRecordingFile()``
+- ``AIOEngine/startRecordingWithReconciliation(configuration:)``
+- ``AIOEngine/setDesiredRecordingState(_:configuration:)``
+- ``AIOEngine/consumeLastRecordingStartFailure()``
 - ``AIOEngine/isRecording``
 
 ### Errors

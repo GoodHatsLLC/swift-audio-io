@@ -59,6 +59,29 @@ for await event in engine.events {
 
 The events-stream `error` payload is `any AudioIOError`, not `any Error` — the engine emits only `AudioIOError`-conforming values, so the type-erased switch is exhaustive against the documented surface.
 
+## Capture-source failures and retry
+
+System-audio capture (see <doc:SystemAudioCapture>) adds three terminal
+``RecordingError`` cases:
+
+- ``RecordingError/captureSourceUnavailable(details:)`` — the source can't be
+  used (e.g. the audio-recording permission was denied). Retrying without user
+  action is noise.
+- ``RecordingError/captureSourceFailed(sourceDescription:details:)`` — the source
+  failed in a way the caller must resolve by changing the source, its options, or
+  the format. The payload is a short *description string* rather than the source
+  enum, to keep equality, error output, and ABI stable.
+- ``RecordingError/coreAudioFailed(operation:osStatus:details:)`` — a Core Audio
+  (HAL) `OSStatus` with no more specific mapping; always surfaced rather than
+  swallowed.
+
+These are *terminal*: ``RecordingError/isTransient`` is `false` for them, so the
+reconciliation start API (see <doc:SystemAudioCapture>) does not retry them. Only
+a narrow set of HAL *not-ready* startup statuses is transient — those map to
+`.session(.notReady(details:))` so the existing retry gate applies. This keeps
+the OSStatus-to-`RecordingError` mapping the single source of truth for the retry
+decision.
+
 ## Topics
 
 ### Error types

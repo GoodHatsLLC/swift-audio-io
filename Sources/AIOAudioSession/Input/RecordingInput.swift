@@ -35,6 +35,9 @@ public struct MicrophoneRecordingInput: Hashable, Sendable {
   /// equivalent — HAL IO cadence is chosen by the hardware, not the caller.
   public var tapInterval: Duration
 
+  /// - Parameters:
+  ///   - format: The requested sample rate + channel count.
+  ///   - tapInterval: The input-node tap delivery cadence. Defaults to 100 ms.
   public init(format: InputConfiguration, tapInterval: Duration = .seconds(0.1)) {
     self.format = format
     self.tapInterval = tapInterval

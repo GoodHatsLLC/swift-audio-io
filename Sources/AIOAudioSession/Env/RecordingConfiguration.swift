@@ -9,6 +9,25 @@
 
   private let log = SystemLog.make()
 
+  /// A complete description of a recording: its capture source, output encoding,
+  /// and destination.
+  ///
+  /// The capture source is chosen with ``RecordingInput`` — ``MicrophoneRecordingInput``
+  /// for the `AVAudioEngine` input tap, or (macOS) `SystemAudioRecordingInput` for a
+  /// Core Audio process tap. Source-specific options live on the input case, so
+  /// callers can only set options that apply to the selected source (for example
+  /// `tapInterval` is microphone-only). The output encoding (``OutputConfiguration``)
+  /// and `outputDestination` are source-agnostic.
+  ///
+  /// ```swift
+  /// // Microphone (works on iOS and macOS):
+  /// let mic = RecordingConfiguration(
+  ///   input: .microphone(MicrophoneRecordingInput(format: InputConfiguration(sampleRate: .cd, channels: .mono))),
+  ///   outputConfiguration: OutputConfiguration(fileFormat: .caf, bitDepth: .pcmFloat32, quality: .maximum))
+  /// ```
+  ///
+  /// Microphone capture is available on iOS and macOS; system-audio capture is
+  /// macOS-only.
   public struct RecordingConfiguration: CustomStringConvertible, CustomDebugStringConvertible,
     Hashable, Identifiable, Sendable
   {
@@ -56,6 +75,13 @@
     public let outputConfiguration: OutputConfiguration
     public let outputDestination: OutputDestination
 
+    /// Creates a source-specific recording configuration.
+    ///
+    /// - Parameters:
+    ///   - input: The capture source and its source-specific options.
+    ///   - outputConfiguration: The output file format, bit depth, and quality.
+    ///   - outputDestination: Where to write the file — a temporary file, a
+    ///     directory, or an explicit file URL. Defaults to `.temporary`.
     public init(
       input: RecordingInput,
       outputConfiguration: OutputConfiguration,
