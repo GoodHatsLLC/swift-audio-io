@@ -114,4 +114,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). Please read [NOT_AUDIO_IO.md](NOT_AUDIO_
 
 Apache-2.0. See [LICENSE](LICENSE).
 
-AudioIO was extracted from the [Recorder‽](https://recorderapp.com) app by GoodHats LLC.
+AudioIO is maintained by GoodHats LLC.

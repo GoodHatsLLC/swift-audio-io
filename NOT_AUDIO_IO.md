@@ -20,11 +20,11 @@ No `WaveformView`, no `WaveformShape`, no Metal renderers. AudioIO exports the *
 
 **Why:** rendering choices (canvas vs metal vs raster, color, animation policy, hit-testing) are application concerns. A library that ships waveform views forces every consumer to inherit those choices.
 
-**Where to find it:** Recorder‽'s `AVC` package contains a SwiftUI implementation; a standalone `swift-audio-io-views` repo is a candidate post-1.0 deliverable. See [ROADMAP.md](ROADMAP.md).
+**Where to find it:** a standalone `swift-audio-io-views` repo is a candidate post-1.0 deliverable. See [ROADMAP.md](ROADMAP.md).
 
 ### Audio effects, DSP, and signal processing
 
-AudioIO includes basic mixer amplitude and the LOD analysis needed for visualization. It does not include reverb, EQ, compression, pitch shifting, time stretching, or other effects, even though Recorder‽ uses these internally.
+AudioIO includes basic mixer amplitude and the LOD analysis needed for visualization. It does not include reverb, EQ, compression, pitch shifting, time stretching, or other effects.
 
 **Why:** effects libraries are a different shape of project — they live in chains, they accumulate parameters over years, and their API stability requirements diverge from an I/O engine's. They also have a thriving ecosystem already.
 
@@ -34,9 +34,9 @@ AudioIO includes basic mixer amplitude and the LOD analysis needed for visualiza
 
 AudioIO records to a file. It does not provide multi-track editing, clip arrangement, lane management, gain automation, or any of the non-linear-editor features.
 
-**Why:** these are application features built *on top* of an I/O engine, not part of it. Recorder‽'s own editor lives in `AppLibrary`, not in `AIO`.
+**Why:** these are application features built *on top* of an I/O engine, not part of it.
 
-**Where to find it:** application code. The Recorder‽ codebase has an open-source-friendly editor implementation; ask if you want to use it.
+**Where to find it:** application code.
 
 ### Network streaming, HLS, WebRTC, AirPlay
 
@@ -88,6 +88,6 @@ Not currently supported.
 
 The single sentence that decides whether something belongs in AudioIO:
 
-> Could a non-Recorder‽ app use this without inheriting a UI choice or a product opinion?
+> Could a third-party app use this without inheriting a UI choice or a product opinion?
 
 If yes, it might belong. If no, it doesn't.

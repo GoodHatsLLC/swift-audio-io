@@ -3,7 +3,7 @@
 // Demonstrates the public process-discovery API:
 // - SystemAudioProcessCatalog.capturableProcesses() to list audio processes,
 // - SystemAudioProcessSelection (.exclude / .includeOnly) by object id,
-// driven by the RecorderViewModel. "All system audio" is a global tap that
+// driven by the AudioIODemoViewModel. "All system audio" is a global tap that
 // excludes this app (so the demo never captures its own output); "Only the
 // selected apps" is an include-only mixdown of the checked processes.
 
@@ -12,7 +12,7 @@
   import SwiftUI
 
   struct SystemAudioControls: View {
-    @Bindable var viewModel: RecorderViewModel
+    @Bindable var viewModel: AudioIODemoViewModel
 
     var body: some View {
       VStack(alignment: .leading, spacing: 10) {

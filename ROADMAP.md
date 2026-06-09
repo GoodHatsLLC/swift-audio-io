@@ -4,7 +4,7 @@ This document describes the current state of AudioIO and what we expect to work 
 
 ## Current state
 
-AudioIO was extracted from the [Recorder‽](https://recorderapp.com) app and lives in this standalone repository. All M3 polish work has landed and CI is green. **No `0.x` release is tagged yet** — `0.1.0` is the next step and starts the SemVer commitment.
+AudioIO lives in this standalone repository. All M3 polish work has landed and CI is green. **No `0.x` release is tagged yet** — `0.1.0` is the next step and starts the SemVer commitment.
 
 ## Milestones
 
@@ -31,7 +31,7 @@ Goal: one obvious way to do each thing.
 - [x] **M2.4** — Replace dual `avAudio` / `platform` accessors on input types with `@_spi(AVFoundation)` escape hatches. Same gating on AV-taking initializers and the `EncodingQuality.avAudio` bridge.
 - [x] **M2.2** — Split `AIOError` into per-domain enums (`RecordingError`, `PlaybackError`, `SessionError`) under the `AudioIOError` marker protocol. Cross-domain wrapping via `.session(_:)` cases.
 - [x] **M2.3** — Pick one canonical `startRecording(configuration:) async throws(RecordingError) -> URL` (returns URL on success); demote the reconciliation-mode entry points (`setDesiredRecordingState`, `startRecordingWithReconciliation`, `consumeLastRecordingStartFailure`) to `@_spi(Advanced)`.
-- [x] **M2.1** — Replace `errors: AsyncBroadcaster<any Error>` with the typed `events: AsyncBroadcaster<AudioIOEvent>` stream. `AudioIOEvent.error(_:)` is the initial case; lifecycle cases for `recordingStarted/Completed/Failed/Interruption/Segment` and `playbackStateChanged/Updated` are tracked for M3 (the closure callbacks they replace use a chained-observer pattern in Recorder's `RecordingCrashTracking` that needs a separate migration pass).
+- [x] **M2.1** — Replace `errors: AsyncBroadcaster<any Error>` with the typed `events: AsyncBroadcaster<AudioIOEvent>` stream. `AudioIOEvent.error(_:)` is the initial case; lifecycle cases for `recordingStarted/Completed/Failed/Interruption/Segment` and `playbackStateChanged/Updated` are tracked for M3 because the closure callbacks they replace need a separate host-app migration pass.
 
 Exit criteria: ready to tag `1.0.0` once M3 lands. SemVer commitment begins at `1.0.0`.
 
@@ -88,7 +88,7 @@ Exit criteria: `1.0.0` general availability.
 
 These are real candidates but uncommitted. Subscribe to the linked Discussions for updates.
 
-- **`swift-audio-io-views`** — a sibling repository that ports `AVC` (Recorder‽'s waveform views) into a standalone, opt-in package. Likely SwiftUI-only at first.
+- **`swift-audio-io-views`** — a sibling repository for standalone, opt-in waveform views. Likely SwiftUI-only at first.
 - **Plugin AudioUnit hosting** — support for loading and chaining `AUv3` plugins into recording / playback. Significant scope; would require a champion.
 - **Sample-accurate sync across multiple AudioIO engines** — a real ask from people building DAW-shaped products. Requires careful thought about session ownership.
 - **Linux / non-Apple platform support** — only meaningful with a non-AVFoundation backend; effectively a parallel implementation.
@@ -109,7 +109,7 @@ The following are explicitly *not* planned. See [NOT_AUDIO_IO.md](NOT_AUDIO_IO.m
 
 Roadmap items move forward when:
 
-1. A clear use case exists outside Recorder‽.
+1. A clear use case exists outside a single host app.
 2. The API addition fits the spirit-of-the-rules test in [NOT_AUDIO_IO.md](NOT_AUDIO_IO.md).
 3. A contributor (often a maintainer) commits to seeing it through, including tests and docs.
 

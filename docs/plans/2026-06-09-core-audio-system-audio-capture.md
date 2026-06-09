@@ -3,7 +3,7 @@
 Status: proposed (revised after design review)
 
 > Revision note: this plan was revised after a multi-perspective review against the
-> real `swift-audio-io` runtime, Recorder's reference implementation, and the macOS 26.5
+> real `swift-audio-io` runtime, an app-local reference implementation, and the macOS 26.5
 > SDK headers. The revision (a) replaces the vague IOProc handoff with a concrete
 > realtime-safe design that reuses the existing capture pipeline unchanged, (b) closes
 > the four load-bearing integration seams between the new backend and the existing
@@ -52,16 +52,15 @@ Phase 5 smoke test):
 - Confirm the IOProc-delivered source format/channel layout/timing fields and
   `recordingTimingSnapshot()` against a live tap.
 - `rotateRecordingFile` / route-change behavior under a live system-audio backend.
-- **Phase 5 — demo + Recorder adoption** (`Examples/AudioIODemo` system-audio
-  mode; pointing Recorder at this implementation and deleting its app-local
+- **Phase 5 — demo + host-app adoption** (`Examples/AudioIODemo` system-audio
+  mode; pointing a host app at this implementation and deleting its app-local
   recorder) — separate target/repo, not yet started.
 
 ## Goal
 
-Move Recorder's macOS Core Audio system-audio capture capability into
-AudioIO itself, so Recorder and other host apps can select system audio through
-the normal `AIOEngine` recording surface instead of carrying a separate
-app-local recorder.
+Move app-local macOS Core Audio system-audio capture into AudioIO itself, so
+host apps can select system audio through the normal `AIOEngine` recording
+surface instead of carrying a separate recorder.
 
 The preferred architecture is source-specific capture behind the existing
 `AIOEngine` lifecycle:
@@ -69,7 +68,7 @@ The preferred architecture is source-specific capture behind the existing
 - `AIOEngine.startRecording(configuration:)` remains the main entry point.
 - AudioIO owns file writing, events, buffer receivers, rotation, stop/drain
   semantics, and timing snapshots for both microphone and system audio.
-- Recorder keeps product behavior: source picker UI, user messaging,
+- Host apps keep product behavior: source picker UI, user messaging,
   persistence, Live Activity coordination, location metadata, and app-specific
   permission copy.
 
@@ -84,9 +83,9 @@ AudioIO's recording path is microphone/input-node based:
 - `RecordingEngineRuntime.processAudio` converts tap buffers into the package's
   ring-buffer pipeline, which then feeds file writing and live receivers.
 
-Recorder's macOS system-audio path is separate from `AIOEngine`:
+The app-local macOS system-audio path is separate from `AIOEngine`:
 
-- `MacOSSystemAudioRecorder` creates a Core Audio process tap.
+- `AppLocalSystemAudioRecorder` creates a Core Audio process tap.
 - It adds the tap to a private aggregate device.
 - It registers and starts an IOProc.
 - It copies Core Audio buffers, processes them on a serial queue, writes its own
@@ -100,19 +99,19 @@ not the shape AudioIO should publish.
 ## Non-goals
 
 - No SwiftUI, AppKit, or source-picker UI.
-- No Recorder persistence, background processing, Live Activity, or location
+- No app persistence, background processing, Live Activity, or location
   metadata.
 - No ScreenCaptureKit fallback unless a concrete supported macOS target requires
   it.
 - No general DSP, effects, editing, or mixing behavior.
-- No hard-coded Recorder names, bundle identifiers, logger categories, or
+- No hard-coded host-app names, bundle identifiers, logger categories, or
   product copy.
 
 ## Public API shape
 
 `.systemAudio` should be public immediately, not gated behind `@_spi(Advanced)`.
 This is a pre-1.0 package and the feature is engine-level capability, not a
-Recorder-only escape hatch.
+host-app-only escape hatch.
 
 Make this a breaking configuration cleanup rather than adding a generic
 `tapInterval` that only applies to microphone capture. The source-specific
@@ -292,7 +291,7 @@ undiscoverable to external callers, so AudioIO ships:
   (`kAudioProcessPropertyPID`, `kAudioProcessPropertyBundleID`) into
   `[SystemAudioProcess]`.
 
-These port the process-lookup logic Recorder hides in its private
+These port app-local process-lookup logic from a private
 `AudioHardwareSystem` wrapper into **public** AudioIO surface. They belong in
 `AIOAudioSession` next to the existing HAL property plumbing in
 `Sources/AIOAudioSession/Env/PlatformAudioBackend.swift` (which already reads
@@ -326,7 +325,7 @@ Test expectations:
 
 ## Error model
 
-Prefer extending `RecordingError` rather than adding a Recorder-style parallel
+Prefer extending `RecordingError` rather than adding a host-app-style parallel
 error enum. Candidate cases:
 
 ```swift
@@ -377,7 +376,7 @@ Investigation inputs:
 
 - Context7 did not return focused Apple Core Audio process-tap documentation for
   this API family; implementation planning is based on the local Xcode 26.5 /
-  macOS 26.5 SDK headers and Recorder's current working code path.
+  macOS 26.5 SDK headers and an app-local working code path.
 - `AudioHardwareCreateProcessTap` creates a tap from `CATapDescription` and
   returns an OSStatus.
 - `AudioDeviceCreateIOProcIDWithBlock` retains the dispatch queue and block until
@@ -513,11 +512,11 @@ never invoked during system-audio teardown.
 
 ## Core Audio backend design
 
-> Scoping correction: this is **not** a pure "move" of Recorder code. Recorder's
-> `MacOSSystemAudioRecorder` depends on an `AudioHardwareSystem` / `AudioHardwareTap`
+> Scoping correction: this is **not** a pure "move" of host-app code. The
+> `AppLocalSystemAudioRecorder` depends on an `AudioHardwareSystem` / `AudioHardwareTap`
 > / `AudioHardwareAggregateDevice` wrapper layer (`makeProcessTap`,
 > `makeAggregateDevice`, `process(for:)`, `destroyProcessTap`, …) that is **neither
-> an Apple SDK symbol nor present in tracked Recorder source**. Those wrappers must
+> an Apple SDK symbol nor present in tracked host-app source**. Those wrappers must
 > be authored fresh in `AIORecording` as package-internal types, with explicit
 > lifecycle ownership (`CoreAudioProcessTapSession` owns tap + aggregate device +
 > IOProc). The HAL property reads they need have precedent in
@@ -525,7 +524,7 @@ never invoked during system-audio teardown.
 > and the process-discovery half of it (`SystemAudioProcessObjectID` translation,
 > `SystemAudioProcessCatalog`) as **public** surface.
 
-De-Recorderize and bring in:
+Generalize and bring in:
 
 - `CoreAudioProcessTapSession` (owns tap + aggregate device + IOProc lifecycle),
 - the `AudioHardware*` wrappers it needs (package-internal, written fresh),
@@ -536,7 +535,7 @@ De-Recorderize and bring in:
 
 ### Realtime safety: the IOProc is a pure lock-free copy
 
-The IOProc runs on a Core Audio realtime thread. Recorder's reference IOProc is
+The IOProc runs on a Core Audio realtime thread. The reference IOProc is
 **not** realtime-safe: it heap-allocates a `Data` per channel per callback
 (`SystemAudioSampleChunk.init(copying:)`) and then `DispatchQueue.async`s the
 work out — both can block on a malloc/queue lock and must not appear on a
@@ -586,7 +585,7 @@ IOProc (realtime thread) — bounded and allocation-free:
 
 ```swift
 // Pseudocode. `bytesPerFrame` is derived once from sourceFormat's ASBD,
-// accounting for the non-interleaved flag (see Recorder's SystemAudioInputFormat
+// accounting for the non-interleaved flag (see the reference SystemAudioInputFormat
 // for the exact derivation): interleaved → one buffer of frames*mBytesPerFrame;
 // non-interleaved → one buffer per channel, each frames*bytesPerChannel.
 // `frames = firstBuffer.mDataByteSize / bytesOfFirstBufferPerFrame`.
@@ -649,7 +648,7 @@ The IOProc captures `inInputTime.mHostTime` / `mSampleTime` (gated on the
 packet, the pump threads them through `AVAudioTime`, and `processAudio` anchors
 `recordingFirstHostTimeAtomic` / `recordingFirstSourceSampleTimeAtomic` from the
 first valid host time exactly as for microphone. This is a real improvement over
-Recorder, which discards `inInputTime` entirely and synthesizes a sample time
+the app-local reference path, which discards `inInputTime` entirely and synthesizes a sample time
 with no host time. `TimingPacket` already carries `hostTime` / `sourceSampleTime`
 / `sourceSampleRate`, so no new internal timing type is needed. Note that
 system-audio `sourceSampleTime` may not be monotonic across glitches; treat it as
@@ -798,14 +797,14 @@ git diff --check
 
 Add any repo-specific CI scripts if they exist by implementation time.
 
-## Recorder migration plan
+## Host-App Migration Plan
 
-After AudioIO lands and Recorder is pinned to the new version or local checkout:
+After AudioIO lands and a host app has been pinned to the new version or local checkout:
 
-1. Update Recorder's `swift-audio-io` dependency to the implementation version.
+1. Update the host app's `swift-audio-io` dependency to the implementation version.
 2. Delete `SystemAudioRecordingServicing`, `UnavailableSystemAudioRecorder`, and
-   `MacOSSystemAudioRecorder`.
-3. Keep `RecordingCaptureSource` as Recorder UI state, but map it into
+   `AppLocalSystemAudioRecorder`.
+3. Keep the app's capture-source UI state, but map it into
    `RecordingConfiguration.input`.
 4. Collapse `RecordingService` start flow so both microphone and system audio
    call `engine.startRecordingWithReconciliation` or a single package-level
@@ -813,16 +812,16 @@ After AudioIO lands and Recorder is pinned to the new version or local checkout:
 5. Attach live waveform receivers to `engine` for both sources.
 6. Collapse stop flow so both sources call `engine.stopRecording()` and then
    persist the returned URL.
-7. Keep Recorder-specific behavior unchanged: source picker, disabled
+7. Keep host-app-specific behavior unchanged: source picker, disabled
    segmentation for system audio if desired, user-facing error copy, persistence,
    Live Activity, location metadata, and app privacy strings.
 
-Recommended Recorder validation:
+Recommended host-app validation:
 
 ```sh
 xcodegen generate
-xcrun swift test --package-path Packages/AppLibrary
-xcodebuild -workspace Recorder.xcworkspace -scheme Recorder -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO build
+xcrun swift test --package-path <app-package>
+xcodebuild -workspace <app>.xcworkspace -scheme <app> -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO build
 git diff --check
 ```
 
@@ -830,11 +829,11 @@ git diff --check
 
 ### Phase 0 - SDK and behavior spike
 
-- [x] Verify the local Xcode Core Audio process-tap APIs used by Recorder:
+- [x] Verify the local Xcode Core Audio process-tap APIs used by the app-local reference:
   `CATapDescription`, `AudioHardwareCreateProcessTap`,
   `AudioHardwareAggregateDevice`, and `AudioDeviceCreateIOProcIDWithBlock`.
-- [x] Classify startup retry behavior from SDK error constants and Recorder's
-  current Core Audio path.
+- [x] Classify startup retry behavior from SDK error constants and the app-local
+  Core Audio path.
 - [ ] Build a small throwaway harness or package test seam that can start and
   stop a process tap.
 - [ ] Confirm source format and channel layout from `kAudioTapPropertyFormat`,
@@ -927,14 +926,14 @@ git diff --check
   source sample time threaded from the IOProc).
 - [ ] Decide and document route/device-change behavior.
 
-### Phase 5 - Demo and Recorder adoption
+### Phase 5 - Demo and Host-App Adoption
 
 - [ ] Add a real system-audio mode to `Examples/AudioIODemo`.
 - [ ] Document demo permission requirements and expected macOS Settings entry.
-- [ ] Point Recorder at the new AudioIO implementation.
+- [ ] Point a host app at the new AudioIO implementation.
 - [ ] Remove app-local system-audio recorder code.
-- [ ] Simplify Recorder start, receiver attachment, and stop branches.
-- [ ] Run Recorder package tests and macOS app build.
+- [ ] Simplify host-app start, receiver attachment, and stop branches.
+- [ ] Run the app package tests and macOS app build.
 - [ ] Perform a real system-audio recording smoke test.
 
 ## Resolved decisions
@@ -974,12 +973,12 @@ git diff --check
 
 ## Success criteria
 
-- A non-Recorder macOS app can record system audio with `AIOEngine` and a
+- A third-party macOS app can record system audio with `AIOEngine` and a
   `RecordingConfiguration`.
-- Recorder no longer carries an app-local Core Audio recorder.
+- Host apps no longer need to carry an app-local Core Audio recorder.
 - Microphone recording remains behaviorally unchanged.
 - System audio uses the same AudioIO events, writer drain, buffer receiver, file
   rotation, and timing surfaces as microphone recording.
-- The implementation contains no Recorder product assumptions.
+- The implementation contains no host-app product assumptions.
 - Realtime Core Audio callbacks remain bounded and do not perform file I/O,
   Swift concurrency work, or app receiver calls.

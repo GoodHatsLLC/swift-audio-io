@@ -4,7 +4,7 @@ A minimum-viable sample app for the AudioIO Swift package. One screen, one recor
 
 ## What it demonstrates
 
-- **The unified events stream** — `RecorderViewModel.init` subscribes to `engine.events` *before* the caller can drive the engine. This is load-bearing: `AsyncBroadcaster` does not replay events for late subscribers.
+- **The unified events stream** — `AudioIODemoViewModel.init` subscribes to `engine.events` *before* the caller can drive the engine. This is load-bearing: `AsyncBroadcaster` does not replay events for late subscribers.
 - **Typed-throws recording** — `engine.startRecording(configuration:)` and `engine.stopRecording()` as the canonical entry points. No reconciliation-mode SPI, no manual reconciliation timer.
 - **Token-scoped buffer receivers** — `engine.attachBufferReceiver(visualization)` attaches the visualization engine to the realtime tap. The returned `BufferReceiverToken` is invalidated on cleanup.
 - **Subscriber-demand visualization** — `visualization.subscribe(request:)` declares what work is needed (`LODWork`); the engine only computes work that at least one subscriber requested.
@@ -73,7 +73,7 @@ The sample is configured for ad-hoc "Sign to Run Locally" signing so it builds w
 |---|---|---|
 | `AudioIODemoApp.swift` | ~30 | `@main` App scene. |
 | `ContentView.swift` | ~140 | The whole UI: source picker, waveform, controls, status. |
-| `RecorderViewModel.swift` | ~280 | `@Observable @MainActor` engine adapter; source selection + system-audio config + process discovery; subscribes to `events`. |
+| `AudioIODemoViewModel.swift` | ~280 | `@Observable @MainActor` engine adapter; source selection + system-audio config + process discovery; subscribes to `events`. |
 | `SystemAudioControls.swift` | ~80 | macOS system-audio mode + process-selection UI (process discovery API). |
 | `WaveformView.swift` | ~50 | `TimelineView` + `Canvas` reading the multi-band LOD snapshot. |
 | `PermissionGate.swift` | ~50 | iOS / macOS microphone permission. |

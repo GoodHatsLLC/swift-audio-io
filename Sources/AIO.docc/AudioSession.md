@@ -30,7 +30,7 @@ The engine itself subscribes to these notifications internally so that recording
 
 ## Narrow protocol contracts
 
-AppLibrary consumers typically depend on one of these narrow contracts rather than the concrete `AudioEnvironmentManager`:
+Feature code typically depends on one of these narrow contracts rather than the concrete `AudioEnvironmentManager`:
 
 - ``AudioEnvironmentDriving`` — start/stop the environment, observe lifecycle.
 - ``AudioEnvironmentConfiguring`` — query available inputs and configure category/mode.

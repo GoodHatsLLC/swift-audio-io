@@ -13,7 +13,7 @@ import AudioIO
 import SwiftUI
 
 struct ContentView: View {
-  @State private var viewModel = RecorderViewModel()
+  @State private var viewModel = AudioIODemoViewModel()
   @State private var permission: MicrophonePermission = .unknown
 
   var body: some View {

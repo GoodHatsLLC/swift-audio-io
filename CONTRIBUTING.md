@@ -64,7 +64,7 @@ After `1.0`, breaking changes require a SemVer-major. The bar will be much highe
 
 ### What counts as "public API"
 
-Anything reachable from `import AudioIO` without `@_spi(...)`. Symbols behind `@_spi(Internal)`, `@_spi(Visualization)`, `@_spi(Advanced)`, or `@_spi(AVFoundation)` are explicitly *not* stable — they exist for power users (mostly Recorder‽) who have opted into a tighter coupling.
+Anything reachable from `import AudioIO` without `@_spi(...)`. Symbols behind `@_spi(Internal)`, `@_spi(Visualization)`, `@_spi(Advanced)`, or `@_spi(AVFoundation)` are explicitly *not* stable — they exist for power users who have opted into tighter coupling.
 
 ## Testing requirements
 

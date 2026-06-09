@@ -66,7 +66,7 @@ enum RecordingSource: String, CaseIterable, Identifiable, Sendable {
 
 @Observable
 @MainActor
-final class RecorderViewModel {
+final class AudioIODemoViewModel {
   let engine = AIOEngine()
   let visualization = AudioVisualizationEngine(configuration: .realTimeRecording)
 

@@ -29,7 +29,7 @@ The following surfaces are `#if os(iOS)`-gated and not available on macOS:
 
 Everything else: ``AIOEngine`` recording and playback, ``AudioVisualizationEngine``, the events stream, and the entire ``AudioIOError`` family.
 
-If you write generic code over `AudioEnvironmentConfiguring` and the AppLibrary-aware `AudioInputPickingEnvironment`, your callers will compile on both platforms — on macOS the picking-environment alias falls back to the base configuring protocol.
+If you write generic code over `AudioEnvironmentConfiguring` and the input-picking-specific `AudioInputPickingEnvironment`, your callers will compile on both platforms — on macOS the picking-environment alias falls back to the base configuring protocol.
 
 ## CI gate
 

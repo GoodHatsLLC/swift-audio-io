@@ -27,11 +27,11 @@ Split into two checkpoints after discovery surfaced a larger public surface than
 
 **M1.1a — Rename only** (mechanical, low-risk):
 - [x] Discovery: map every `public` symbol in internal AIO targets.
-- [x] Discovery: map every `import AIO*` / `import Tools` / `import AudioSignals` site in Recorder‽.
+- [x] Discovery: map every `import AIO*` / `import Tools` / `import AudioSignals` site in the host app.
 - [x] Plan the rename based on discovery.
 - [x] Move `Sources/AIOEngine/` → `Sources/AudioIO/` (5 files via `git mv`, including `AIOEngineExports.swift` → `Exports.swift`).
 - [x] Update `Packages/AIO/Package.swift`: target + product + test target deps.
-- [x] Update `Packages/AppLibrary/Package.swift`: 6 `.product(name:)` references.
+- [x] Update `<app-package>/Package.swift`: 6 `.product(name:)` references.
 - [x] Update `Packages/AVC/Package.swift`: 2 `.product(name:)` references.
 - [x] Update `project.yml`: 6 product references + 1 validate-imports script arg.
 - [x] Update all `import AIOEngine` → `import AudioIO` (129 source/test files — agent had to do a second pass for `public import`, `@_spi(TESTING) import`, and `@testable import` forms missed by initial regex).
@@ -39,7 +39,7 @@ Split into two checkpoints after discovery surfaced a larger public surface than
 - [x] Code review pass (subagent). 1 HIGH (downgraded — class-name vs module-name disambiguation), 6 MEDIUM (addressed), 3 LOW (deferred to M1.1b).
 - [x] Doc cleanup: `Packages/AIO/README.md`, `Packages/AIO/AGENTS.md`, `Sources/AIO.docc/*.md`, `.claude/commands/audio-test.md`. Class-name and target-name references intentionally kept.
 - [x] `xcrun swift test --package-path Packages/AIO` passes (180 tests in 31 suites, 0.62s).
-- [x] `xcrun swift build --package-path Packages/AppLibrary` passes (491 modules, 22s).
+- [x] `xcrun swift build --package-path <app-package>` passes (491 modules, 22s).
 - [x] Committed: `3a94487b` "Rename AIOEngine product to AudioIO" (M1.1a) and `4e791e6` "Draft AudioIO extraction foundational docs" (Phase 0).
 
 **M1.1a deferred work** (moved to M1.1b backlog):
@@ -52,14 +52,14 @@ Split into two checkpoints after discovery surfaced a larger public surface than
 - [x] Curate the keep-public list (informed by the corrected public-symbol audit). ~70 typealiases added, grouped by source module under `// MARK:` headers.
 - [x] Add `Tests/AIOTests/PublicAPISnapshot.swift` (canonical "what's stable" fixture). 6 `@Test` functions, one per source module, each referencing every typealiased symbol via `.self`.
 - [x] Code review pass identified 2 documentation gaps (MemberImportVisibility asymmetry for AIOAudioSession; OfflineLODExtractor exclusion comment scope) + 1 missing canary (`MultiBandLODProcessor.LODGenerationError`). Addressed inline.
-- [x] Build green: AIO tests 186/186 (180 baseline + 6 snapshot), AppLibrary build clean.
+- [x] Build green: AIO tests 186/186 (180 baseline + 6 snapshot), the app package build clean.
 
 **Discovery facts from agents (verified, post-surprise):**
-- 110 files in Recorder‽ import `AIOEngine` (88 AppLibrary src + 35 AppLibrary tests + 2 AVC + 2 Harness + …). Zero direct imports of internal AIO targets (`AIOAudioSession`, `AIORecording`, etc.) anywhere. The umbrella has held.
-- 23 files import `AudioSignals` (17 AppLibrary + 3 AVC + 6 tests).
-- 117+ files import `Tools` (63 AppLibrary src + 54 tests + 2 Harness + 1 AVC).
+- 110 files in the host app import `AIOEngine` (88 the app package src + 35 the app package tests + 2 AVC + 2 Harness + …). Zero direct imports of internal AIO targets (`AIOAudioSession`, `AIORecording`, etc.) anywhere. The umbrella has held.
+- 23 files import `AudioSignals` (17 the app package + 3 AVC + 6 tests).
+- 117+ files import `Tools` (63 the app package src + 54 tests + 2 Harness + 1 AVC).
 - One selective import to handle: `Sources/AppTarget/Recording/RecordingSheetView.swift:17` uses `import struct AIOEngine.AudioSource`.
-- `Packages/AppLibrary/Package.swift`: AIOEngine product referenced across 10 targets.
+- `<app-package>/Package.swift`: AIOEngine product referenced across 10 targets.
 - `project.yml`: AIOEngine referenced in 6 XcodeGen test/harness targets.
 
 ## Done
@@ -79,7 +79,7 @@ Packages/AIO/Examples/AudioIODemo/
   AudioIODemo/
     AudioIODemoApp.swift         # @main App scene
     ContentView.swift            # the whole UI
-    RecorderViewModel.swift      # @Observable @MainActor engine adapter
+    AudioIODemoViewModel.swift      # @Observable @MainActor engine adapter
     WaveformView.swift           # TimelineView + Canvas reading the LOD snapshot
     PermissionGate.swift         # iOS + macOS microphone permission
 ```
@@ -90,11 +90,11 @@ No physical Info.plist or entitlements file — `INFOPLIST_KEY_*` build settings
 
 | Idiom | Where |
 |---|---|
-| Subscribe to `engine.events` BEFORE driving the engine | `RecorderViewModel.init` |
-| Pattern-match cases off the unified events stream | `RecorderViewModel.handle(_:)` |
-| Typed-throws recording start/stop | `RecorderViewModel.toggleRecording()` |
-| Token-scoped buffer-receiver attachment | `RecorderViewModel.attachVisualization()` |
-| Subscriber-demand visualization registration | `RecorderViewModel.attachVisualization()` |
+| Subscribe to `engine.events` BEFORE driving the engine | `AudioIODemoViewModel.init` |
+| Pattern-match cases off the unified events stream | `AudioIODemoViewModel.handle(_:)` |
+| Typed-throws recording start/stop | `AudioIODemoViewModel.toggleRecording()` |
+| Token-scoped buffer-receiver attachment | `AudioIODemoViewModel.attachVisualization()` |
+| Subscriber-demand visualization registration | `AudioIODemoViewModel.attachVisualization()` |
 | Frame-scoped zero-copy LOD reads in a render loop | `WaveformView.draw(in:size:)` |
 | iOS + macOS microphone permission flow | `PermissionGate.swift` |
 
@@ -112,11 +112,11 @@ No physical Info.plist or entitlements file — `INFOPLIST_KEY_*` build settings
 
 1. **macOS code signing for OSS samples.** The default `CODE_SIGN_STYLE: Automatic` triggers "Signing for X requires a development team" on macOS builds without an explicit `DEVELOPMENT_TEAM`. iOS Simulator builds don't have this requirement. The portable answer is `CODE_SIGN_STYLE: Manual` + `CODE_SIGN_IDENTITY: "-"`, which is the ad-hoc "Sign to Run Locally" identity and works on both platforms without a team. Documented this in the sample's README so adopters can override for distribution.
 
-2. **`@MainActor deinit` is mandatory for `@MainActor`-isolated classes that touch MainActor state in cleanup.** Swift 6.2 doesn't infer `deinit`'s isolation from the enclosing class's `@MainActor` — the default is nonisolated. A `deinit` body that references stored properties of an `@MainActor` class needs an explicit `@MainActor` annotation. This matches the pattern AppLibrary's `PlaybackCoordinator` already uses; worth noting because the iOS Simulator build was the first place this error surfaced (SourceKit's inline diagnostic flagged it earlier but I'd written the cleanup body before noticing).
+2. **`@MainActor deinit` is mandatory for `@MainActor`-isolated classes that touch MainActor state in cleanup.** Swift 6.2 doesn't infer `deinit`'s isolation from the enclosing class's `@MainActor` — the default is nonisolated. A `deinit` body that references stored properties of an `@MainActor` class needs an explicit `@MainActor` annotation. This matches the pattern the app package's `PlaybackCoordinator` already uses; worth noting because the iOS Simulator build was the first place this error surfaced (SourceKit's inline diagnostic flagged it earlier but I'd written the cleanup body before noticing).
 
 3. **`Color.red` vs `.red` in SwiftUI ternary expressions.** `Image.foregroundStyle(condition ? .secondary : .red)` fails because `.secondary` is `HierarchicalShapeStyle` and `.red` is `Color` — the ternary can't unify them. Either branch needs to be explicit (e.g., `Color.secondary` to coerce both to `Color`). Mildly surprising; documented here so the next sample-writer doesn't burn time on it.
 
-Validation: iOS Simulator build clean (`xcodebuild build -project AudioIODemo.xcodeproj -scheme AudioIODemo -destination 'platform=iOS Simulator,name=iPhone 17 Pro'`), macOS build clean (`-destination 'platform=macOS'`). Parent AIO + AppLibrary tests unaffected (186/186, 1175/1175). All CI guards pass; async-usage ratchet shows the +3 task openings from the sample under control via the allowlist addition.
+Validation: iOS Simulator build clean (`xcodebuild build -project AudioIODemo.xcodeproj -scheme AudioIODemo -destination 'platform=iOS Simulator,name=iPhone 17 Pro'`), macOS build clean (`-destination 'platform=macOS'`). Parent AIO + the app package tests unaffected (186/186, 1175/1175). All CI guards pass; async-usage ratchet shows the +3 task openings from the sample under control via the allowlist addition.
 
 ### 2026-05-27 — M3 (DocC): externally-focused catalog rewrite
 
@@ -176,15 +176,15 @@ Reorganized the visualization module to remove three concrete smells: a redundan
 
 **Conceptual layer the move enforces:** `AudioSignals` is the *signal-domain* layer — data structures the UI displays (`TimeDomainData`, `FrequencyDomainData`, `BeatInfo`) and analyzer parameters (`FrequencyBucketMode`, `BeatDetectionConfiguration`, `MultiBandLODConfiguration`). `AIOVisualization` is the *engine* layer — what computation runs, in what order, for which subscribers. The `Work` types describe "what computation a subscriber demands," which is engine-coordination, not signal-domain.
 
-**Zero consumer churn.** Every AppLibrary and AVC reference to the moved types flows through the `AudioIO` umbrella, which transparently re-points its typealiases to the new homes. No `import` line in any consumer needed to change. The AppLibrary `.build` directory needed a `rm -rf` to flush stale SwiftPM file-list caches after the file moves (SwiftPM cached the pre-move paths and reported "missing inputs" for the old locations even though the targets resolved correctly on the re-resolve).
+**Zero consumer churn.** Every app package and AVC reference to the moved types flows through the `AudioIO` umbrella, which transparently re-points its typealiases to the new homes. No `import` line in any consumer needed to change. The app package `.build` directory needed a `rm -rf` to flush stale SwiftPM file-list caches after the file moves (SwiftPM cached the pre-move paths and reported "missing inputs" for the old locations even though the targets resolved correctly on the re-resolve).
 
 **File touch count:** 10 git moves/creates/deletes within `Packages/AIO/Sources/`, 1 edit to `Packages/AIO/Sources/AudioIO/Exports.swift` (typealias rehoming), 2 doc updates (PROGRESS.md + ROADMAP.md).
 
-Validation: AIO tests 186/186 pass on macOS host, AppLibrary tests 1175/1175 pass on macOS host, Recorder app builds clean on iOS Simulator, all 8 CI guards pass (`check-no-swiftui-combine-in-aio`, `check-structural-boundaries`, `check-prerelease-compatibility`, `check-theme-boundaries`, `check-dbqueue-boundaries`, `check-aio-shared-branching`, `check-async-usage-policy`, `check-architecture-debt`). Async-usage policy ratchet unchanged (no new task openings or stream bridges).
+Validation: AIO tests 186/186 pass on macOS host, the app package tests 1175/1175 pass on macOS host, host app builds clean on iOS Simulator, all 8 CI guards pass (`check-no-swiftui-combine-in-aio`, `check-structural-boundaries`, `check-prerelease-compatibility`, `check-theme-boundaries`, `check-dbqueue-boundaries`, `check-aio-shared-branching`, `check-async-usage-policy`, `check-architecture-debt`). Async-usage policy ratchet unchanged (no new task openings or stream bridges).
 
 ### 2026-05-27 — M3 (lifecycle): `events` stream subsumes the 8 `on*` closure callbacks
 
-Completed the M2.1 follow-up: `AudioIOEvent` now carries every engine lifecycle case the old `on*` closure callbacks did, the closures themselves are deleted, and the AppLibrary `RecordingCrashTracking` chained-observer dance is replaced with a single events-stream subscriber.
+Completed the M2.1 follow-up: `AudioIOEvent` now carries every engine lifecycle case the old `on*` closure callbacks did, the closures themselves are deleted, and the app package `RecordingCrashTracking` chained-observer dance is replaced with a single events-stream subscriber.
 
 **`AudioIOEvent` cases added (in `AIOEngineCore`):**
 - `recordingStarted(url: URL, format: String)` — initial start + segment rotation.
@@ -206,10 +206,10 @@ Completed the M2.1 follow-up: `AudioIOEvent` now carries every engine lifecycle 
 - The "Handling Events" docc topic listing the seven `on*` symbols, replaced with two entries (`events`, `AudioIOEvent`).
 
 **Consumer migrations:**
-- `AppLibrary/Composition/RecordingCrashTracking.swift` — the chained-observer trio (`onRecordingStarted/Completed/Failed`) became a single `Task` subscribing to `engine.events`. The `RecordingCrashTrackingHandle` now owns the task; `uninstall()` cancels and awaits the task's value. The `MainActorTaskRunner` + per-tracker-call `callbackTasks.run { ... }` indirection is gone — the events-loop can `await tracker.markRecording*()` directly because the loop body runs on MainActor and serialization is the correct semantics (DB state-machine transitions should be ordered, not concurrent).
-- `AppLibrary/Composition/RecorderCoreServices.swift` — the `onRecordingFailed` / `onReconciliationFailed` closure assignments that called `recordingService.syncRecordingStateFromEngine()` were deleted. That sync logic moved into `RecordingService` itself, extending the existing `engineErrorTask` (renamed `engineEventTask`) loop to handle the `.recordingFailed` / `.reconciliationFailed` cases.
-- `AppLibrary/Composition/RecorderAppServices.swift` — the `onRecordingInterruption` assignment in `installSceneEventBridges` became a supervised `work.supervise(priority: .userInitiated)` block subscribing to `engine.events`, structurally identical to the existing `errorManager.eventStream` subscriber a few lines below. `actionTasks.run { ... }` is wrapped in `await MainActor.run { ... }` because the supervised closure runs nonisolated.
-- `AppLibrary/Player/Player.swift` — the `onPlaybackStateChanged` / `onPlaybackUpdated` assignments became a `MainActorOwnedWork { for await event in engine.events { switch event { ... } } }`, appended to `setupTasks`. Cancellation flows through the existing `deinit` cleanup.
+- `<app-package>/Composition/RecordingCrashTracking.swift` — the chained-observer trio (`onRecordingStarted/Completed/Failed`) became a single `Task` subscribing to `engine.events`. The `RecordingCrashTrackingHandle` now owns the task; `uninstall()` cancels and awaits the task's value. The `MainActorTaskRunner` + per-tracker-call `callbackTasks.run { ... }` indirection is gone — the events-loop can `await tracker.markRecording*()` directly because the loop body runs on MainActor and serialization is the correct semantics (DB state-machine transitions should be ordered, not concurrent).
+- `<app-package>/Composition/CoreServicesIntegration.swift` — the `onRecordingFailed` / `onReconciliationFailed` closure assignments that called `recordingService.syncRecordingStateFromEngine()` were deleted. That sync logic moved into `RecordingService` itself, extending the existing `engineErrorTask` (renamed `engineEventTask`) loop to handle the `.recordingFailed` / `.reconciliationFailed` cases.
+- `<app-package>/Composition/AppServicesIntegration.swift` — the `onRecordingInterruption` assignment in `installSceneEventBridges` became a supervised `work.supervise(priority: .userInitiated)` block subscribing to `engine.events`, structurally identical to the existing `errorManager.eventStream` subscriber a few lines below. `actionTasks.run { ... }` is wrapped in `await MainActor.run { ... }` because the supervised closure runs nonisolated.
+- `<app-package>/Player/Player.swift` — the `onPlaybackStateChanged` / `onPlaybackUpdated` assignments became a `MainActorOwnedWork { for await event in engine.events { switch event { ... } } }`, appended to `setupTasks`. Cancellation flows through the existing `deinit` cleanup.
 
 **Test migrations (AIO):**
 - `RecordingEventProbe` (AIOPlatformIntegrationTests) and `RouteFaultProbe` (AIOEngineIntegrationTests) each gain a `bridge(to:)` helper that subscribes to `engine.events` and routes recording-lifecycle cases to the probe's existing `record(_:)` / `recordFailure()` methods. The helper does `await Task.yield()` after starting the subscriber task so the broadcaster registration completes before the caller drives the engine.
@@ -233,11 +233,11 @@ Completed the M2.1 follow-up: `AudioIOEvent` now carries every engine lifecycle 
 
 2. **AsyncBroadcaster subscription has unbounded delivery latency.** `Subject.send(_:)` enqueues into the controller's upstream stream; the controller's own work task then fans out to subscriber continuations. There's no synchronous "all subscribers received this event" signal. The closure callback the migration replaces was fire-synchronously, so tests that called `probe.snapshot()` immediately after `await engine.handleRouteChange(...)` worked by accident. Migrated tests must use `waitUntil(...)` predicates that include probe state, not direct snapshot reads. Documented as the broadcaster's contract; not a bug. If a future use case truly needs synchronous delivery, the right move is a separate API, not changing this stream.
 
-3. **Multi-consumer broadcaster eliminates the chained-observer workaround.** The original `RecordingCrashTracking.attachRecordingCrashTracking` did `let prev = engine.onRecordingStarted; engine.onRecordingStarted = { url, format in prev?(url, format); ...our work... }`. That pattern existed solely because the `on*` properties were single-owner. With multi-subscriber broadcasters, every consumer (`RecordingCrashTracking`, `RecordingService.engineEventTask`, `RecorderAppServices` toast routing, `Player.swift`) subscribes independently. The chained-observer hand-off becomes obsolete — confirming the roadmap's argument that the gating concern resolves by virtue of changing the API shape.
+3. **Multi-consumer broadcaster eliminates the chained-observer workaround.** The original `RecordingCrashTracking.attachRecordingCrashTracking` did `let prev = engine.onRecordingStarted; engine.onRecordingStarted = { url, format in prev?(url, format); ...our work... }`. That pattern existed solely because the `on*` properties were single-owner. With multi-subscriber broadcasters, every consumer (`RecordingCrashTracking`, `RecordingService.engineEventTask`, `AppServicesIntegration` toast routing, `Player.swift`) subscribes independently. The chained-observer hand-off becomes obsolete — confirming the roadmap's argument that the gating concern resolves by virtue of changing the API shape.
 
 **Async usage policy ratchet:** `task_openings 36 → 4`, `task_shapes 15 → 9`, `scheduler_primitives 27 → 22`, `stream_bridges 74 → 56` — the migration introduced 3 new `Task` openings (RecordingCrashTracking subscriber, Player's MainActorOwnedWork events subscriber, test bridge helpers) which the policy counts under named platform utilities, well under baseline.
 
-Validation: AIO tests 186/186 pass on macOS host, AppLibrary tests 1175/1175 pass on macOS host, Recorder app builds clean on iOS Simulator (`xcodebuild build -workspace Recorder.xcworkspace -scheme Recorder -destination 'platform=iOS Simulator,name=iPhone 17 Pro'`), all CI guards pass (`check-no-swiftui-combine-in-aio`, `check-structural-boundaries`, `check-prerelease-compatibility`, `check-async-usage-policy`, `check-theme-boundaries`, `check-dbqueue-boundaries`, `check-aio-shared-branching`). Architecture-debt ratchet auto-updated `docs/architecture/DEBT_BUDGET.md`.
+Validation: AIO tests 186/186 pass on macOS host, the app package tests 1175/1175 pass on macOS host, host app builds clean on iOS Simulator (`xcodebuild build -workspace <app>.xcworkspace -scheme <app> -destination 'platform=iOS Simulator,name=iPhone 17 Pro'`), all CI guards pass (`check-no-swiftui-combine-in-aio`, `check-structural-boundaries`, `check-prerelease-compatibility`, `check-async-usage-policy`, `check-theme-boundaries`, `check-dbqueue-boundaries`, `check-aio-shared-branching`). Architecture-debt ratchet auto-updated `docs/architecture/DEBT_BUDGET.md`.
 
 ### 2026-05-27 — M2.1: unified `events: AsyncBroadcaster<AudioIOEvent>` stream
 
@@ -259,16 +259,16 @@ Currently a single case (`error`), but the enum exists *because* the open-source
 - Internal `errorSubject.send(error)` sites (4 — two in `AIOAudioSession`, two in `AIORecording`) → `eventSubject.send(.error(error))`
 
 **Consumer migration:**
-- AppLibrary `RecordingService.handleEngineError`: the `for await error in engine.errors { handle(error) }` loop became `for await event in engine.events { guard case .error(let error) = event else { continue }; handle(error) }`. The handler signature tightened from `(any Error)` to `(any AudioIOError)` — this surfaces a compile-time check that the engine emits only `AudioIOError`-conforming values, which matches the M2.2 contract.
+- The app package `RecordingService.handleEngineError`: the `for await error in engine.errors { handle(error) }` loop became `for await event in engine.events { guard case .error(let error) = event else { continue }; handle(error) }`. The handler signature tightened from `(any Error)` to `(any AudioIOError)` — this surfaces a compile-time check that the engine emits only `AudioIOError`-conforming values, which matches the M2.2 contract.
 - Three test mock implementations of `RecordingDriving` (FakeEngine variants in RecordingServiceTests, RecordingServiceStartSuccessTests, RecordingServiceSegmentRotationTests): `errorSubject: Subject<any Error>` → `eventSubject: Subject<AudioIOEvent>`, `errors` requirement → `events`.
 
 **Process note: Swift type inference for shorthand enum cases**: `.send(.error(error))` failed to infer `AudioIOEvent` because the `Subject<T>.send(_:)` call site couldn't propagate the `T = AudioIOEvent` context through the `.shorthand`. The fix at both engine-side emission sites was to fully qualify as `eventSubject.send(AudioIOEvent.error(error))`. Cheap fix; surfaces only because Subject's generic context isn't transparent to enum-case shorthand resolution. Worth knowing for the future lifecycle-event cases.
 
 **Scope deliberately not done in M2.1** (deferred):
-- Adding lifecycle event cases (`recordingStarted/Completed/Failed/Interruption/Segment`, `playbackStateChanged/Updated`, `reconciliationFailed`). The cases would slot cleanly into the existing enum — but each requires (a) emission wiring at the 12+ internal callback-fire sites and (b) chained-observer migration in `RecordingCrashTracking` and `RecorderAppServices.onRecordingInterruption`. That's a substantial second pass best executed once the OSS extraction is bedded in.
+- Adding lifecycle event cases (`recordingStarted/Completed/Failed/Interruption/Segment`, `playbackStateChanged/Updated`, `reconciliationFailed`). The cases would slot cleanly into the existing enum — but each requires (a) emission wiring at the 12+ internal callback-fire sites and (b) chained-observer migration in `RecordingCrashTracking` and `AppServicesIntegration.onRecordingInterruption`. That's a substantial second pass best executed once the OSS extraction is bedded in.
 - SPI-gating the `on*` closure callbacks. Once events covers everything, the closures become legacy; deferring until they're truly redundant.
 
-Validation: AIO tests 186/186 pass, AppLibrary RecordingService tests 15/15 pass, both platforms build clean, all CI guards pass.
+Validation: AIO tests 186/186 pass, the app package RecordingService tests 15/15 pass, both platforms build clean, all CI guards pass.
 
 ### 2026-05-27 — M2.3: canonical `startRecording` + SPI'd reconciliation
 
@@ -286,11 +286,11 @@ Established a single canonical recording-start API and demoted the reconciliatio
 - Underlying `RecordingRuntime.stopRecordingWithReconciliation()` — the only caller was the deleted public facade.
 
 **Consumer migration:**
-- AppLibrary `RecordingService.swift` and three test mocks (`RecordingServiceTests`, `RecordingServiceStartSuccessTests`, `RecordingServiceSegmentRotationTests`) opted into `@_spi(Advanced) import AudioIO`. Their use of `setDesiredRecordingState` / `startRecordingWithReconciliation` is principled — Recorder's UI keeps `wantsRecording` visible regardless of engine state, and the reconciliation retry handles the audio-session-not-yet-ready race on cold launch.
+- The app package `RecordingService.swift` and three test mocks (`RecordingServiceTests`, `RecordingServiceStartSuccessTests`, `RecordingServiceSegmentRotationTests`) opted into `@_spi(Advanced) import AudioIO`. Their use of `setDesiredRecordingState` / `startRecordingWithReconciliation` is principled — the host app's UI keeps `wantsRecording` visible regardless of engine state, and the reconciliation retry handles the audio-session-not-yet-ready race on cold launch.
 
 **Process learning surfaced:** `@_spi(Group)` propagation across modules has a more demanding plumbing pattern than I expected. The protocol requirement in `AudioIO` (`@_spi(Advanced) func setDesiredRecordingState`) and the concrete implementation in `AIORecording` (`@_spi(Advanced) public func setDesiredRecordingState`) both need the matching SPI annotation. But the conformance file (`extension AIOEngine: RecordingDriving {}` lives in AudioIO) also needs `@_spi(Advanced) import AIORecording` to see the SPI'd implementation during conformance checking — without it, the compiler reports "type 'AIOEngine' does not conform to protocol 'RecordingDriving'". Additionally, `AudioIO/Exports.swift`'s `@_exported import AIORecording` had to become `@_spi(Advanced) @_exported import AIORecording` to propagate the SPI'd surface through the umbrella. End-state: a consumer writing `@_spi(Advanced) import AudioIO` sees the SPI'd API; a consumer writing plain `import AudioIO` sees only the canonical entry points.
 
-Touched 8 files (4 AIO sources, 1 AppLibrary source, 3 test mocks). AIO tests 186/186, AppLibrary RecordingService tests 15/15, both platforms build clean, all CI guards pass.
+Touched 8 files (4 AIO sources, 1 the app package source, 3 test mocks). AIO tests 186/186, the app package RecordingService tests 15/15, both platforms build clean, all CI guards pass.
 
 ### 2026-05-27 — M2.2: split `AIOError` into per-domain enums
 
@@ -314,7 +314,7 @@ Replaced the monolithic `AIOEngine.AIOError` (nested enum, 17 mixed cases) with 
 
 **Dead surface removed**: `notPlaying` (never thrown), `invalidScrubTrack` (never thrown), `engineError` (case kept on `RecordingError` since tests fixture it). Also deleted dead internal `AIOError`/`AudioSessionError` in `AIOAudioSession/Env/Output/Error.swift` (declared but unused).
 
-**Touched 18 files**: 4 new error files in `AIOAudioSession/Errors/`, 9 AIO source migrations (including the deletion of the nested `AIOError` from `AIOEngine.swift`), 4 AIO test migrations, 1 AppLibrary consumer (`RecordingService.swift`), 3 AppLibrary test mocks, 1 Exports.swift re-export, 1 deleted file.
+**Touched 18 files**: 4 new error files in `AIOAudioSession/Errors/`, 9 AIO source migrations (including the deletion of the nested `AIOError` from `AIOEngine.swift`), 4 AIO test migrations, 1 the app package consumer (`RecordingService.swift`), 3 the app package test mocks, 1 Exports.swift re-export, 1 deleted file.
 
 **Three learnings surfaced during the split:**
 
@@ -336,7 +336,7 @@ Replaced the monolithic `AIOEngine.AIOError` (nested enum, 17 mixed cases) with 
 
 **Process learning surfaced (M2.5 lesson held)**: macOS SwiftPM tests passed but iOS Simulator build caught one more `.invalidRecordingConfiguration` reference in `AIOEngine+Testing.swift` line 225 — gated by `#if os(iOS)` inside the test scaffolding so the macOS build never compiled it. iOS Simulator is genuinely non-optional for any API-shape change.
 
-Validation: AIO tests 186/186 pass, AppLibrary RecordingService tests 15/15 pass, AppLibrary builds clean on macOS via SwiftPM, Recorder app builds clean on iOS Simulator. All CI guards pass (including the async-usage policy ratchet which now reports task_openings down from 36 → 1, scheduler primitives 27 → 20, stream bridges 74 → 56 vs baseline).
+Validation: AIO tests 186/186 pass, the app package RecordingService tests 15/15 pass, the app package builds clean on macOS via SwiftPM, host app builds clean on iOS Simulator. All CI guards pass (including the async-usage policy ratchet which now reports task_openings down from 36 → 1, scheduler primitives 27 → 20, stream bridges 74 → 56 vs baseline).
 
 ### 2026-05-27 — M2.4: `@_spi(AVFoundation)` escape hatches
 
@@ -359,9 +359,9 @@ Replaced dual `avAudio`/`platform` accessors on `AudioInput` and `AudioSource` w
 
 **Process learning surfaced:** `@testable import` does NOT bypass `@_spi` gating — discovered when the test compile failed with `'avAudio' is inaccessible due to '@_spi' protection level` despite using `@testable import AIOAudioSession`. `@testable` elevates `internal` to visible, but `@_spi(name)` is a parallel access mechanism that requires the consumer to write `@_spi(name) import`. They compose: `@_spi(AVFoundation) @testable import …`. This is actually the right design — SPI is a contract about *intent*, so tests that exercise an escape hatch should opt in explicitly.
 
-**Zero external consumers affected.** Pre-edit `grep` confirmed AppLibrary references `AudioInput`/`AudioSource`/`PolarPattern` only via mainstream API (`.name`, `.id`, `.supportedPolarPatterns`, `.tag(nil as AudioInput?)`, etc.). No `.platform` / `.avAudio` / direct-init call sites existed outside AIO itself.
+**Zero external consumers affected.** Pre-edit `grep` confirmed the app package references `AudioInput`/`AudioSource`/`PolarPattern` only via mainstream API (`.name`, `.id`, `.supportedPolarPatterns`, `.tag(nil as AudioInput?)`, etc.). No `.platform` / `.avAudio` / direct-init call sites existed outside AIO itself.
 
-Validation: AIO tests 186/186 pass, AppLibrary builds clean on macOS via SwiftPM, Recorder app builds clean on iOS Simulator. All structural / prerelease / SwiftUI-in-AIO guards pass.
+Validation: AIO tests 186/186 pass, the app package builds clean on macOS via SwiftPM, host app builds clean on iOS Simulator. All structural / prerelease / SwiftUI-in-AIO guards pass.
 
 ### 2026-05-27 — M2.5: SampleRate redesign
 
@@ -369,13 +369,13 @@ Replaced the `SampleRate.Common.sr44100` enum-based API with `ExpressibleByInteg
 
 Removed surface: `RawRepresentable` conformance, `enum Common`, `init(common:)`, `static func common(_:)`, `static var commonCases`, `var platform`. Replaced `rawValue: Double` with `let hz: Double`.
 
-Touched 30 files (SampleRate.swift + 29 consumers across AIO internals, tests, AppLibrary, docs, harness). Code reviewer caught 1 CRITICAL (7 missed `.rawValue` references inside `#if os(iOS)` code that `xcrun swift test --package-path Packages/AIO` couldn't see — fixed) and 2 MEDIUMs (renamed `.studio96k`/`.studio192k` → `.hiRes96`/`.hiRes192` for consistency with `.cd`/`.dvd` medium-naming pattern; added `32_000` to `common` array for FM broadcast / MPEG-1 use cases). Documented `Codable` keyed-container shape in type comment.
+Touched 30 files (SampleRate.swift + 29 consumers across AIO internals, tests, the app package, docs, harness). Code reviewer caught 1 CRITICAL (7 missed `.rawValue` references inside `#if os(iOS)` code that `xcrun swift test --package-path Packages/AIO` couldn't see — fixed) and 2 MEDIUMs (renamed `.studio96k`/`.studio192k` → `.hiRes96`/`.hiRes192` for consistency with `.cd`/`.dvd` medium-naming pattern; added `32_000` to `common` array for FM broadcast / MPEG-1 use cases). Documented `Codable` keyed-container shape in type comment.
 
-**Process learning surfaced:** `xcrun swift test --package-path Packages/AIO` runs on macOS host and silently skips `#if os(iOS)` and `#if canImport(UIKit)` code paths. Any M2+ commit that touches API shape needs an iOS Simulator build (`xcodebuild build -workspace Recorder.xcworkspace -scheme AIOiOSTests -destination 'platform=iOS Simulator,...'`) to validate iOS-conditional code, not just SwiftPM tests. The first iOS validation run since M1.1a also surfaced that `Recorder.xcodeproj` was never regenerated after M1.1a's `project.yml` rename (`.xcodeproj` is gitignored so `git status` was silent on it) — fixed by running `xcodegen generate`.
+**Process learning surfaced:** `xcrun swift test --package-path Packages/AIO` runs on macOS host and silently skips `#if os(iOS)` and `#if canImport(UIKit)` code paths. Any M2+ commit that touches API shape needs an iOS Simulator build (`xcodebuild build -workspace <app>.xcworkspace -scheme AIOiOSTests -destination 'platform=iOS Simulator,...'`) to validate iOS-conditional code, not just SwiftPM tests. The first iOS validation run since M1.1a also surfaced that `<app>.xcodeproj` was never regenerated after M1.1a's `project.yml` rename (`.xcodeproj` is gitignored so `git status` was silent on it) — fixed by running `xcodegen generate`.
 
 Bonus M1.1b cleanup landed in the same commit: `RecordingActivityManager.swift` had `import AudioIO` (resolved as `internal` under `InternalImportsByDefault`) while exposing `TimeDomainData` in a `public func` parameter. Promoted to `public import AudioIO`. Similar promotions in `ConfigurationView.swift` and `RecordingSheetView.swift` for symmetry.
 
-Validation: AIO tests 186/186 pass, AppLibrary builds clean on macOS via SwiftPM, all CI guards pass. iOS Simulator build now clean too after the M1 follow-up below.
+Validation: AIO tests 186/186 pass, the app package builds clean on macOS via SwiftPM, all CI guards pass. iOS Simulator build now clean too after the M1 follow-up below.
 
 ### 2026-05-27 — M1 follow-up: iOS InputPicker generic-constraint regression fixed
 
@@ -383,7 +383,7 @@ The M2.5 iOS validation run surfaced a pre-existing M1.1b regression: `Configura
 
 **Fix:** added a macOS `typealias AudioInputPickingEnvironment = AudioEnvironmentConfiguring` in `RuntimeDriving.swift`, then tightened the generic constraint on all three views to `AudioInputPickingEnvironment`. On iOS, the typealias resolves to the stricter protocol with the `session: AVAudioSession` member; on macOS, it aliases the weaker protocol that the iOS-only `InputPicker` doesn't reference. Three-file diff plus the typealias.
 
-Also bundled in the same iOS validation pass: discovered that `Recorder.xcodeproj` had been stale since M1.1a's `project.yml` rename (the xcodeproj is gitignored, so SwiftPM-only validation never noticed). Ran `xcodegen generate` to refresh.
+Also bundled in the same iOS validation pass: discovered that `<app>.xcodeproj` had been stale since M1.1a's `project.yml` rename (the xcodeproj is gitignored, so SwiftPM-only validation never noticed). Ran `xcodegen generate` to refresh.
 
 iOS Simulator build now clean. M1 milestone exit criteria are *actually* satisfied now (not just on macOS).
 
@@ -397,7 +397,7 @@ This is actually evidence that M1.1b was thorough: by curating the typealias lis
 
 One small follow-up surfaced: `PlatformChannel` (a `public typealias` in `AIOAudioSession/Input/AudioChannel.swift`) is the only non-typealiased top-level public symbol in scope. It's used only within its own file, but its retroactive Hashable conformance contains `public static func ==` / `public func hash(into:)` whose parameters reference `PlatformChannel` — demoting the typealias would require also demoting those methods, which is out of scope for this pass (M1.2 explicitly avoided member-level demotions). Defer for a focused extension-visibility audit.
 
-Validation: AIO tests 186/186, AppLibrary build clean, all guard scripts pass. Working tree was clean post-iteration (1 attempted demotion of `PlatformChannel`, reverted).
+Validation: AIO tests 186/186, the app package build clean, all guard scripts pass. Working tree was clean post-iteration (1 attempted demotion of `PlatformChannel`, reverted).
 
 ### 2026-05-27 — M1: surface narrowing complete
 
@@ -416,17 +416,17 @@ The 5 modules still on `@_exported import` are documented inline in `Exports.swi
 ### 2026-05-27 — M1.3: SwiftUI/Combine stripped from AIO
 
 Removed 4 import lines from `Packages/AIO/Sources/`:
-- `ErrorManager.swift`: `public import SwiftUI` (the trailing `EnvironmentValues.errorManager` extension moved to AppLibrary).
+- `ErrorManager.swift`: `public import SwiftUI` (the trailing `EnvironmentValues.errorManager` extension moved to the app package).
 - `AudioEnvironmentManager.swift`: `import Combine` (verified dead — no Combine APIs were referenced).
 - `OrientationObserver.swift`: `import Combine` and `import SwiftUI` (the latter was also dead; Combine was load-bearing for `NotificationCenter.publisher(for:).sink`).
 
 `OrientationObserver.stream()` rewritten from a Combine-based pipeline to the package's established `AsyncSignal + AsyncTaskRunner + terminationHandler` pattern, matching `PlatformAudioBackend.swift`'s `routeChanges()`. Two `AsyncTaskRunner`s (observer + termination) replace what would otherwise be two raw `Task` openings.
 
-New AppLibrary file: `Sources/Waveforms/Interface/EnvironmentValues+ErrorManager.swift`. Placed in `WaveformInterface` (not `AppTarget`, as originally planned) because `MetalClipWaveformThumbnailView` in the `WaveformMetal` target also reads `@Environment(\.errorManager)`; `WaveformInterface` is the lowest dep-graph ancestor of both consumers.
+New app package file: `Sources/Waveforms/Interface/EnvironmentValues+ErrorManager.swift`. Placed in `WaveformInterface` (not `AppTarget`, as originally planned) because `MetalClipWaveformThumbnailView` in the `WaveformMetal` target also reads `@Environment(\.errorManager)`; `WaveformInterface` is the lowest dep-graph ancestor of both consumers.
 
 New CI guard: `bin/check-no-swiftui-combine-in-aio.sh` plus a `prek.toml` hook entry. The grep pattern catches `public`, `internal`, `package`, and `@_exported` import-visibility prefixes against `SwiftUI` and `Combine`.
 
-Validation: AIO tests 186/186, AppLibrary build clean, `check-async-usage-policy.sh` ratchet passes (`task_openings: 1` vs baseline 36 — net reduction).
+Validation: AIO tests 186/186, the app package build clean, `check-async-usage-policy.sh` ratchet passes (`task_openings: 1` vs baseline 36 — net reduction).
 
 Reviewer caught 1 HIGH (the executor's initial implementation used raw `Task { @MainActor in ... }` inside `cont.onTermination`, reverting the established `AsyncTaskRunner` pattern) + 1 LOW (the guard regex missed `package import` visibility). Both addressed.
 
@@ -438,7 +438,7 @@ The original spec called for 6 modules demoted to `internal import` + 2 retained
 - 3 modules demoted to `public import` (`AIOAudioSession`, `AIOContracts`, `AIOEngineCore`).
 - 5 modules retained on `@_exported import` (`AIOPlayback`, `AIORecording`, `AIOMicHealth`, `AIOVisualization`, `AudioSignals`).
 
-The expanded asymmetry surfaced from the iterative compile loop: Swift 6's `MemberImportVisibility` upcoming feature blocks more than just extension methods — it also blocks consumers from calling instance methods, initializers, and static members through a transitive `public import`. Any module whose `public` callable surface is touched by AppLibrary needs to stay on `@_exported import` until the call sites are migrated behind a protocol contract.
+The expanded asymmetry surfaced from the iterative compile loop: Swift 6's `MemberImportVisibility` upcoming feature blocks more than just extension methods — it also blocks consumers from calling instance methods, initializers, and static members through a transitive `public import`. Any module whose `public` callable surface is touched by the app package needs to stay on `@_exported import` until the call sites are migrated behind a protocol contract.
 
 Test count: 180 → 186 (6 new snapshot tests, one per source module).
 
@@ -448,9 +448,9 @@ Reviewer caught 2 documentation gaps (MemberImportVisibility asymmetry for AIOAu
 
 Mechanical rename of the umbrella product/target. 134 files modified (5 git renames, 3 `Package.swift` files, `project.yml`, 1 OSLog subsystem string, 129 Swift `import` statements). The Swift *class* `AIOEngine` (in `AIOEngineCore`) and all internal target names were intentionally preserved.
 
-Validation: AIO SwiftPM tests pass (180/180 in 0.62s). AppLibrary SwiftPM build succeeds (491 modules, 22s).
+Validation: AIO SwiftPM tests pass (180/180 in 0.62s). The app package SwiftPM build succeeds (491 modules, 22s).
 
-Sub-agent workflow: 2 discovery agents (parallel), 1 execution agent, 1 code-reviewer agent. The discovery agents found one important fact the prior summary missed — AppLibrary has zero direct imports of internal AIO targets (e.g., `AIOAudioSession`). The umbrella has held, which made the rename a single-name find/replace operation.
+Sub-agent workflow: 2 discovery agents (parallel), 1 execution agent, 1 code-reviewer agent. The discovery agents found one important fact the prior summary missed — the app package has zero direct imports of internal AIO targets (e.g., `AIOAudioSession`). The umbrella has held, which made the rename a single-name find/replace operation.
 
 Doc reconciliation: README, AGENTS.md (symlinked from CLAUDE.md), DocC catalog, and slash-command descriptions updated to reflect `AudioIO` as the product name. Class-name references (`AIOEngine` the Swift class, `AIOEngine/AIOError` DocC paths, `AIOEngine+Recording.swift` source file) were intentionally kept.
 
@@ -500,19 +500,19 @@ The pre-commit `swift-format` hook re-sorted import statements in 84 files becau
 
 The M1.1b plan assumed "modules with extension methods on AIOEngine need `@_exported import`; everything else can be demoted." Reality (discovered by the executor agent's iterative compile loop): Swift 6.3's `MemberImportVisibility` upcoming feature also blocks consumers from calling **instance methods**, **initializers**, and **static members** on types from a module that's only available via transitive `public import`.
 
-Concretely: AppLibrary's `LiveLevelPublisher` calls `MicHealthMonitor(...)` (initializer + instance methods). Under `public import AIOMicHealth` (not `@_exported`), the AppLibrary call sites fail to compile with "method/initializer is not accessible from this module." Same for several AppLibrary call sites against `AudioVisualizationEngine` and `AudioSignals` types.
+Concretely: the app package's `LiveLevelPublisher` calls `MicHealthMonitor(...)` (initializer + instance methods). Under `public import AIOMicHealth` (not `@_exported`), app package call sites fail to compile with "method/initializer is not accessible from this module." Same for several app package call sites against `AudioVisualizationEngine` and `AudioSignals` types.
 
 **Net effect:** 5 of 8 modules ended up retaining `@_exported import`, only 3 could be safely demoted to `public import`. The typealiases are still load-bearing — they're the curated surface canary even on modules using `@_exported`.
 
 **The migration path** to a fully `internal import`-only Exports.swift requires either:
 1. Moving the called methods into the AudioIO target itself (the strategy already used for `AIOEngine+Interruptions`, `AIOEngine+Testing`), or
-2. Defining narrow protocol contracts inside AudioIO (the pattern already in place for `AudioEnvironmentDriving`, `RecordingDriving`, etc.) and having AppLibrary call through the protocol contracts, never directly against the concrete type.
+2. Defining narrow protocol contracts inside AudioIO (the pattern already in place for `AudioEnvironmentDriving`, `RecordingDriving`, etc.) and having app-package code call through the protocol contracts, never directly against the concrete type.
 
 The asymmetry between AIOAudioSession (demoted to `public import`) and AIOMicHealth/AIOVisualization/AudioSignals (kept `@_exported`) is currently empirical: AIOAudioSession's hot paths happen to flow through the `AudioEnvironmentDriving` protocol contract, so MemberImportVisibility never trips. Stricter future enforcement could push AIOAudioSession back onto `@_exported`. Documented inline in `Exports.swift`.
 
 ### 2026-05-27 — `OfflineLODExtractor` typealias would have broken the build
 
-The executor agent attempted to typealias `OfflineLODExtractor` and `OfflineLODResult` in `Exports.swift`. AppLibrary's `MetalClipWaveformThumbnailView` declares a `package init` whose parameter type is `OfflineLODExtractor.ChannelStrategy`, while the file does both `import AudioIO` (default `internal`) and `package import AudioSignals`. Introducing the typealias caused Swift to resolve the reference through the `internal`-imported alias path, triggering an access-level mismatch because the type was reached at `internal` access but used in a `package` API surface.
+The executor agent attempted to typealias `OfflineLODExtractor` and `OfflineLODResult` in `Exports.swift`. The app package's `MetalClipWaveformThumbnailView` declares a `package init` whose parameter type is `OfflineLODExtractor.ChannelStrategy`, while the file does both `import AudioIO` (default `internal`) and `package import AudioSignals`. Introducing the typealias caused Swift to resolve the reference through the `internal`-imported alias path, triggering an access-level mismatch because the type was reached at `internal` access but used in a `package` API surface.
 
 Resolution: don't typealias those two types. The underlying types remain reachable via the `@_exported import AudioSignals` line.
 

@@ -23,7 +23,7 @@ Nothing yet.
 
 ## 0.1.0 - 2026-05-28
 
-Initial public release, extracted from the Recorder‽ app. This is the start of the
+Initial public release. This is the start of the
 `0.x` line — the public API may change between minor versions until `1.0.0`.
 
 ### Added

@@ -18,7 +18,7 @@ Recording, playback, visualization, and the audio-session surface are all driven
 
 ## Prerelease status
 
-AudioIO is pre-`0.1.0` and being extracted from the Recorder‽ app. The public API can change between minor versions. Pin to an exact version if that worries you; semver commitments begin at `1.0.0`. The roadmap describes how `0.x` evolves.
+AudioIO is pre-`0.1.0`. The public API can change between minor versions. Pin to an exact version if that worries you; semver commitments begin at `1.0.0`. The roadmap describes how `0.x` evolves.
 
 ## Topics
 
