@@ -297,11 +297,123 @@
       return owner.lastWriteFailure
     }
 
+    #if os(macOS)
+      /// Warm path for system audio: validate, create the Core Audio backend and
+      /// converter artifacts, and stage state — without starting capture (that
+      /// happens in `startRecording`). Keeps the shared file/writer/receiver
+      /// machinery identical to the microphone path.
+      @MainActor
+      private func warmSystemAudio(
+        configuration: RecordingConfiguration,
+        systemInput: SystemAudioRecordingInput,
+      ) throws(RecordingError) {
+        // System audio is mono/stereo only — reject early, before touching the HAL.
+        let requestedChannels = systemInput.format.channels.count
+        guard requestedChannels >= 1, requestedChannels <= 2 else {
+          throw RecordingError.unsupportedChannelCount(requested: requestedChannels, maximum: 2)
+        }
+        try validateEncoderCompatibility(for: configuration)
+        guard let processingFormat = configuration.processingFormat else {
+          throw RecordingError.invalidConfiguration(details: "(processing format)")
+        }
+
+        owner.runOnEngineControlQueue { [weak owner] in
+          guard let owner else { return }
+          unsafe owner.player.stop()
+        }
+
+        owner.recordingSampleTimeAtomic.store(0, ordering: .relaxed)
+        owner.recordingFirstHostTimeAtomic.store(0, ordering: .relaxed)
+        owner.recordingFirstSourceSampleTimeAtomic.store(Int64.min, ordering: .relaxed)
+
+        let session: CoreAudioProcessTapSession
+        do {
+          session = try CoreAudioProcessTapSession(
+            input: systemInput,
+            capacitySeconds: owner.maxBufferSeconds,
+          )
+        } catch {
+          owner.eventSubject.send(AudioIOEvent.recordingFailed)
+          throw error
+        }
+
+        do {
+          let sampleRate = Int(processingFormat.sampleRate)
+          let channelCount = Int(processingFormat.channelCount)
+          let artifacts = try owner.makeTapConversionArtifacts(
+            inputFormat: session.sourceFormat,
+            processingFormat: processingFormat,
+            tapBufferSize: AVAudioFrameCount(session.maxIOFrames),
+          )
+
+          let audioBuffers = makeAudioBuffers(sampleRate: sampleRate, channelCount: channelCount)
+          let receiverBuffers = makeAudioBuffers(sampleRate: sampleRate, channelCount: channelCount)
+          let timingCapacity = max(
+            64,
+            Int(ceil(Double(sampleRate) / Double(max(1, session.maxIOFrames)))) * 4,
+          )
+          let receiverTiming = SPSCRingBuffer<TimingPacket>(capacity: timingCapacity)
+
+          let (url, protection): (URL, OutputFileProtection?) = try owner.resolveOutputURL(
+            for: configuration,
+            allowExplicitFile: true,
+          )
+          let writer = try owner.makeRecordingWriter(url: url, configuration: configuration)
+          owner.applyFileProtectionIfNeeded(protection, to: url)
+
+          // The sink runs on the non-realtime pump queue and feeds the shared
+          // processAudio path; processingFormat is immutable here.
+          let processingFormatBox = Transferring(processingFormat)
+          let backend = try CoreAudioSystemAudioBackend(session: session) {
+            [weak owner] buffer, time in
+            owner?.processAudio(buffer: buffer, time: time, to: processingFormatBox.value)
+          }
+
+          let snapshot = owner.state { state -> Transferring<TapSnapshot> in
+            state.recordingWriter = writer
+            state.recordingURL = url
+            state.audioBuffers = audioBuffers
+            state.receiverBuffers = receiverBuffers
+            state.receiverTiming = receiverTiming
+            state.recordingConfiguration = configuration
+            state.tapConverter = artifacts.converter
+            state.tapConverterInputFormat = artifacts.inputFormat
+            state.tapConverterOutputFormat = processingFormat
+            state.tapConvertedBuffer = artifacts.convertedBuffer
+            state.activeBackend = backend
+            return Transferring(
+              TapSnapshot(
+                audioBuffers: state.audioBuffers,
+                receiverBuffers: state.receiverBuffers,
+                receiverTiming: state.receiverTiming,
+                converter: state.tapConverter,
+                converterInputFormat: state.tapConverterInputFormat,
+                converterOutputFormat: state.tapConverterOutputFormat,
+                convertedBuffer: state.tapConvertedBuffer,
+              ),
+            )
+          }
+          owner.recordingInfrastructure.tapSnapshotLock.withLock { $0 = snapshot.value }
+        } catch {
+          session.cleanup()
+          cleanUp()
+          owner.eventSubject.send(AudioIOEvent.recordingFailed)
+          throw error
+        }
+      }
+    #endif
+
     @MainActor
     func warm(configuration: RecordingConfiguration) throws(RecordingError) {
       guard !owner.isRecording, !owner.isPlaying else {
         return
       }
+      #if os(macOS)
+        if case .systemAudio(let systemInput) = configuration.input {
+          try warmSystemAudio(configuration: configuration, systemInput: systemInput)
+          return
+        }
+      #endif
       try validateRecordingChannelCapacity(for: configuration)
       try validateEncoderCompatibility(for: configuration)
 

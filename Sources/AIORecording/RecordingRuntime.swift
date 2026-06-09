@@ -162,12 +162,23 @@
               details: "state after warm(configuration:) was invalid",
             )
           }
-          let startResult = owner.runOnEngineControlQueueResult { [weak owner] in
-            guard let owner else { return }
-            try unsafe owner.engine.start()
-          }
-          if case .failure(let error) = startResult {
-            throw RecordingError.session(.engineStartFailed(error: ErrorContext(error)))
+          if let backend = owner.state[locked: \.activeBackend] {
+            // System audio: start the Core Audio capture backend + source pump
+            // instead of the AVAudioEngine.
+            do {
+              try backend.start()
+            } catch {
+              owner.hardStop()
+              throw error
+            }
+          } else {
+            let startResult = owner.runOnEngineControlQueueResult { [weak owner] in
+              guard let owner else { return }
+              try unsafe owner.engine.start()
+            }
+            if case .failure(let error) = startResult {
+              throw RecordingError.session(.engineStartFailed(error: ErrorContext(error)))
+            }
           }
           let fileFormat = configuration.outputConfiguration.fileFormat.rawValue
           owner.eventSubject.send(AudioIOEvent.recordingStarted(url: url, format: fileFormat))
