@@ -325,6 +325,8 @@
         if configuration == existing {
           log.info("engine already warmed")
           owner.recordingSampleTimeAtomic.store(0, ordering: .relaxed)
+          owner.recordingFirstHostTimeAtomic.store(0, ordering: .relaxed)
+          owner.recordingFirstSourceSampleTimeAtomic.store(Int64.min, ordering: .relaxed)
           return
         } else {
           hardStop()
@@ -350,6 +352,8 @@
         }
 
         owner.recordingSampleTimeAtomic.store(0, ordering: .relaxed)
+        owner.recordingFirstHostTimeAtomic.store(0, ordering: .relaxed)
+        owner.recordingFirstSourceSampleTimeAtomic.store(Int64.min, ordering: .relaxed)
 
         let tapResult = try owner.reinstallTap(
           configuration: configuration,
@@ -711,6 +715,18 @@
         (time?.isSampleTimeValid ?? false) ? time.map { Int64($0.sampleTime) } : nil
       let sourceSampleRate: Double? =
         (time?.isSampleTimeValid ?? false) ? time?.sampleRate : nil
+      // Anchor the first captured frame that carries a valid host time so a post-stop reader can
+      // align this recording against other devices (see `RecordingTimingSnapshot`). There is a
+      // single real-time tap writer, so a load-then-store gated on the unset sentinel (0) is
+      // wait-free and race-free. The source sample time is stored before the host time so a reader
+      // observing a non-zero host time also observes the paired sample time.
+      if let sourceHostTime, owner.recordingFirstHostTimeAtomic.load(ordering: .relaxed) == 0 {
+        owner.recordingFirstSourceSampleTimeAtomic.store(
+          sourceSampleTime ?? Int64.min,
+          ordering: .relaxed,
+        )
+        owner.recordingFirstHostTimeAtomic.store(sourceHostTime, ordering: .relaxed)
+      }
       if writerCanWrite || receiverCanWrite {
         for i in 0..<effectiveChannelCount {
           guard let channelData = unsafe convertedBuffer.floatChannelData?[i] else {

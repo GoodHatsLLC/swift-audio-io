@@ -95,6 +95,28 @@ public struct BufferTiming: Sendable, Equatable {
   }
 }
 
+/// A host-time anchor for a recording segment, used to align recordings captured on multiple
+/// devices into a single multi-channel timeline.
+///
+/// `firstBufferHostTime` is the `mach_absolute_time`-domain host time of the first captured frame
+/// of the segment that carried a valid host time. It is captured on the real-time tap thread and
+/// reset at each recording start. Read it immediately after `stopRecording()` to anchor the
+/// just-finished segment, then combine it with a cross-device clock offset to express each
+/// device's start instant in a shared time domain.
+public struct RecordingTimingSnapshot: Sendable, Hashable {
+  /// Host time (`mach_absolute_time` units) of the first captured frame with a valid host time.
+  public let firstBufferHostTime: UInt64
+
+  /// Source (hardware) sample index of that first frame, if the tap reported a valid source
+  /// sample time; otherwise `nil`.
+  public let firstBufferSampleTime: Int64?
+
+  public init(firstBufferHostTime: UInt64, firstBufferSampleTime: Int64? = nil) {
+    self.firstBufferHostTime = firstBufferHostTime
+    self.firstBufferSampleTime = firstBufferSampleTime
+  }
+}
+
 /// A protocol for objects that can emit buffers of audio data to receivers.
 public protocol BufferEmitter<T>: AnyObject {
   associatedtype T

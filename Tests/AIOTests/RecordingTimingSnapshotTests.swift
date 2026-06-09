@@ -1,0 +1,112 @@
+// © GoodHatsLLC
+
+#if canImport(UIKit)
+  import Foundation
+  import Testing
+
+  @testable import AIOAudioSession
+  @_spi(TESTING) import AudioIO
+  import Tools
+
+  /// Coverage for the first-buffer host-time anchor surfaced via
+  /// ``AIOEngine/recordingTimingSnapshot()`` for cross-device alignment.
+  struct RecordingTimingSnapshotTests {
+    @Test
+    func `snapshot is nil before any host-timed buffer is captured`() async throws {
+      let engine = AIOEngine()
+      let url = try await engine.startTestRecording(configuration: makeConfiguration())
+      defer { try? FileManager.default.removeItem(at: url) }
+
+      #expect(await engine.recordingTimingSnapshot() == nil)
+
+      _ = try await engine.stopRecording()
+    }
+
+    @Test
+    func `snapshot anchors the first host-timed buffer`() async throws {
+      let engine = AIOEngine()
+      let url = try await engine.startTestRecording(configuration: makeConfiguration())
+      defer { try? FileManager.default.removeItem(at: url) }
+
+      engine.injectTestAudio(
+        channels: [ramp(count: 64)],
+        hostTime: 12_345_678,
+        sourceSampleTime: 9_000,
+      )
+
+      let snapshot = try #require(await engine.recordingTimingSnapshot())
+      #expect(snapshot.firstBufferHostTime == 12_345_678)
+      #expect(snapshot.firstBufferSampleTime == 9_000)
+
+      _ = try await engine.stopRecording()
+    }
+
+    @Test
+    func `snapshot keeps the FIRST host time when later buffers arrive`() async throws {
+      let engine = AIOEngine()
+      let url = try await engine.startTestRecording(configuration: makeConfiguration())
+      defer { try? FileManager.default.removeItem(at: url) }
+
+      engine.injectTestAudio(channels: [ramp(count: 32)], hostTime: 1_000, sourceSampleTime: 10)
+      engine.injectTestAudio(channels: [ramp(count: 32)], hostTime: 2_000, sourceSampleTime: 20)
+
+      let snapshot = try #require(await engine.recordingTimingSnapshot())
+      #expect(snapshot.firstBufferHostTime == 1_000)
+      #expect(snapshot.firstBufferSampleTime == 10)
+
+      _ = try await engine.stopRecording()
+    }
+
+    @Test
+    func `snapshot persists after stopRecording`() async throws {
+      let engine = AIOEngine()
+      let url = try await engine.startTestRecording(configuration: makeConfiguration())
+      defer { try? FileManager.default.removeItem(at: url) }
+
+      engine.injectTestAudio(channels: [ramp(count: 64)], hostTime: 7_777, sourceSampleTime: 42)
+      _ = try await engine.stopRecording()
+
+      let snapshot = try #require(await engine.recordingTimingSnapshot())
+      #expect(snapshot.firstBufferHostTime == 7_777)
+      #expect(snapshot.firstBufferSampleTime == 42)
+    }
+
+    @Test
+    func `buffers without a valid host time do not anchor`() async throws {
+      let engine = AIOEngine()
+      let url = try await engine.startTestRecording(configuration: makeConfiguration())
+      defer { try? FileManager.default.removeItem(at: url) }
+
+      // A buffer with no host time leaves the anchor unset...
+      engine.injectTestAudio(channels: [ramp(count: 32)], hostTime: nil)
+      #expect(await engine.recordingTimingSnapshot() == nil)
+
+      // ...and the next buffer that *does* carry a host time becomes the anchor.
+      engine.injectTestAudio(channels: [ramp(count: 32)], hostTime: 555, sourceSampleTime: nil)
+      let snapshot = try #require(await engine.recordingTimingSnapshot())
+      #expect(snapshot.firstBufferHostTime == 555)
+      #expect(snapshot.firstBufferSampleTime == nil)
+
+      _ = try await engine.stopRecording()
+    }
+
+    private func makeConfiguration() -> RecordingConfiguration {
+      let input = InputConfiguration(sampleRate: .dvd, channels: .mono)
+      let output = OutputConfiguration(
+        fileFormat: .caf,
+        bitDepth: .pcmFloat32,
+        quality: .high,
+      )
+      return RecordingConfiguration(
+        inputConfiguration: input,
+        outputConfiguration: output,
+        outputDestination: .temporary,
+      )
+    }
+
+    private func ramp(count: Int) -> [Float] {
+      guard count > 0 else { return [] }
+      return (0..<count).map { Float($0) / Float(count) }
+    }
+  }
+#endif
