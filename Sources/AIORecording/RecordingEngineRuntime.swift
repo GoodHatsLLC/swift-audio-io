@@ -484,21 +484,27 @@
 
     @MainActor
     func hardStop() {
-      let tapBus = owner.state.consume(\.installedTapBus)
-      let busesToRemove = Array(Set([tapBus, 0].compactMap(\.self)))
-      owner.runOnEngineControlQueue { [weak owner] in
-        guard let owner else { return }
-        dispatchPrecondition(condition: .onQueue(owner.engineControlQueue))
-        for bus in busesToRemove {
-          unsafe owner.engine.inputNode.removeTap(onBus: bus)
+      if owner.state[locked: \.activeBackend] == nil {
+        let tapBus = owner.state.consume(\.installedTapBus)
+        let busesToRemove = Array(Set([tapBus, 0].compactMap(\.self)))
+        owner.runOnEngineControlQueue { [weak owner] in
+          guard let owner else { return }
+          dispatchPrecondition(condition: .onQueue(owner.engineControlQueue))
+          for bus in busesToRemove {
+            unsafe owner.engine.inputNode.removeTap(onBus: bus)
+          }
+          if unsafe owner.engine.isRunning {
+            unsafe owner.engine.stop()
+          }
+          if unsafe owner.player.isPlaying {
+            unsafe owner.player.stop()
+          }
+          unsafe owner.engine.reset()
         }
-        if unsafe owner.engine.isRunning {
-          unsafe owner.engine.stop()
-        }
-        if unsafe owner.player.isPlaying {
-          unsafe owner.player.stop()
-        }
-        unsafe owner.engine.reset()
+      } else {
+        // System-audio capture is torn down by cleanUp() -> backend.cleanup();
+        // there is no AVAudioEngine input tap to remove.
+        _ = owner.state.consume(\.installedTapBus)
       }
       let hasActiveWriter = owner.writerSession != nil || !owner.drainingWriterSessions.isEmpty
       if let current = owner.writerSession {
@@ -511,16 +517,27 @@
     @MainActor
     func gracefulStop() async {
       log.info("gracefulStop requested")
-      let tapBus = owner.state.consume(\.installedTapBus)
-      let busesToRemove = Array(Set([tapBus, 0].compactMap(\.self)))
-      log.info("gracefulStop starting (tapBus=\(String(describing: tapBus), privacy: .public))")
-      owner.engineControlQueue.async { [weak owner] in
-        guard let owner else { return }
-        dispatchPrecondition(condition: .onQueue(owner.engineControlQueue))
-        for bus in busesToRemove {
-          unsafe owner.engine.inputNode.removeTap(onBus: bus)
+      if let backend = owner.state[locked: \.activeBackend] {
+        log.info("gracefulStop stopping capture backend")
+        do {
+          try backend.stop()
+        } catch {
+          log.error(
+            "capture backend stop failed during gracefulStop: \(error, privacy: .public)",
+          )
         }
-        unsafe owner.engine.stop()
+      } else {
+        let tapBus = owner.state.consume(\.installedTapBus)
+        let busesToRemove = Array(Set([tapBus, 0].compactMap(\.self)))
+        log.info("gracefulStop starting (tapBus=\(String(describing: tapBus), privacy: .public))")
+        owner.engineControlQueue.async { [weak owner] in
+          guard let owner else { return }
+          dispatchPrecondition(condition: .onQueue(owner.engineControlQueue))
+          for bus in busesToRemove {
+            unsafe owner.engine.inputNode.removeTap(onBus: bus)
+          }
+          unsafe owner.engine.stop()
+        }
       }
       log.info("gracefulStop draining writer sessions")
       let stopDrainTimeout = owner.stopDrainTimeout
@@ -557,7 +574,8 @@
     func cleanUp(closeFile: Bool = true) {
       stopReceiverLoop()
       owner.tapErrorCode.store(0, ordering: .relaxed)
-      let writer = owner.state { state in
+      let (writer, backend) = owner.state {
+        state -> ((any RecordingFileWriter)?, (any RecordingCaptureBackend)?) in
         defer {
           state.recordingWriter = nil
           state.recordingURL = nil
@@ -569,9 +587,13 @@
           state.tapConverterInputFormat = nil
           state.tapConverterOutputFormat = nil
           state.tapConvertedBuffer = nil
+          state.activeBackend = nil
         }
-        return state.recordingWriter
+        return (state.recordingWriter, state.activeBackend)
       }
+      // Single, idempotent teardown point for the capture backend (system audio).
+      // The microphone path has no backend; this is a no-op there.
+      backend?.cleanup()
       owner.recordingInfrastructure.tapSnapshotLock.withLock { $0 = .empty }
       if closeFile {
         writer?.close()

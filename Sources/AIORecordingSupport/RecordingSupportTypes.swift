@@ -238,8 +238,35 @@
     package let sourceSampleRate: Double?
   }
 
+  /// Internal capture-source boundary. The common recording machinery (output
+  /// URL/writer, ring buffers, receiver timing, event emission, state) is shared;
+  /// each backend owns only how samples are produced and torn down. The
+  /// microphone path is the legacy `AVAudioEngine` tap and runs without a backend
+  /// object (`RecordingState.activeBackend == nil`); system audio sets an
+  /// `activeBackend` that the lifecycle methods dispatch to.
+  package protocol RecordingCaptureBackend: Sendable {
+    /// The native capture format of this source. Common code builds the
+    /// `sourceFormat -> processingFormat` converter from this.
+    var sourceFormat: AVAudioFormat { get }
+
+    /// Begin delivering buffers into the shared pipeline.
+    func start() throws(RecordingError)
+
+    /// Stop delivering buffers (halt delivery; long-lived teardown happens in
+    /// `cleanup()`).
+    func stop() throws(RecordingError)
+
+    /// Best-effort, non-throwing, idempotent teardown of all owned resources,
+    /// safe after a partial `start()`.
+    func cleanup()
+  }
+
   package struct RecordingState {
     package var recordingWriter: (any RecordingFileWriter)?
+    /// The active non-microphone capture backend, or `nil` for the microphone
+    /// (legacy `AVAudioEngine` tap) path. Set after a successful warm/start and
+    /// cleared by `cleanUp()`.
+    package var activeBackend: (any RecordingCaptureBackend)?
     package var recordingURL: URL?
     package var recordingConfiguration: RecordingConfiguration?
     package var installedTapBus: Int?
