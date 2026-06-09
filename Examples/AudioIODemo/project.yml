@@ -61,6 +61,9 @@ targets:
         INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
         INFOPLIST_KEY_NSHumanReadableCopyright: ""
         INFOPLIST_KEY_NSMicrophoneUsageDescription: "Record audio when you start a recording."
+        # macOS system-audio capture (Core Audio process tap) requires this key.
+        # The first tap creation triggers the macOS audio-recording permission prompt.
+        INFOPLIST_KEY_NSAudioCaptureUsageDescription[sdk=macosx*]: "Record system audio from other apps when you choose the System Audio source."
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphone*]: YES
         INFOPLIST_KEY_UILaunchScreen_Generation[sdk=iphone*]: YES
         INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphone*]: YES
