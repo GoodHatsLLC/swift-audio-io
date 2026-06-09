@@ -420,7 +420,7 @@
       for configuration: RecordingConfiguration,
     ) throws(RecordingError) {
       try validateRecordingChannelCapacity(
-        channelCount: configuration.inputConfiguration.channels.count,
+        channelCount: configuration.format.channels.count,
         maximum: min(
           Self.currentMaximumRecordingChannelCount,
           configuration.outputConfiguration.fileFormat.maximumRecordingChannelCount,
@@ -452,7 +452,7 @@
       let fileFormat = configuration.outputConfiguration.fileFormat
       guard fileFormat == .aac || fileFormat == .adts else { return }
 
-      let sampleRate = configuration.inputConfiguration.sampleRate.hz
+      let sampleRate = configuration.format.sampleRate.hz
       guard fileFormat.supportsEncodedSampleRate(sampleRate) else {
         throw RecordingError.unsupportedEncodedSampleRate(
           fileFormat: fileFormat,

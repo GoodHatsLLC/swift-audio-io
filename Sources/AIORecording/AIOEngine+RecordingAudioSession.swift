@@ -28,13 +28,13 @@
         try applyAudioSessionConfiguration(session, configuration: recordingSessionConfiguration)
 
         do {
-          try session.setPreferredSampleRate(configuration.inputConfiguration.sampleRate.hz)
+          try session.setPreferredSampleRate(configuration.format.sampleRate.hz)
         } catch {
           throw .operationFailed(operation: .setPreferredSampleRate, error: ErrorContext(error))
         }
 
         let preferredDuration = calculatePreferredBufferDuration(
-          sampleRate: configuration.inputConfiguration.sampleRate.hz,
+          sampleRate: configuration.format.sampleRate.hz,
         )
         do {
           try session.setPreferredIOBufferDuration(preferredDuration)
@@ -44,7 +44,7 @@
           )
         }
 
-        let desiredChannels = configuration.inputConfiguration.channels.platform
+        let desiredChannels = configuration.format.channels.platform
         let channelCount =
           desiredChannels > session.maximumInputNumberOfChannels
           ? AVAudioChannelCount(session.maximumInputNumberOfChannels) : desiredChannels

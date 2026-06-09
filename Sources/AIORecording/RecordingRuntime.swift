@@ -193,26 +193,36 @@
     func updateRecordingTapInterval(_ interval: Duration) {
       guard interval > .zero else { return }
 
+      // Tap interval is a microphone-only concept. Rebuild the configuration with
+      // the new interval nested in `MicrophoneRecordingInput`; system-audio
+      // configurations have no tap interval, so this is a no-op for them.
+      func withUpdatedInterval(_ config: RecordingConfiguration) -> RecordingConfiguration? {
+        guard case .microphone(let microphone) = config.input,
+          microphone.tapInterval != interval
+        else {
+          return nil
+        }
+        return RecordingConfiguration(
+          input: .microphone(
+            MicrophoneRecordingInput(format: microphone.format, tapInterval: interval),
+          ),
+          outputConfiguration: config.outputConfiguration,
+          outputDestination: config.outputDestination,
+        )
+      }
+
       guard let currentConfig = owner.state.withLock({ $0.recordingConfiguration }) else {
-        owner.lastRecordingConfiguration = owner.lastRecordingConfiguration.map {
-          RecordingConfiguration(
-            inputConfiguration: $0.inputConfiguration,
-            outputConfiguration: $0.outputConfiguration,
-            tapInterval: interval,
-            outputDestination: $0.outputDestination,
-          )
+        // Not yet warmed: fold the interval into the pending configuration if it
+        // is a microphone source, otherwise leave it untouched.
+        if let pending = owner.lastRecordingConfiguration,
+          let updated = withUpdatedInterval(pending)
+        {
+          owner.lastRecordingConfiguration = updated
         }
         return
       }
 
-      let updated = RecordingConfiguration(
-        inputConfiguration: currentConfig.inputConfiguration,
-        outputConfiguration: currentConfig.outputConfiguration,
-        tapInterval: interval,
-        outputDestination: currentConfig.outputDestination,
-      )
-
-      guard updated.tapInterval != currentConfig.tapInterval else { return }
+      guard let updated = withUpdatedInterval(currentConfig) else { return }
 
       owner.state.withLock { $0.recordingConfiguration = updated }
       owner.lastRecordingConfiguration = updated

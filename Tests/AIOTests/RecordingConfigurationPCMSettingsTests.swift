@@ -37,11 +37,11 @@
 
         #expect(didPrepare, "prepareToRecord() failed for \(fileFormat.description)")
         #expect(
-          recorder.format.sampleRate == configuration.inputConfiguration.sampleRate.hz,
+          recorder.format.sampleRate == configuration.format.sampleRate.hz,
           "Unexpected sample rate for \(fileFormat.description): \(recorder.format.sampleRate)",
         )
         #expect(
-          recorder.format.channelCount == configuration.inputConfiguration.channels.platform,
+          recorder.format.channelCount == configuration.format.channels.platform,
           "Unexpected channel count for \(fileFormat.description): \(recorder.format.channelCount)",
         )
       }

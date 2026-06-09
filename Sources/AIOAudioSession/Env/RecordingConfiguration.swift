@@ -52,41 +52,69 @@
       self
     }
 
-    public let inputConfiguration: InputConfiguration
+    public let input: RecordingInput
     public let outputConfiguration: OutputConfiguration
-    public let tapInterval: Duration
     public let outputDestination: OutputDestination
 
+    public init(
+      input: RecordingInput,
+      outputConfiguration: OutputConfiguration,
+      outputDestination: OutputDestination = .temporary,
+    ) {
+      self.input = input
+      self.outputConfiguration = outputConfiguration
+      self.outputDestination = outputDestination
+    }
+
+    /// Migration convenience: builds a microphone-source configuration. Prefer
+    /// the source-specific `init(input:outputConfiguration:outputDestination:)`
+    /// for new code.
     public init(
       inputConfiguration: InputConfiguration,
       outputConfiguration: OutputConfiguration,
       tapInterval: Duration = .seconds(0.1),
       outputDestination: OutputDestination = .temporary,
     ) {
-      self.inputConfiguration = inputConfiguration
-      self.outputConfiguration = outputConfiguration
-      self.tapInterval = tapInterval
-      self.outputDestination = outputDestination
+      self.init(
+        input: .microphone(
+          MicrophoneRecordingInput(format: inputConfiguration, tapInterval: tapInterval),
+        ),
+        outputConfiguration: outputConfiguration,
+        outputDestination: outputDestination,
+      )
+    }
+
+    /// The requested processing format (sample rate + channel count) for the
+    /// selected source. Replaces the former stored `inputConfiguration`.
+    public var format: InputConfiguration { input.format }
+
+    /// Microphone input-node tap cadence. Package-internal: the value lives on
+    /// `MicrophoneRecordingInput`; system audio has no tap interval, so the
+    /// system-audio path never consults this.
+    package var tapInterval: Duration {
+      switch input {
+      case .microphone(let microphone): microphone.tapInterval
+      }
     }
 
     public var description: String {
       let fileFormat = outputConfiguration.fileFormat
       return
-        "\(fileFormat): \(inputConfiguration.channels) \(inputConfiguration.sampleRate), \(outputConfiguration.bitDepth) \(fileFormat.requiresQuality ? "\(outputConfiguration.quality)" : "") (destination: \(outputDestination))"
+        "\(fileFormat): \(format.channels) \(format.sampleRate), \(outputConfiguration.bitDepth) \(fileFormat.requiresQuality ? "\(outputConfiguration.quality)" : "") (destination: \(outputDestination))"
     }
 
     public var summary: String {
-      let format = outputConfiguration.fileFormat.description
-      let channels = inputConfiguration.channels.description
-      let sampleRate = inputConfiguration.sampleRate.description
-      return "\(format) • \(channels) • \(sampleRate)"
+      let fileFormat = outputConfiguration.fileFormat.description
+      let channels = format.channels.description
+      let sampleRate = format.sampleRate.description
+      return "\(fileFormat) • \(channels) • \(sampleRate)"
     }
 
     public var debugDescription: String {
       """
         fileFormat: \(outputConfiguration.fileFormat.description)
-        sampleRate: \(inputConfiguration.sampleRate)
-        channels: \(inputConfiguration.channels)
+        sampleRate: \(format.sampleRate)
+        channels: \(format.channels)
         bitDepth: \(outputConfiguration.bitDepth)
         quality: \(outputConfiguration.quality)
         outputDestination: \(outputDestination)
@@ -97,14 +125,14 @@
     package var processingFormat: AVAudioFormat? {
       guard
         let channelLayout = outputConfiguration.fileFormat.recordingChannelLayout(
-          for: inputConfiguration.channels.count,
+          for: format.channels.count,
         )
       else {
         return nil
       }
       return AVAudioFormat(
         commonFormat: .pcmFormatFloat32,
-        sampleRate: inputConfiguration.sampleRate.hz,
+        sampleRate: format.sampleRate.hz,
         interleaved: false,
         channelLayout: channelLayout,
       )
@@ -142,8 +170,8 @@
     ) -> [String: Any] {
       var settings: [String: Any] = [
         AVFormatIDKey: kAudioFormatLinearPCM,
-        AVSampleRateKey: inputConfiguration.sampleRate.hz,
-        AVNumberOfChannelsKey: inputConfiguration.channels.platform,
+        AVSampleRateKey: format.sampleRate.hz,
+        AVNumberOfChannelsKey: format.channels.platform,
         AVLinearPCMBitDepthKey: bitDepth,
         AVLinearPCMIsFloatKey: isFloat,
         AVLinearPCMIsBigEndianKey: isBigEndian,
@@ -157,7 +185,7 @@
 
     private func validatesRecordingChannelCount() -> Bool {
       let fileFormat = outputConfiguration.fileFormat
-      let channelCount = inputConfiguration.channels.count
+      let channelCount = format.channels.count
       guard fileFormat.supportsRecordingChannelCount(channelCount) else {
         log.error(
           "invalid \(fileFormat.description, privacy: .public) channel count: \(channelCount, privacy: .public)",
@@ -168,7 +196,7 @@
     }
 
     private var multichannelLayoutDataForFileSettings: Data? {
-      let channelCount = inputConfiguration.channels.count
+      let channelCount = format.channels.count
       guard channelCount > 2 else { return nil }
       return outputConfiguration.fileFormat.recordingChannelLayoutData(for: channelCount)
     }
@@ -182,7 +210,7 @@
       guard validatesRecordingChannelCount() else { return nil }
       switch outputConfiguration.fileFormat {
       case .aac, .adts:
-        let sampleRate = inputConfiguration.sampleRate.hz
+        let sampleRate = format.sampleRate.hz
         guard outputConfiguration.fileFormat.supportsEncodedSampleRate(sampleRate) else {
           log.error("invalid sample rate: \(sampleRate, privacy: .public)")
           return nil
@@ -191,7 +219,7 @@
         let settings: [String: Any] = [
           AVFormatIDKey: kAudioFormatMPEG4AAC,
           AVSampleRateKey: sampleRate,
-          AVNumberOfChannelsKey: inputConfiguration.channels.platform,
+          AVNumberOfChannelsKey: format.channels.platform,
           AVEncoderAudioQualityKey: qualityRawValue,
         ]
         var settingsWithLayout = settings
@@ -211,8 +239,8 @@
 
         let settings: [String: Any] = [
           AVFormatIDKey: kAudioFormatFLAC,
-          AVSampleRateKey: inputConfiguration.sampleRate.hz,
-          AVNumberOfChannelsKey: inputConfiguration.channels.platform,
+          AVSampleRateKey: format.sampleRate.hz,
+          AVNumberOfChannelsKey: format.channels.platform,
           AVEncoderBitDepthHintKey: encoderBitDepthHint,
         ]
         var settingsWithLayout = settings
@@ -255,7 +283,7 @@
       guard validatesRecordingChannelCount() else { return nil }
       switch outputConfiguration.fileFormat {
       case .aac, .adts:
-        let sampleRate = inputConfiguration.sampleRate.hz
+        let sampleRate = format.sampleRate.hz
         guard outputConfiguration.fileFormat.supportsEncodedSampleRate(sampleRate) else {
           log.error("invalid sample rate: \(sampleRate, privacy: .public)")
           return nil
@@ -264,7 +292,7 @@
         let settings: [String: Any] = [
           AVFormatIDKey: kAudioFormatMPEG4AAC,
           AVSampleRateKey: sampleRate,
-          AVNumberOfChannelsKey: inputConfiguration.channels.platform,
+          AVNumberOfChannelsKey: format.channels.platform,
           AVEncoderAudioQualityKey: qualityRawValue,
         ]
         var settingsWithLayout = settings
@@ -289,8 +317,8 @@
       case .flac:
         let settings: [String: Any] = [
           AVFormatIDKey: kAudioFormatFLAC,
-          AVSampleRateKey: inputConfiguration.sampleRate.hz,
-          AVNumberOfChannelsKey: inputConfiguration.channels.platform,
+          AVSampleRateKey: format.sampleRate.hz,
+          AVNumberOfChannelsKey: format.channels.platform,
           AVEncoderBitDepthHintKey: fileSettings?[AVEncoderBitDepthHintKey] ?? 16,
         ]
         var settingsWithLayout = settings
@@ -305,14 +333,14 @@
         }
 
         // FLAC validation
-        let sampleRate = inputConfiguration.sampleRate.hz
+        let sampleRate = input.format.sampleRate.hz
 
         // FLAC supports wide range of sample rates
         guard sampleRate <= 655_350,  // FLAC max sample rate
           sampleRate >= 8000  // Reasonable minimum
         else {
           log.error(
-            "invalid FLAC configuration: \(sampleRate, privacy: .public)Hz, \(inputConfiguration.channels.count, privacy: .public)ch",
+            "invalid FLAC configuration: \(sampleRate, privacy: .public)Hz, \(input.format.channels.count, privacy: .public)ch",
           )
           return nil
         }
@@ -332,11 +360,11 @@
             )
           } else {
             outputConfiguration.fileFormat.recordingChannelLayout(
-              for: inputConfiguration.channels.count,
+              for: input.format.channels.count,
             ).map {
               AVAudioFormat(
                 commonFormat: commonFormat,
-                sampleRate: inputConfiguration.sampleRate.hz,
+                sampleRate: input.format.sampleRate.hz,
                 interleaved: outputConfiguration.fileFormat.requiresInterleaved,
                 channelLayout: $0,
               )
@@ -350,7 +378,7 @@
         }
 
         // Additional validation for extreme configurations
-        let sampleRate = inputConfiguration.sampleRate.hz
+        let sampleRate = input.format.sampleRate.hz
 
         // Check for reasonable limits
         guard sampleRate <= 192_000,  // 192kHz max
@@ -396,7 +424,7 @@
       guard let fileFormat else { return nil }
       return .init(
         bus: bus,
-        channelCount: inputConfiguration.channels.count,
+        channelCount: format.channels.count,
         inputFormat: input,
         outputFormat: fileFormat,
         tapReadSeconds: tapInterval.seconds,

@@ -39,6 +39,8 @@ func publicAPISnapshot_AIOAudioSession() throws {
   _ = (any ErrorManaging).self
   _ = FileFormat.self
   _ = InputConfiguration.self
+  _ = MicrophoneRecordingInput.self
+  _ = RecordingInput.self
   _ = MockErrorManager.self
   #if canImport(UIKit) && !os(macOS)
     _ = OrientationObserver.self

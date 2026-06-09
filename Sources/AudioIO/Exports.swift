@@ -64,6 +64,8 @@
   public typealias ErrorManaging = AIOAudioSession.ErrorManaging
   public typealias FileFormat = AIOAudioSession.FileFormat
   public typealias InputConfiguration = AIOAudioSession.InputConfiguration
+  public typealias MicrophoneRecordingInput = AIOAudioSession.MicrophoneRecordingInput
+  public typealias RecordingInput = AIOAudioSession.RecordingInput
   // `MockErrorManager` is `#if DEBUG`-only in AIOAudioSession, so the re-export
   // must carry the same gate — otherwise release/archive builds fail to resolve
   // a type that was never compiled into the module.
