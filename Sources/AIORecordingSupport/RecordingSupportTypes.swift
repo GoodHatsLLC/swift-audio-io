@@ -397,6 +397,15 @@
     package let writerQueue = DispatchQueue(label: "AIOEngine.writer", qos: .userInitiated)
     package let receiverQueue = DispatchQueue(label: "AIOEngine.receiver", qos: .userInitiated)
     package let recordingSampleTimeAtomic = ManagedAtomic<Int64>(0)
+    /// Mach host time (`mach_absolute_time` domain) of the first captured frame of the current
+    /// recording segment that carried a valid host time. `0` means "not captured yet". Written once
+    /// per segment from the real-time tap thread and reset to `0` on each `warm`/start. Used to
+    /// anchor a recording for cross-device alignment (see `RecordingTimingSnapshot`).
+    package let recordingFirstHostTimeAtomic = ManagedAtomic<UInt64>(0)
+    /// Source (hardware) sample index paired with `recordingFirstHostTimeAtomic`. `Int64.min` means
+    /// "no valid source sample time for the first host-timed frame". Stored before the host-time
+    /// store so a reader observing a non-zero host time also observes this value.
+    package let recordingFirstSourceSampleTimeAtomic = ManagedAtomic<Int64>(Int64.min)
     package let writerDrainTimeout: Duration = .seconds(5)
     package let stopDrainTimeout: Duration = .seconds(6)
     package let receiverPollingInterval: Duration = .milliseconds(20)

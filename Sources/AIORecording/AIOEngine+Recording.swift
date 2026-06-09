@@ -404,5 +404,23 @@
     public func rotateRecordingFile() async throws(RecordingError) -> URL {
       try await recordingRuntime.rotateRecordingFile()
     }
+
+    /// The host-time anchor of the first captured buffer of the current (or just-finished)
+    /// recording segment. See ``RecordingTimingSnapshot``.
+    ///
+    /// Returns `nil` until the first buffer with a valid host time has been captured. The value is
+    /// captured on the real-time tap thread, reset at each recording start, and persists after
+    /// ``stopRecording()`` until the next start — so it can be read immediately after stopping to
+    /// anchor the just-finished segment for cross-device alignment.
+    @MainActor
+    public func recordingTimingSnapshot() -> RecordingTimingSnapshot? {
+      let hostTime = recordingFirstHostTimeAtomic.load(ordering: .relaxed)
+      guard hostTime != 0 else { return nil }
+      let rawSampleTime = recordingFirstSourceSampleTimeAtomic.load(ordering: .relaxed)
+      return RecordingTimingSnapshot(
+        firstBufferHostTime: hostTime,
+        firstBufferSampleTime: rawSampleTime == Int64.min ? nil : rawSampleTime,
+      )
+    }
   }
 #endif

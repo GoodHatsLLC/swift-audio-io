@@ -256,6 +256,14 @@
       recordingInfrastructure.recordingSampleTimeAtomic
     }
 
+    package var recordingFirstHostTimeAtomic: ManagedAtomic<UInt64> {
+      recordingInfrastructure.recordingFirstHostTimeAtomic
+    }
+
+    package var recordingFirstSourceSampleTimeAtomic: ManagedAtomic<Int64> {
+      recordingInfrastructure.recordingFirstSourceSampleTimeAtomic
+    }
+
     package var writerDrainTimeout: Duration {
       recordingInfrastructure.writerDrainTimeout
     }

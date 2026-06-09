@@ -245,6 +245,8 @@
           : nil
 
         recordingSampleTimeAtomic.store(0, ordering: .relaxed)
+        recordingFirstHostTimeAtomic.store(0, ordering: .relaxed)
+        recordingFirstSourceSampleTimeAtomic.store(Int64.min, ordering: .relaxed)
 
         state {
           $0.recordingWriter = writer
@@ -288,6 +290,16 @@
 
         let effectiveChannelCount = min(channels.count, audioBuffers.count)
         guard effectiveChannelCount > 0 else { return }
+
+        // Mirror `processAudio`'s first-host-time capture so the test seam exercises the same
+        // anchor path the real tap thread uses.
+        if let hostTime, recordingFirstHostTimeAtomic.load(ordering: .relaxed) == 0 {
+          recordingFirstSourceSampleTimeAtomic.store(
+            sourceSampleTime ?? Int64.min,
+            ordering: .relaxed,
+          )
+          recordingFirstHostTimeAtomic.store(hostTime, ordering: .relaxed)
+        }
 
         let writerAvailable = Self.minimumAvailableWriteFrames(
           channelCount: effectiveChannelCount,
