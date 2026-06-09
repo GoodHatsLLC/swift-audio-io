@@ -51,6 +51,22 @@
     /// A recording-side audio-file operation failed.
     case fileFailed(operation: FileOperation, url: URL?, error: ErrorContext)
 
+    /// The requested capture source is unavailable — e.g. system-audio capture
+    /// permission was denied, or the source is not present on this machine.
+    /// Terminal: retrying without user/system action is noise.
+    case captureSourceUnavailable(details: String)
+
+    /// The capture source failed in a way the caller must resolve by changing
+    /// the source, its options, or the format. Carries a short source
+    /// description string rather than the source enum to keep equality / error
+    /// output / ABI stable. Terminal.
+    case captureSourceFailed(sourceDescription: String, details: String)
+
+    /// A Core Audio (HAL) operation failed with an `OSStatus` that has no more
+    /// specific mapping. Surfaced (logged + emitted) rather than swallowed.
+    /// Terminal by default.
+    case coreAudioFailed(operation: String, osStatus: Int32, details: String)
+
     /// A session-level failure surfaced during recording bring-up or tap
     /// install. Wraps ``SessionError`` so callers can pattern-match either
     /// the recording-specific cause or the underlying session failure.
@@ -85,6 +101,12 @@
       case .fileFailed(let operation, let url, let error):
         return
           "Audio file operation '\(operation)' failed for \(url?.lastPathComponent ?? "missing URL"): \(error)"
+      case .captureSourceUnavailable(let details):
+        return "The requested capture source is unavailable. \(details)"
+      case .captureSourceFailed(let sourceDescription, let details):
+        return "Capture source '\(sourceDescription)' failed. \(details)"
+      case .coreAudioFailed(let operation, let osStatus, let details):
+        return "Core Audio operation '\(operation)' failed (OSStatus \(osStatus)). \(details)"
       case .session(let sessionError):
         return sessionError.errorDescription
       }
