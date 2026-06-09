@@ -94,6 +94,11 @@
     package var tapInterval: Duration {
       switch input {
       case .microphone(let microphone): microphone.tapInterval
+      #if os(macOS)
+        // System audio has no tap interval; the system-audio path never consults
+        // this. Return the default so the microphone tap machinery stays total.
+        case .systemAudio: .seconds(0.1)
+      #endif
       }
     }
 

@@ -66,6 +66,13 @@
   public typealias InputConfiguration = AIOAudioSession.InputConfiguration
   public typealias MicrophoneRecordingInput = AIOAudioSession.MicrophoneRecordingInput
   public typealias RecordingInput = AIOAudioSession.RecordingInput
+  #if os(macOS)
+    public typealias SystemAudioProcess = AIOAudioSession.SystemAudioProcess
+    public typealias SystemAudioProcessCatalog = AIOAudioSession.SystemAudioProcessCatalog
+    public typealias SystemAudioProcessObjectID = AIOAudioSession.SystemAudioProcessObjectID
+    public typealias SystemAudioProcessSelection = AIOAudioSession.SystemAudioProcessSelection
+    public typealias SystemAudioRecordingInput = AIOAudioSession.SystemAudioRecordingInput
+  #endif
   // `MockErrorManager` is `#if DEBUG`-only in AIOAudioSession, so the re-export
   // must carry the same gate — otherwise release/archive builds fail to resolve
   // a type that was never compiled into the module.

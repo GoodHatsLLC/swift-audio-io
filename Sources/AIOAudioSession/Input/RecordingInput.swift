@@ -7,6 +7,9 @@
 /// not reachable for system audio.
 public enum RecordingInput: Hashable, Sendable {
   case microphone(MicrophoneRecordingInput)
+  #if os(macOS)
+    case systemAudio(SystemAudioRecordingInput)
+  #endif
 
   /// The requested processing format (sample rate + channel count), common to
   /// every source. The file/encoder pipeline reads this rather than unwrapping
@@ -14,6 +17,9 @@ public enum RecordingInput: Hashable, Sendable {
   public var format: InputConfiguration {
     switch self {
     case .microphone(let microphone): microphone.format
+    #if os(macOS)
+      case .systemAudio(let systemAudio): systemAudio.format
+    #endif
     }
   }
 }
