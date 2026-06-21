@@ -19,7 +19,7 @@ func swiftSettings(_ settings: PackageDescription.SwiftSetting...) -> [PackageDe
 }
 
 let package = Package(
-  name: "AIO",
+  name: "swift-audio-io",
   platforms: [.iOS(.v26), .macOS(.v26)],
   products: [
     .library(
