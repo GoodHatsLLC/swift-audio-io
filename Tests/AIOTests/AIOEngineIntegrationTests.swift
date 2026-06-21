@@ -238,6 +238,10 @@
       let engine = AIOEngine()
       let configuration = makeConfiguration()
 
+      // Bypass the real AVAudioEngine teardown, which crashes the iOS Simulator
+      // audio HAL; the writer drain and stop transitions still run.
+      await engine.debugBypassEngineTeardownForTesting()
+
       let url = try await engine.startTestRecording(configuration: configuration)
       defer { try? FileManager.default.removeItem(at: url) }
 

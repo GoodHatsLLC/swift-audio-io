@@ -629,28 +629,7 @@
     @MainActor
     func gracefulStop() async {
       log.info("gracefulStop requested")
-      if let backend = owner.state[locked: \.activeBackend] {
-        log.info("gracefulStop stopping capture backend")
-        do {
-          try backend.stop()
-        } catch {
-          log.error(
-            "capture backend stop failed during gracefulStop: \(error, privacy: .public)",
-          )
-        }
-      } else {
-        let tapBus = owner.state.consume(\.installedTapBus)
-        let busesToRemove = Array(Set([tapBus, 0].compactMap(\.self)))
-        log.info("gracefulStop starting (tapBus=\(String(describing: tapBus), privacy: .public))")
-        owner.engineControlQueue.async { [weak owner] in
-          guard let owner else { return }
-          dispatchPrecondition(condition: .onQueue(owner.engineControlQueue))
-          for bus in busesToRemove {
-            unsafe owner.engine.inputNode.removeTap(onBus: bus)
-          }
-          unsafe owner.engine.stop()
-        }
-      }
+      tearDownEngineGraphForGracefulStop()
       log.info("gracefulStop draining writer sessions")
       let stopDrainTimeout = owner.stopDrainTimeout
       let stopDrainTimeoutPolicy = TimeoutPolicy(stopDrainTimeout)
@@ -680,6 +659,45 @@
       owner.reconciliationTask = nil
       log.info("gracefulStop completed")
       owner.deactivateAudioSessionIfNeeded(reason: "recording stopped")
+    }
+
+    /// Stops the active capture backend or tears down the `AVAudioEngine` tap/graph.
+    /// Split out of `gracefulStop()` so a `#if DEBUG` test seam can replace the real
+    /// engine interaction (which crashes the iOS Simulator audio HAL) while the rest
+    /// of the stop sequence runs unchanged.
+    @MainActor
+    private func tearDownEngineGraphForGracefulStop() {
+      #if DEBUG
+        if let override = owner.testGracefulStopEngineTeardownOverride {
+          override()
+          // Keep state consistent with the real teardown path.
+          _ = owner.state.consume(\.installedTapBus)
+          return
+        }
+      #endif
+
+      if let backend = owner.state[locked: \.activeBackend] {
+        log.info("gracefulStop stopping capture backend")
+        do {
+          try backend.stop()
+        } catch {
+          log.error(
+            "capture backend stop failed during gracefulStop: \(error, privacy: .public)",
+          )
+        }
+      } else {
+        let tapBus = owner.state.consume(\.installedTapBus)
+        let busesToRemove = Array(Set([tapBus, 0].compactMap(\.self)))
+        log.info("gracefulStop starting (tapBus=\(String(describing: tapBus), privacy: .public))")
+        owner.engineControlQueue.async { [weak owner] in
+          guard let owner else { return }
+          dispatchPrecondition(condition: .onQueue(owner.engineControlQueue))
+          for bus in busesToRemove {
+            unsafe owner.engine.inputNode.removeTap(onBus: bus)
+          }
+          unsafe owner.engine.stop()
+        }
+      }
     }
 
     @MainActor

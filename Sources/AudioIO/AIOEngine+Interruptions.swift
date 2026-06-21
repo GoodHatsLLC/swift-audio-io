@@ -106,17 +106,40 @@
     }
 
     /// Handles an audio session interruption.
+    ///
+    /// On `.began` while recording is active or desired, the current recording
+    /// configuration is staged into ``AIOEngine/pendingRecordingRestart`` *before*
+    /// the engine is torn down, so recording can be resumed once the interruption
+    /// ends. On `.ended`, recording is resumed **only** when the system reports
+    /// `AVAudioSession.InterruptionOptions.shouldResume` — matching Apple's
+    /// guidance that `.shouldResume` is advisory and resume must be gated on it.
+    /// Resume reuses the same ``AIOEngine/setDesiredRecordingState(_:configuration:)``
+    /// path as media-services recovery.
     @MainActor
     public func handleInterruption(
-      type: AVAudioSession.InterruptionType, options _: AVAudioSession.InterruptionOptions?,
+      type: AVAudioSession.InterruptionType, options: AVAudioSession.InterruptionOptions?,
     ) async {
       switch type {
       case .began:
-        guard isRecording else { return }
+        guard isRecording || wantsRecording else { return }
         log.info("Audio interruption began, stopping recording")
+        pendingRecordingRestart =
+          state[locked: \.recordingConfiguration] ?? lastRecordingConfiguration
         await handleUnrecoverableInterruption(reason: "Audio session interrupted")
       case .ended:
-        log.info("Audio interruption ended")
+        guard let configuration = pendingRecordingRestart else {
+          log.info("Audio interruption ended")
+          return
+        }
+        pendingRecordingRestart = nil
+
+        guard options?.contains(.shouldResume) == true else {
+          log.info("Audio interruption ended without shouldResume; not resuming recording")
+          return
+        }
+
+        log.info("Audio interruption ended with shouldResume; resuming recording")
+        setDesiredRecordingState(true, configuration: configuration)
       @unknown default:
         break
       }
