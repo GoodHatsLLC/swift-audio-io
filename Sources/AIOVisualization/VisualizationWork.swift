@@ -2,7 +2,6 @@
 
 #if canImport(AVFAudio)
   public import AudioSignals
-  public import Foundation
 
   // MARK: - Visualization Work Registration
 

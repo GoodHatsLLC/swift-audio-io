@@ -246,7 +246,7 @@
         mElement: kAudioObjectPropertyElementMain,
       )
       var dataSize = UInt32(MemoryLayout<CFString?>.size)
-      let rawValue = unsafe UnsafeMutableRawPointer.allocate(
+      let rawValue = UnsafeMutableRawPointer.allocate(
         byteCount: Int(dataSize),
         alignment: MemoryLayout<CFString?>.alignment,
       )

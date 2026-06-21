@@ -1,7 +1,7 @@
 // © GoodHatsLLC
 
 #if canImport(AVFoundation)
-  public import Foundation
+  import Foundation
   public import Tools
 
   /// Errors from the underlying audio session and engine bring-up — orthogonal

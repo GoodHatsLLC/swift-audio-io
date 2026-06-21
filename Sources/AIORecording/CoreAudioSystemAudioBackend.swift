@@ -146,8 +146,8 @@
         _ = unsafe AudioDeviceDestroyIOProcID(aggregateID, procID)
         unsafe ioProcID = nil
       }
-      _ = unsafe AudioHardwareDestroyAggregateDevice(aggregateID)
-      _ = unsafe AudioHardwareDestroyProcessTap(tapID)
+      _ = AudioHardwareDestroyAggregateDevice(aggregateID)
+      _ = AudioHardwareDestroyProcessTap(tapID)
     }
 
     // MARK: - HAL helpers
@@ -206,7 +206,7 @@
         mElement: kAudioObjectPropertyElementMain,
       )
       var size = UInt32(MemoryLayout<CFString?>.size)
-      let raw = unsafe UnsafeMutableRawPointer.allocate(
+      let raw = UnsafeMutableRawPointer.allocate(
         byteCount: Int(size),
         alignment: MemoryLayout<CFString?>.alignment,
       )

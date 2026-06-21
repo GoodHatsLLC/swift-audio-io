@@ -3,7 +3,6 @@
 #if os(macOS)
   import Atomics
   package import AVFoundation
-  package import CoreAudio
   import Tools
 
   /// Per-callback timing captured from the IOProc's `inInputTime`, carried
