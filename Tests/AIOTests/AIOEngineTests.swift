@@ -43,10 +43,13 @@
 
     @Test
     func `AAC compatible common sample rate matrix`() {
+      // 32 kHz is MPEG-4 AAC sampling-frequency index 5 (ISO/IEC 14496-3) and is
+      // encodable by AudioConverter; it belongs in the AAC-compatible common set.
       let expectedAACRates: [SampleRate] = [
         16_000,
         22_050,
         24_000,
+        32_000,
         44_100,
         48_000,
       ]
