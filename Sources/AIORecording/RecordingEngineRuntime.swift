@@ -302,10 +302,13 @@
       /// converter artifacts, and stage state — without starting capture (that
       /// happens in `startRecording`). Keeps the shared file/writer/receiver
       /// machinery identical to the microphone path.
-      @MainActor
-      private func warmSystemAudio(
+      ///
+      /// Runs off the main actor; the caller performs `@MainActor` failure cleanup
+      /// (`hardStop()` + `recordingFailed`) when this throws.
+      private nonisolated func performWarmSystemAudio(
         configuration: RecordingConfiguration,
         systemInput: SystemAudioRecordingInput,
+        inputs: WarmInputs,
       ) throws(RecordingError) {
         // System audio is mono/stereo only — reject early, before touching the HAL.
         let requestedChannels = systemInput.format.channels.count
@@ -333,7 +336,7 @@
             capacitySeconds: owner.maxBufferSeconds,
           )
         } catch {
-          owner.eventSubject.send(AudioIOEvent.recordingFailed)
+          // The `@MainActor` caller emits `recordingFailed` on the failure path.
           throw error
         }
 
@@ -358,7 +361,11 @@
             for: configuration,
             allowExplicitFile: true,
           )
-          let writer = try owner.makeRecordingWriter(url: url, configuration: configuration)
+          let writer = try owner.makeRecordingWriter(
+            url: url,
+            configuration: configuration,
+            writerBackend: inputs.writerBackend,
+          )
           owner.applyFileProtectionIfNeeded(protection, to: url)
 
           // The sink runs on the non-realtime pump queue and feeds the shared
@@ -395,22 +402,159 @@
           }
           owner.recordingInfrastructure.tapSnapshotLock.withLock { $0 = snapshot.value }
         } catch {
+          // Free the locally-created capture session; the `@MainActor` caller
+          // performs `hardStop()` + `recordingFailed` cleanup for engine state.
           session.cleanup()
-          cleanUp()
-          owner.eventSubject.send(AudioIOEvent.recordingFailed)
           throw error
         }
       }
     #endif
 
+    /// The main-actor-isolated values the off-main warm path needs, captured on
+    /// the main actor by the caller and handed to ``performWarm(configuration:inputs:)``.
+    ///
+    /// `AudioSessionConfiguration` and `WriterBackend` are `Sendable`. The
+    /// `@MainActor` audio-session delegate is *not* invoked off-main: the caller
+    /// activates it via ``AIOEngine/activateAudioSessionDelegate(_:)`` before
+    /// offloading, so it is carried here only for parity and is unused by the
+    /// off-main path.
+    struct WarmInputs: Sendable {
+      let sessionConfiguration: AudioSessionConfiguration
+      let writerBackend: WriterBackend
+      let alreadyActive: Bool
+      /// The result of the `@MainActor` `testReinstallTapOverride`, pre-resolved
+      /// on the main actor so the nonisolated warm path can honour the seam
+      /// without invoking a `@MainActor` closure off-main. Always `nil` in
+      /// release builds (the seam only exists under `#if DEBUG`).
+      let reinstallTapOverrideResult: Transferring<Result<TapInstallResult, RecordingError>>?
+
+      init(
+        sessionConfiguration: AudioSessionConfiguration,
+        writerBackend: WriterBackend,
+        alreadyActive: Bool,
+        reinstallTapOverrideResult: Transferring<Result<TapInstallResult, RecordingError>>? = nil,
+      ) {
+        self.sessionConfiguration = sessionConfiguration
+        self.writerBackend = writerBackend
+        self.alreadyActive = alreadyActive
+        self.reinstallTapOverrideResult = reinstallTapOverrideResult
+      }
+    }
+
+    /// Captures the main-actor-isolated ``WarmInputs`` (including the pre-resolved
+    /// `@MainActor` tap-install test override) for the given configuration.
+    @MainActor
+    func makeWarmInputs(
+      configuration: RecordingConfiguration,
+      alreadyActive: Bool,
+    ) -> WarmInputs {
+      let overrideResult = configuration.processingFormat.flatMap { processingFormat in
+        owner.reinstallTapOverrideResult(
+          configuration: configuration,
+          processingFormat: processingFormat,
+        )
+      }
+      return WarmInputs(
+        sessionConfiguration: owner.recordingSessionConfiguration,
+        writerBackend: owner.writerBackend,
+        alreadyActive: alreadyActive,
+        reinstallTapOverrideResult: overrideResult,
+      )
+    }
+
+    /// Public `@MainActor` warm entry point. Already on the main actor, so it
+    /// activates the session delegate, captures ``WarmInputs`` locally, and runs
+    /// ``performWarm(configuration:inputs:)`` synchronously (behaviour-equivalent
+    /// to the previous blocking implementation).
     @MainActor
     func warm(configuration: RecordingConfiguration) throws(RecordingError) {
       guard !owner.isRecording, !owner.isPlaying else {
         return
       }
+      // Validate before activating the session delegate so an invalid
+      // configuration never activates the audio session.
+      try validateRecordingConfiguration(configuration)
+      do {
+        try owner.activateAudioSessionDelegate(owner.audioSessionDelegate)
+      } catch let sessionError {
+        throw RecordingError.session(sessionError)
+      }
+      let inputs = makeWarmInputs(configuration: configuration, alreadyActive: false)
+      do {
+        try performWarm(configuration: configuration, inputs: inputs)
+      } catch {
+        log.error("Failed to warm engine: \(error, privacy: .public)")
+        hardStop()
+        owner.eventSubject.send(AudioIOEvent.recordingFailed)
+        throw error
+      }
+    }
+
+    /// Nonisolated core of `warm`. Performs all blocking bring-up work — audio
+    /// session configuration, engine-control-queue graph mutations, buffer
+    /// allocation, and file open — without touching the main actor.
+    ///
+    /// The caller is responsible for `@MainActor` failure cleanup (`hardStop()` +
+    /// `recordingFailed`); this function never calls them itself.
+    /// Cheap, side-effect-free validation of a recording configuration.
+    ///
+    /// Runs *before* the audio-session delegate is activated (in both the public
+    /// `warm()` path and the `startRecording` PREP hop), so an invalid
+    /// configuration never activates the session or emits `recordingFailed`.
+    /// Mirrors the guards performed at the top of ``performWarm`` /
+    /// ``performWarmSystemAudio``; those re-run cheaply and remain authoritative.
+    /// Original error types are preserved.
+    nonisolated func validateRecordingConfiguration(
+      _ configuration: RecordingConfiguration,
+    ) throws(RecordingError) {
       #if os(macOS)
         if case .systemAudio(let systemInput) = configuration.input {
-          try warmSystemAudio(configuration: configuration, systemInput: systemInput)
+          // System audio is mono/stereo only — reject early, before the HAL.
+          let requestedChannels = systemInput.format.channels.count
+          guard requestedChannels >= 1, requestedChannels <= 2 else {
+            throw RecordingError.unsupportedChannelCount(requested: requestedChannels, maximum: 2)
+          }
+          try validateEncoderCompatibility(for: configuration)
+          guard configuration.processingFormat != nil else {
+            throw RecordingError.invalidConfiguration(details: "(processing format)")
+          }
+          return
+        }
+      #endif
+      try validateRecordingChannelCapacity(for: configuration)
+      try validateEncoderCompatibility(for: configuration)
+
+      guard let processingFormat = configuration.processingFormat else {
+        throw RecordingError.invalidConfiguration(details: "(processing format)")
+      }
+
+      let sampleRate = Int(processingFormat.sampleRate)
+      let channelCount = Int(processingFormat.channelCount)
+      guard sampleRate > 0, channelCount > 0 else {
+        throw RecordingError.session(
+          .notReady(details: "Invalid format: \(sampleRate)Hz, \(channelCount)ch"),
+        )
+      }
+      guard sampleRate < Int.max / channelCount / 2 else {
+        throw RecordingError.hardwareNotSupported
+      }
+      try validateRecordingChannelCapacity(channelCount: channelCount)
+    }
+
+    nonisolated func performWarm(
+      configuration: RecordingConfiguration,
+      inputs: WarmInputs,
+    ) throws(RecordingError) {
+      guard !inputs.alreadyActive else {
+        return
+      }
+      #if os(macOS)
+        if case .systemAudio(let systemInput) = configuration.input {
+          try performWarmSystemAudio(
+            configuration: configuration,
+            systemInput: systemInput,
+            inputs: inputs,
+          )
           return
         }
       #endif
@@ -433,6 +577,9 @@
       }
       try validateRecordingChannelCapacity(channelCount: channelCount)
 
+      // A reconfigure (different already-warmed config) is handled by the caller
+      // on the main actor before offloading, so by the time we run here either no
+      // config is staged or it matches `configuration`.
       if let existing = owner.state[locked: \.recordingConfiguration] {
         if configuration == existing {
           log.info("engine already warmed")
@@ -440,8 +587,6 @@
           owner.recordingFirstHostTimeAtomic.store(0, ordering: .relaxed)
           owner.recordingFirstSourceSampleTimeAtomic.store(Int64.min, ordering: .relaxed)
           return
-        } else {
-          hardStop()
         }
       }
 
@@ -455,54 +600,55 @@
         }
       }
 
-      do throws(RecordingError) {
-        log.info("warming with config: \(configuration, privacy: .public)")
-        do {
-          try owner.configureAudioSession(for: configuration)
-        } catch let sessionError {
-          throw RecordingError.session(sessionError)
-        }
-
-        owner.recordingSampleTimeAtomic.store(0, ordering: .relaxed)
-        owner.recordingFirstHostTimeAtomic.store(0, ordering: .relaxed)
-        owner.recordingFirstSourceSampleTimeAtomic.store(Int64.min, ordering: .relaxed)
-
-        let tapResult = try owner.reinstallTap(
-          configuration: configuration,
-          processingFormat: processingFormat,
-          stopEngine: false,
-        )
-
-        let audioBuffers = makeAudioBuffers(sampleRate: sampleRate, channelCount: channelCount)
-        let receiverBuffers = makeAudioBuffers(sampleRate: sampleRate, channelCount: channelCount)
-        let timingCapacity = max(
-          64,
-          Int(ceil(Double(sampleRate) / Double(tapResult.tapConfiguration.bufferSize))) * 4,
-        )
-        let receiverTiming = SPSCRingBuffer<TimingPacket>(capacity: timingCapacity)
-
-        let (url, protection): (URL, OutputFileProtection?) = try owner.resolveOutputURL(
+      log.info("warming with config: \(configuration, privacy: .public)")
+      do {
+        try owner.configureAudioSession(
           for: configuration,
-          allowExplicitFile: true,
+          sessionConfiguration: inputs.sessionConfiguration,
         )
-        let writer = try owner.makeRecordingWriter(url: url, configuration: configuration)
-        owner.applyFileProtectionIfNeeded(protection, to: url)
-
-        owner.state {
-          $0.recordingWriter = writer
-          $0.recordingURL = url
-          $0.audioBuffers = audioBuffers
-          $0.receiverBuffers = receiverBuffers
-          $0.receiverTiming = receiverTiming
-          $0.recordingConfiguration = configuration
-        }
-        owner.applyTapInstallResult(tapResult, processingFormat: processingFormat)
-      } catch {
-        log.error("Failed to warm engine: \(error, privacy: .public)")
-        hardStop()
-        owner.eventSubject.send(AudioIOEvent.recordingFailed)
-        throw error
+      } catch let sessionError {
+        throw RecordingError.session(sessionError)
       }
+
+      owner.recordingSampleTimeAtomic.store(0, ordering: .relaxed)
+      owner.recordingFirstHostTimeAtomic.store(0, ordering: .relaxed)
+      owner.recordingFirstSourceSampleTimeAtomic.store(Int64.min, ordering: .relaxed)
+
+      let tapResult = try owner.reinstallTap(
+        configuration: configuration,
+        processingFormat: processingFormat,
+        stopEngine: false,
+        overrideResult: inputs.reinstallTapOverrideResult,
+      )
+
+      let audioBuffers = makeAudioBuffers(sampleRate: sampleRate, channelCount: channelCount)
+      let receiverBuffers = makeAudioBuffers(sampleRate: sampleRate, channelCount: channelCount)
+      let timingCapacity = max(
+        64,
+        Int(ceil(Double(sampleRate) / Double(tapResult.tapConfiguration.bufferSize))) * 4,
+      )
+      let receiverTiming = SPSCRingBuffer<TimingPacket>(capacity: timingCapacity)
+
+      let (url, protection): (URL, OutputFileProtection?) = try owner.resolveOutputURL(
+        for: configuration,
+        allowExplicitFile: true,
+      )
+      let writer = try owner.makeRecordingWriter(
+        url: url,
+        configuration: configuration,
+        writerBackend: inputs.writerBackend,
+      )
+      owner.applyFileProtectionIfNeeded(protection, to: url)
+
+      owner.state {
+        $0.recordingWriter = writer
+        $0.recordingURL = url
+        $0.audioBuffers = audioBuffers
+        $0.receiverBuffers = receiverBuffers
+        $0.receiverTiming = receiverTiming
+        $0.recordingConfiguration = configuration
+      }
+      owner.applyTapInstallResult(tapResult, processingFormat: processingFormat)
     }
 
     func makeAudioBuffers(
@@ -557,8 +703,7 @@
       }
     }
 
-    @MainActor
-    func validateEncoderCompatibility(
+    nonisolated func validateEncoderCompatibility(
       for configuration: RecordingConfiguration,
     ) throws(RecordingError) {
       let fileFormat = configuration.outputConfiguration.fileFormat
@@ -586,6 +731,10 @@
         configuration: configuration,
         processingFormat: processingFormat,
         stopEngine: false,
+        overrideResult: owner.reinstallTapOverrideResult(
+          configuration: configuration,
+          processingFormat: processingFormat,
+        ),
       )
       owner.applyTapInstallResult(result, processingFormat: processingFormat)
 

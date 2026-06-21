@@ -44,6 +44,14 @@
             configuration: configuration,
           )
         }
+      } else if owner.isStartingRecording {
+        // A stop requested mid-bring-up cannot tear down the half-built engine
+        // inline, and `isRecording` is still `false`, so the usual stop task
+        // would be a no-op and the stop would be silently lost. Record the abort;
+        // the start path's PUBLISH-hop reconcile performs the `gracefulStop()`.
+        // This is a user stop, so no `recordingFailed` event is emitted.
+        owner.startAbortRequested = true
+        return
       } else if owner.isRecording {
         owner.reconciliationTask = MainActorOwnedWork { [weak owner] in
           guard let owner else { return }
@@ -128,6 +136,7 @@
       configuration: RecordingConfiguration,
     ) async throws(RecordingError) -> URL {
       do {
+        // (a) Stop any active player on the engine-control queue (unchanged).
         let shouldStopPlayer = await owner.withEngineControlQueue { [weak owner] in
           guard let owner else { return false }
           return unsafe owner.player.isPlaying
@@ -138,14 +147,92 @@
             unsafe owner.player.stop()
           }
         }
-        return try await MainActor.run {
+
+        // (b) MainActor PREP hop: publish main-isolated teardown/state changes and
+        // capture the values the off-main warm path needs.
+        let inputs: RecordingEngineRuntime.WarmInputs = try await MainActor.run {
           if shouldStopPlayer || owner.playback != nil {
             owner.playbackState[locked: \.playbackInstance] = nil
             owner.setPlayback(nil)
           }
           owner.lastWriteFailure = nil
           owner.lastRecordingConfiguration = configuration
-          try owner.warm(configuration: configuration)
+
+          // If a *different* configuration is already warmed, tear it down here on
+          // the main actor so the nonisolated warm core never needs `hardStop()`.
+          if let existing = owner.state[locked: \.recordingConfiguration],
+            existing != configuration
+          {
+            owner.hardStop()
+          }
+
+          let alreadyActive = owner.isRecording || owner.isPlaying
+
+          // Activate the `@MainActor` audio-session delegate here (it cannot run on
+          // the off-main warm path). Skipped when already active, mirroring the
+          // early-return guard in `performWarm`.
+          if !alreadyActive {
+            do throws(SessionError) {
+              try owner.activateAudioSessionDelegate(owner.audioSessionDelegate)
+            } catch {
+              throw RecordingError.session(error)
+            }
+          }
+
+          // Open the bring-up window only AFTER the fallible main-actor prep
+          // (delegate activation) has succeeded, so an early throw can never leave
+          // `isStartingRecording` stuck `true`. The remainder of this closure
+          // cannot throw. From here, teardown handlers and stop paths defer rather
+          // than tear down the half-built engine inline (see
+          // `AIOEngine.isStartingRecording`); reset the abort signal/flags.
+          owner.isStartingRecording = true
+          owner.startAbortRequiresFailureEvent = false
+          owner.startAbortRequested = false
+
+          return owner.recordingEngineRuntime.makeWarmInputs(
+            configuration: configuration,
+            alreadyActive: alreadyActive,
+          )
+        }
+
+        do {
+          // (c) OFF-MAIN: blocking bring-up + engine/backend start, never on main.
+          try owner.recordingEngineRuntime.performWarm(
+            configuration: configuration,
+            inputs: inputs,
+          )
+
+          if let backend = owner.state[locked: \.activeBackend] {
+            // System audio: start the Core Audio capture backend + source pump
+            // instead of the AVAudioEngine.
+            try backend.start()
+          } else {
+            let startResult = await owner.withEngineControlQueueResult { [weak owner] in
+              guard let owner else { return }
+              try unsafe owner.engine.start()
+            }
+            if case .failure(let error) = startResult {
+              throw RecordingError.session(.engineStartFailed(error: ErrorContext(error)))
+            }
+          }
+        } catch {
+          // (d) Any bring-up/start failure: perform `@MainActor` cleanup, rethrow.
+          await MainActor.run {
+            // Close the bring-up window before tearing down so handlers stop
+            // deferring; the failed engine is being torn down here regardless.
+            owner.isStartingRecording = false
+            owner.hardStop()
+            owner.eventSubject.send(AudioIOEvent.recordingFailed)
+          }
+          throw error
+        }
+
+        // (e) MainActor PUBLISH hop: read staged state, validate, emit events,
+        // start the writer/receiver loops, and flip `isRecording`.
+        let url = try await MainActor.run { () throws(RecordingError) -> URL in
+          // Close the bring-up window: from here on, teardown/stop paths act
+          // inline again (the engine is being published this turn).
+          owner.isStartingRecording = false
 
           let (buffers, writer, url, receiverBuffers, receiverTiming) = owner.state {
             (
@@ -158,30 +245,19 @@
             let writeWriter = writer,
             let url
           else {
+            owner.hardStop()
+            owner.eventSubject.send(AudioIOEvent.recordingFailed)
             throw RecordingError.invalidConfiguration(
               details: "state after warm(configuration:) was invalid",
             )
           }
-          if let backend = owner.state[locked: \.activeBackend] {
-            // System audio: start the Core Audio capture backend + source pump
-            // instead of the AVAudioEngine.
-            do {
-              try backend.start()
-            } catch {
-              owner.hardStop()
-              throw error
-            }
-          } else {
-            let startResult = owner.runOnEngineControlQueueResult { [weak owner] in
-              guard let owner else { return }
-              try unsafe owner.engine.start()
-            }
-            if case .failure(let error) = startResult {
-              throw RecordingError.session(.engineStartFailed(error: ErrorContext(error)))
-            }
-          }
           let fileFormat = configuration.outputConfiguration.fileFormat.rawValue
-          owner.eventSubject.send(AudioIOEvent.recordingStarted(url: url, format: fileFormat))
+          // If a teardown/stop already aborted this bring-up while we were
+          // off-main, suppress `recordingStarted` — the reconcile below tears the
+          // engine down, so emitting "started" then "failed" would be spurious.
+          if !owner.startAbortRequested {
+            owner.eventSubject.send(AudioIOEvent.recordingStarted(url: url, format: fileFormat))
+          }
           owner.startFileWriteLoop(flushing: buffers, of: processingFormat, to: writeWriter)
           if let receiverBuffers, let receiverTiming {
             owner.startReceiverLoop(
@@ -193,6 +269,30 @@
           owner.isRecording = true
           return url
         }
+
+        // Reconcile a stop/interruption that arrived mid-bring-up: a teardown
+        // handler or stop path set `startAbortRequested = true` while we were
+        // deferring (it could not tear down the half-built engine). Honour it
+        // now so the freshly-started engine never stays running behind the
+        // framework's back. NB: this is gated on `startAbortRequested`, not
+        // `wantsRecording`, because the direct start API runs with
+        // `wantsRecording == false` and must not self-abort.
+        let abort: (active: Bool, emitFailure: Bool) = await MainActor.run {
+          guard owner.startAbortRequested else { return (false, false) }
+          owner.startAbortRequested = false
+          let emitFailure = owner.startAbortRequiresFailureEvent
+          owner.startAbortRequiresFailureEvent = false
+          return (true, emitFailure)
+        }
+        if abort.active {
+          await owner.gracefulStop()
+          if abort.emitFailure {
+            await MainActor.run {
+              owner.eventSubject.send(AudioIOEvent.recordingFailed)
+            }
+          }
+        }
+        return url
       } catch let error as RecordingError {
         throw error
       } catch {
@@ -251,6 +351,16 @@
 
     @MainActor
     func stopRecording() async throws(RecordingError) -> URL {
+      // A direct stop while a bring-up is in flight cannot finalize a recording
+      // (none exists yet) and must not tear the half-built engine down inline.
+      // Signal the abort so the start path's PUBLISH-hop reconcile performs the
+      // `gracefulStop()`, then report `.notRecording` (the contract for "stop
+      // when not recording"). This is a user stop, so no `recordingFailed`.
+      if owner.isStartingRecording {
+        owner.wantsRecording = false
+        owner.startAbortRequested = true
+        throw RecordingError.notRecording
+      }
       guard let url = owner.state[locked: \.recordingURL], owner.isRecording else {
         throw RecordingError.notRecording
       }
@@ -314,7 +424,11 @@
         for: configuration,
         allowExplicitFile: false,
       )
-      let newWriter = try owner.makeRecordingWriter(url: newURL, configuration: configuration)
+      let newWriter = try owner.makeRecordingWriter(
+        url: newURL,
+        configuration: configuration,
+        writerBackend: owner.writerBackend,
+      )
       owner.applyFileProtectionIfNeeded(protection, to: newURL)
 
       let sampleRate = Int(format.sampleRate)

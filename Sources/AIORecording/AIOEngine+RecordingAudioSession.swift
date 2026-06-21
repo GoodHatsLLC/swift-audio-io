@@ -12,20 +12,31 @@
   private let recordingSessionLog = SystemLog.make()
 
   extension AIOEngine {
+    /// Activates the audio session via the (optional) `@MainActor` delegate.
+    ///
+    /// The delegate protocol is `@MainActor`, so activation cannot run on the
+    /// off-main warm path. Callers perform this hop on the main actor *before*
+    /// offloading the remaining (nonisolated) session configuration to
+    /// ``configureAudioSession(for:sessionConfiguration:)``.
     @MainActor
-    package func configureAudioSession(
-      for configuration: RecordingConfiguration,
+    package func activateAudioSessionDelegate(
+      _ sessionDelegate: (any AudioSessionDelegate)?,
     ) throws(SessionError) {
       do {
-        try audioSessionDelegate?.setAudioSessionActive(true)
+        try sessionDelegate?.setAudioSessionActive(true)
       } catch {
         throw .operationFailed(operation: .setActive, error: ErrorContext(error))
       }
+    }
 
+    package nonisolated func configureAudioSession(
+      for configuration: RecordingConfiguration,
+      sessionConfiguration: AudioSessionConfiguration,
+    ) throws(SessionError) {
       #if os(iOS)
         let session = AVAudioSession.sharedInstance()
 
-        try applyAudioSessionConfiguration(session, configuration: recordingSessionConfiguration)
+        try applyAudioSessionConfiguration(session, configuration: sessionConfiguration)
 
         do {
           try session.setPreferredSampleRate(configuration.format.sampleRate.hz)

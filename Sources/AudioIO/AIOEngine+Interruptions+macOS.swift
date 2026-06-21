@@ -28,6 +28,10 @@
           configuration: config,
           processingFormat: processingFormat,
           stopEngine: true,
+          overrideResult: reinstallTapOverrideResult(
+            configuration: config,
+            processingFormat: processingFormat,
+          ),
         )
         applyTapInstallResult(result, processingFormat: processingFormat)
         let interruption = RecordingInterruption.routeChangeContinuing(
@@ -56,6 +60,18 @@
     public func handleMediaServicesLost() async {
       let shouldRestartRecording = isRecording || wantsRecording
       let configuration = state[locked: \.recordingConfiguration] ?? lastRecordingConfiguration
+
+      // A bring-up is in flight: do not reset the engine here — it would race
+      // `performWarm` into an orphaned running engine. Abort the start (the
+      // PUBLISH-hop reconcile tears the engine down) and stage the restart so
+      // `handleMediaServicesReset` replays it.
+      if isStartingRecording {
+        pendingRecordingRestart = shouldRestartRecording ? configuration : nil
+        wantsRecording = false
+        startAbortRequested = true
+        startAbortRequiresFailureEvent = true
+        return
+      }
 
       pendingPlaybackResume = capturePlaybackResumeState()
       if pendingPlaybackResume != nil {
@@ -95,6 +111,18 @@
       reconciliationTask = nil
       let interruption = RecordingInterruption.stoppedByInterruption(reason: reason)
       eventSubject.send(AudioIOEvent.recordingInterruption(interruption))
+
+      // If a bring-up is in flight, defer teardown to the start path's
+      // PUBLISH-hop reconcile (see `AIOEngine.isStartingRecording`); tearing the
+      // half-built engine down inline would race `performWarm` into an orphaned
+      // running engine. The user-facing interruption event above is still sent.
+      if isStartingRecording {
+        wantsRecording = false
+        startAbortRequested = true
+        startAbortRequiresFailureEvent = true
+        return
+      }
+
       await gracefulStop()
       eventSubject.send(AudioIOEvent.recordingFailed)
     }

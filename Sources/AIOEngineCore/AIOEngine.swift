@@ -299,6 +299,50 @@
     /// A Boolean value that indicates whether the engine is currently recording.
     @MainActor public package(set) var isRecording: Bool = false
 
+    /// Indicates a recording bring-up is in flight: it is `true` from the
+    /// `startRecording` PREP hop until the PUBLISH hop (or a failure) completes.
+    ///
+    /// Bring-up was made non-atomic when recording-start moved off the main
+    /// actor: the start path now yields the main actor at each `await` while
+    /// `wantsRecording == true` and `isRecording == false`. During that window a
+    /// `@MainActor` teardown handler (`handleInterruption(.began)`,
+    /// `handleRouteChange`, `handleMediaServicesLost`,
+    /// `handleUnrecoverableInterruption`) or a stop path
+    /// (`setDesiredRecordingState(false)`/`stopRecording`) could interleave and
+    /// either tear down the half-built engine concurrently with `performWarm`
+    /// (orphaning a running engine / IOProc, or double-teardown) or be silently
+    /// dropped (a stop issued mid-bring-up is a no-op because `isRecording` is
+    /// still `false`).
+    ///
+    /// Semantics of the guard:
+    /// - Teardown handlers and stop paths that observe `isStartingRecording ==
+    ///   true` MUST NOT tear down inline. They record the abort by setting
+    ///   `startAbortRequested = true` (and still emit any required user-facing
+    ///   interruption event), then return early — deferring the actual
+    ///   `gracefulStop()`.
+    /// - At the end of the PUBLISH hop (after `isRecording = true`), the start
+    ///   path reconciles: if `startAbortRequested == true`, it immediately
+    ///   `gracefulStop()`s the freshly-started engine so it never stays running
+    ///   behind the framework's back, emitting `recordingFailed` only when the
+    ///   abort came from an interruption (not a user stop).
+    @MainActor package var isStartingRecording: Bool = false
+
+    /// Set by a teardown handler or stop path that aborts an in-flight bring-up
+    /// while `isStartingRecording == true`. The PUBLISH-hop reconcile honours an
+    /// abort only when this is `true` — deliberately NOT when
+    /// `wantsRecording == false`, because the direct `startRecording(configuration:)`
+    /// API legitimately runs with `wantsRecording == false` and must not be
+    /// mistaken for an abort. Reset at the start of each bring-up (PREP hop).
+    @MainActor package var startAbortRequested: Bool = false
+
+    /// Set by a teardown handler (interruption / route-change / media-services
+    /// loss) that aborts an in-flight bring-up via `isStartingRecording`. Tells
+    /// the PUBLISH-hop reconcile to emit `recordingFailed` after the deferred
+    /// `gracefulStop()`. A plain user stop leaves this `false`, so no failure
+    /// event is emitted for a user-requested stop. Reset at the start of each
+    /// bring-up (PREP hop).
+    @MainActor package var startAbortRequiresFailureEvent: Bool = false
+
     /// The user's desired recording state.
     @MainActor public package(set) var wantsRecording: Bool = false
 

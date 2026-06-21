@@ -141,7 +141,11 @@
           .appendingPathComponent("RecordingChannelCapacityTests-\(UUID().uuidString)")
           .appendingPathExtension(configuration.fileExtension)
         defer { try? FileManager.default.removeItem(at: outputURL) }
-        let writer = try engine.makeRecordingWriter(url: outputURL, configuration: configuration)
+        let writer = try engine.makeRecordingWriter(
+          url: outputURL,
+          configuration: configuration,
+          writerBackend: engine.writerBackend,
+        )
 
         let result = AIOEngine.flushChunk(
           size: frameCount,

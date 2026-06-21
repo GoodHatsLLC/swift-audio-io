@@ -25,8 +25,7 @@
     }
 
     #if os(iOS)
-      @MainActor
-      package func applyAudioSessionConfiguration(
+      package nonisolated func applyAudioSessionConfiguration(
         _ session: AVAudioSession,
         configuration: AudioSessionConfiguration,
       ) throws(SessionError) {

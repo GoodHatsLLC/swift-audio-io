@@ -58,6 +58,10 @@
           configuration: config,
           processingFormat: processingFormat,
           stopEngine: true,
+          overrideResult: reinstallTapOverrideResult(
+            configuration: config,
+            processingFormat: processingFormat,
+          ),
         )
 
         applyTapInstallResult(result, processingFormat: processingFormat)
@@ -151,6 +155,19 @@
       let shouldRestartRecording = isRecording || wantsRecording
       let configuration = state[locked: \.recordingConfiguration] ?? lastRecordingConfiguration
 
+      // A bring-up is in flight: do not reset the engine here — it would race
+      // `performWarm` into an orphaned running engine. Abort the start (the
+      // PUBLISH-hop reconcile tears the engine down) and stage the restart so
+      // `handleMediaServicesReset` replays it, exactly as for an established
+      // recording.
+      if isStartingRecording {
+        pendingRecordingRestart = shouldRestartRecording ? configuration : nil
+        wantsRecording = false
+        startAbortRequested = true
+        startAbortRequiresFailureEvent = true
+        return
+      }
+
       pendingPlaybackResume = capturePlaybackResumeState()
       if pendingPlaybackResume != nil {
         await stopPlayback()
@@ -221,6 +238,19 @@
 
       let interruption = RecordingInterruption.stoppedByInterruption(reason: reason)
       eventSubject.send(AudioIOEvent.recordingInterruption(interruption))
+
+      // If a bring-up is in flight, the engine is half-built and tearing it down
+      // inline would race `performWarm` into an orphaned running engine. Defer:
+      // signal the abort (the start path's PUBLISH-hop reconcile performs the
+      // `gracefulStop()` + `recordingFailed`). The user-facing interruption
+      // event above is still emitted.
+      if isStartingRecording {
+        wantsRecording = false
+        startAbortRequested = true
+        startAbortRequiresFailureEvent = true
+        return
+      }
+
       await gracefulStop()
       eventSubject.send(AudioIOEvent.recordingFailed)
     }

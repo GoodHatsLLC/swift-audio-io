@@ -12,7 +12,7 @@
   private let tapSetupLog = SystemLog.make()
 
   extension AIOEngine {
-    func makeTapConversionArtifacts(
+    nonisolated func makeTapConversionArtifacts(
       inputFormat: AVAudioFormat,
       processingFormat: AVAudioFormat,
       tapBufferSize: AVAudioFrameCount,
@@ -45,16 +45,61 @@
     /// This is the single method used by `warm()`, route change handling,
     /// and tap interval updates. All engine graph mutations happen on the
     /// engine control queue in a single dispatch.
+    #if DEBUG
+      /// Resolves the `@MainActor` test tap-install override (if any) on the main
+      /// actor, returning its transferable result so the nonisolated warm path can
+      /// honour the seam without invoking a `@MainActor` closure off-main.
+      @MainActor
+      func resolveReinstallTapOverrideResult(
+        configuration: RecordingConfiguration,
+        processingFormat: AVAudioFormat,
+      ) -> Transferring<Result<TapInstallResult, RecordingError>>? {
+        guard let override = testReinstallTapOverride else { return nil }
+        let result: Result<TapInstallResult, RecordingError>
+        do {
+          result = .success(try override(configuration, processingFormat))
+        } catch {
+          result = .failure(error)
+        }
+        return Transferring(result)
+      }
+    #endif
+
+    /// Builds the `overrideResult` argument for ``reinstallTap`` from the
+    /// `@MainActor` test seam. Returns `nil` in release builds (the seam only
+    /// exists under `#if DEBUG`). Every `@MainActor` caller of ``reinstallTap``
+    /// (warm path, both route-change handlers, and tap-interval changes) routes
+    /// through this single helper so none of them bypass the seam.
     @MainActor
-    package func reinstallTap(
+    package func reinstallTapOverrideResult(
+      configuration: RecordingConfiguration,
+      processingFormat: AVAudioFormat,
+    ) -> Transferring<Result<TapInstallResult, RecordingError>>? {
+      #if DEBUG
+        return resolveReinstallTapOverrideResult(
+          configuration: configuration,
+          processingFormat: processingFormat,
+        )
+      #else
+        return nil
+      #endif
+    }
+
+    package nonisolated func reinstallTap(
       configuration: RecordingConfiguration,
       processingFormat: AVAudioFormat,
       stopEngine: Bool,
+      overrideResult: Transferring<Result<TapInstallResult, RecordingError>>? = nil,
     ) throws(RecordingError) -> TapInstallResult {
       #if DEBUG
-        if let override = testReinstallTapOverride {
-          return try override(configuration, processingFormat)
+        if let overrideResult {
+          switch overrideResult.value {
+          case .success(let result): return result
+          case .failure(let error): throw error
+          }
         }
+      #else
+        _ = overrideResult
       #endif
 
       let installResult = runOnEngineControlQueueResult {

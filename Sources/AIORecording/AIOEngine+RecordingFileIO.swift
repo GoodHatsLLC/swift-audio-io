@@ -48,8 +48,7 @@
       }
     }
 
-    @MainActor
-    package func resolveOutputURL(
+    package nonisolated func resolveOutputURL(
       for configuration: RecordingConfiguration,
       allowExplicitFile: Bool,
     ) throws(RecordingError) -> (url: URL, protection: OutputFileProtection?) {
@@ -168,10 +167,10 @@
       }
     }
 
-    @MainActor
-    package func makeRecordingWriter(
+    package nonisolated func makeRecordingWriter(
       url: URL,
       configuration: RecordingConfiguration,
+      writerBackend: WriterBackend,
     ) throws(RecordingError) -> any RecordingFileWriter {
       guard let fileSettings = configuration.fileSettings else {
         throw RecordingError.invalidConfiguration(details: "(file format settings)")
@@ -224,8 +223,7 @@
       }
     }
 
-    @MainActor
-    package func applyFileProtectionIfNeeded(
+    package nonisolated func applyFileProtectionIfNeeded(
       _ protection: OutputFileProtection?,
       to url: URL,
     ) {

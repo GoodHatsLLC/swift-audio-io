@@ -238,7 +238,11 @@
           applyFileProtectionIfNeeded(resolved.protection, to: url)
         }
 
-        let writer = try makeRecordingWriter(url: url, configuration: configuration)
+        let writer = try makeRecordingWriter(
+          url: url,
+          configuration: configuration,
+          writerBackend: writerBackend,
+        )
 
         let sampleRate = Int(processingFormat.sampleRate)
         let channelCount = Int(processingFormat.channelCount)
