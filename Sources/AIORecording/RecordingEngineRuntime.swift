@@ -596,6 +596,29 @@
 
     @MainActor
     func hardStop() {
+      tearDownEngineGraphForHardStop()
+      let hasActiveWriter = owner.writerSession != nil || !owner.drainingWriterSessions.isEmpty
+      if let current = owner.writerSession {
+        enqueueDrain(for: current)
+        owner.writerSession = nil
+      }
+      cleanUp(closeFile: !hasActiveWriter)
+    }
+
+    /// Tears down the `AVAudioEngine` tap/graph for `hardStop()`. Split out so the
+    /// same `#if DEBUG` test seam used by `gracefulStop()` can replace the real engine
+    /// interaction (which crashes the iOS Simulator audio HAL) while writer drain and
+    /// cleanup still run.
+    @MainActor
+    private func tearDownEngineGraphForHardStop() {
+      #if DEBUG
+        if let override = owner.testEngineTeardownOverride {
+          override()
+          _ = owner.state.consume(\.installedTapBus)
+          return
+        }
+      #endif
+
       if owner.state[locked: \.activeBackend] == nil {
         let tapBus = owner.state.consume(\.installedTapBus)
         let busesToRemove = Array(Set([tapBus, 0].compactMap(\.self)))
@@ -618,12 +641,6 @@
         // there is no AVAudioEngine input tap to remove.
         _ = owner.state.consume(\.installedTapBus)
       }
-      let hasActiveWriter = owner.writerSession != nil || !owner.drainingWriterSessions.isEmpty
-      if let current = owner.writerSession {
-        enqueueDrain(for: current)
-        owner.writerSession = nil
-      }
-      cleanUp(closeFile: !hasActiveWriter)
     }
 
     @MainActor
@@ -668,7 +685,7 @@
     @MainActor
     private func tearDownEngineGraphForGracefulStop() {
       #if DEBUG
-        if let override = owner.testGracefulStopEngineTeardownOverride {
+        if let override = owner.testEngineTeardownOverride {
           override()
           // Keep state consistent with the real teardown path.
           _ = owner.state.consume(\.installedTapBus)

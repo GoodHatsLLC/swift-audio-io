@@ -191,10 +191,11 @@
         setReinstallTapOverride(nil)
       }
 
-      /// Bypasses the real `AVAudioEngine` graph teardown inside `gracefulStop()`,
-      /// which crashes the iOS Simulator audio HAL. Recording stop/cleanup and the
-      /// `isRecording`/`wantsRecording` transitions still run, so interruption and
-      /// resume decision logic can be exercised without a real audio device.
+      /// Bypasses the real `AVAudioEngine` graph teardown inside the recording stop
+      /// paths (`gracefulStop()` and `hardStop()`), which crashes the iOS Simulator
+      /// audio HAL. Recording stop/cleanup and the `isRecording`/`wantsRecording`
+      /// transitions still run, so interruption, resume, and stop logic can be
+      /// exercised without a real audio device.
       ///
       /// - Parameter onTeardown: Optional probe invoked in place of the real teardown,
       ///   letting a test assert the teardown path was reached.
@@ -202,12 +203,12 @@
       public func debugBypassEngineTeardownForTesting(
         onTeardown: (@MainActor @Sendable () -> Void)? = nil,
       ) {
-        testGracefulStopEngineTeardownOverride = { onTeardown?() }
+        testEngineTeardownOverride = { onTeardown?() }
       }
 
       @MainActor
       public func debugClearEngineTeardownOverrideForTesting() {
-        testGracefulStopEngineTeardownOverride = nil
+        testEngineTeardownOverride = nil
       }
 
       /// Starts a recording session without touching AVAudioSession or AVAudioEngine.

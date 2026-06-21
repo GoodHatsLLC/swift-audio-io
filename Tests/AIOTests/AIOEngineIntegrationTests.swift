@@ -16,6 +16,7 @@
     @Test
     func `recording writes file`() async throws {
       let engine = AIOEngine()
+      await engine.debugBypassEngineTeardownForTesting()
       let configuration = makeConfiguration()
 
       let url = try await engine.startTestRecording(configuration: configuration)
@@ -34,6 +35,7 @@
     @Test
     func `recording delivers receiver buffers`() async throws {
       let engine = AIOEngine()
+      await engine.debugBypassEngineTeardownForTesting()
       let configuration = makeConfiguration()
       let receiver = CapturingReceiver()
 
@@ -86,6 +88,7 @@
     @Test
     func `rotate recording file emits two files`() async throws {
       let engine = AIOEngine()
+      await engine.debugBypassEngineTeardownForTesting()
       let outputDirectory = FileManager.default.temporaryDirectory
         .appendingPathComponent(
           "AIOEngineIntegrationTests-\(UUID().uuidString)", isDirectory: true,
@@ -186,6 +189,7 @@
     @Test
     func `stereo recording writes file`() async throws {
       let engine = AIOEngine()
+      await engine.debugBypassEngineTeardownForTesting()
       let configuration = makeStereoConfiguration()
 
       let url = try await engine.startTestRecording(configuration: configuration)
@@ -210,7 +214,11 @@
     @MainActor
     func `unsupported recording channel count fails before tap install`() async throws {
       let engine = AIOEngine()
-      let configuration = makeConfiguration(channels: .init(platform: 4))
+      engine.debugBypassEngineTeardownForTesting()
+      // 33 exceeds the runtime cap (`currentMaximumRecordingChannelCount` == 32,
+      // and .caf's per-format cap is also 32), so capacity validation rejects it
+      // before the tap is installed.
+      let configuration = makeConfiguration(channels: .init(platform: 33))
       var tapInstallAttempted = false
 
       engine.setReinstallTapOverride { _, _ throws(RecordingError) in
@@ -226,8 +234,8 @@
 
       switch engine.consumeLastRecordingStartFailure() {
       case .unsupportedChannelCount(let requested, let maximum):
-        #expect(requested == 4)
-        #expect(maximum == 2)
+        #expect(requested == 33)
+        #expect(maximum == 32)
       case let other:
         Issue.record("Expected unsupportedChannelCount, got \(String(describing: other))")
       }
@@ -259,6 +267,7 @@
     @Test
     func `fault injection stops recording when sample rate becomes unsupported`() async throws {
       let engine = AIOEngine()
+      await engine.debugBypassEngineTeardownForTesting()
       let configuration = makeConfiguration()
       let probe = RouteFaultProbe()
       let bridge = await probe.bridge(to: engine)
@@ -308,6 +317,7 @@
     @Test
     func `fault injection stops recording when input becomes unavailable`() async throws {
       let engine = AIOEngine()
+      await engine.debugBypassEngineTeardownForTesting()
       let configuration = makeConfiguration()
 
       let url = try await engine.startTestRecording(configuration: configuration)
@@ -341,6 +351,7 @@
     @Test
     func `fault injection continues recording and emits quality change`() async throws {
       let engine = AIOEngine()
+      await engine.debugBypassEngineTeardownForTesting()
       let configuration = makeConfiguration()
       let probe = RouteFaultProbe()
       let bridge = await probe.bridge(to: engine)
@@ -391,6 +402,7 @@
     @Test
     func `handle route change reconfigures tap when format appears unchanged`() async throws {
       let engine = AIOEngine()
+      await engine.debugBypassEngineTeardownForTesting()
       let configuration = makeConfiguration()
       let reinstallCalls = LockedCounter()
 
@@ -430,6 +442,7 @@
     @Test
     func `handle route change continues when tap reconfigure succeeds`() async throws {
       let engine = AIOEngine()
+      await engine.debugBypassEngineTeardownForTesting()
       let configuration = makeConfiguration()
       let probe = RouteFaultProbe()
       let reinstallCalls = LockedCounter()
@@ -484,6 +497,7 @@
     @Test
     func `handle route change stops when tap reconfigure fails`() async throws {
       let engine = AIOEngine()
+      await engine.debugBypassEngineTeardownForTesting()
       let configuration = makeConfiguration()
       let probe = RouteFaultProbe()
       let bridge = await probe.bridge(to: engine)

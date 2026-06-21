@@ -420,13 +420,14 @@
             TapInstallResult
         )?
 
-      /// Test hook: when set, `gracefulStop()` invokes this in place of the real
-      /// `AVAudioEngine` graph teardown (tap removal + `engine.stop()`), which crashes
-      /// the iOS Simulator audio HAL (`AURemoteIO -10851`). Everything else in
-      /// `gracefulStop` — writer drain, cleanup, and the `isRecording`/`wantsRecording`
-      /// transitions — still runs, so interruption and resume decision logic stays
-      /// under test without a real audio device.
-      @MainActor package var testGracefulStopEngineTeardownOverride:
+      /// Test hook: when set, the recording-engine teardown paths (`gracefulStop()`
+      /// and `hardStop()`) invoke this in place of the real `AVAudioEngine` graph
+      /// teardown (tap removal + `engine.stop()`/`reset()`), which crashes the iOS
+      /// Simulator audio HAL (`AURemoteIO -10851`). Everything else — writer drain,
+      /// cleanup, and the `isRecording`/`wantsRecording` transitions — still runs, so
+      /// interruption, resume, and stop logic stays under test without a real audio
+      /// device.
+      @MainActor package var testEngineTeardownOverride:
         (@MainActor () -> Void)?
     #endif
 
