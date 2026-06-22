@@ -288,6 +288,12 @@
       recordingInfrastructure.tapResizeRequestedFrames
     }
 
+    /// Engine-teardown serialization sentinel. See
+    /// ``RecordingInfrastructure/engineTearingDown`` for the full contract.
+    package var engineTearingDown: ManagedAtomic<Bool> {
+      recordingInfrastructure.engineTearingDown
+    }
+
     package var metrics: EngineMetrics {
       recordingInfrastructure.metrics
     }

@@ -439,6 +439,19 @@
     package let maxBufferSeconds: Double = 2.0
     package let tapErrorCode = ManagedAtomic<Int>(0)
     package let tapResizeRequestedFrames = ManagedAtomic<Int>(0)
+    /// Engine-teardown serialization sentinel.
+    ///
+    /// Set to `true` by a teardown (`gracefulStop()` / `hardStop()`) **before**
+    /// it enqueues its `engineControlQueue` teardown work, and cleared back to
+    /// `false` by a fresh bring-up (`performWarm` / `performWarmSystemAudio`)
+    /// from **on** the engine-control queue. A tap reinstall checks this flag at
+    /// the top of its on-queue body and bails before mutating the graph when a
+    /// teardown has superseded it — the engine-control queue being the only
+    /// point serialized against the teardown. This prevents a route-change /
+    /// tap-interval reinstall that lost the race to a concurrent stop from
+    /// reinstalling a live tap onto a torn-down/stopped graph. See
+    /// `docs/plans/2026-06-22-main-thread-citizen.md` (Chunk 0).
+    package let engineTearingDown = ManagedAtomic<Bool>(false)
     package let metrics = EngineMetrics()
     package let state: Synchronized<RecordingState> = .init(.init())
     package let tapSnapshotLock = Mut<TapSnapshot>(.empty)

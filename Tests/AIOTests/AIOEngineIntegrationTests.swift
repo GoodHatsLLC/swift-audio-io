@@ -540,6 +540,71 @@
       #expect(captured == true)
     }
 
+    /// Chunk 0 regression: a route-change tap reinstall that reaches the engine
+    /// control queue *after* a teardown raised the `engineTearingDown` sentinel
+    /// must bail on the queue — leaving no tap installed and emitting no
+    /// `routeChangeContinuing` event — instead of reinstalling a live tap onto a
+    /// graph the stop is tearing down.
+    @Test
+    func `route change reinstall bails when engine is tearing down`() async throws {
+      let engine = AIOEngine()
+      await engine.debugBypassEngineTeardownForTesting()
+      let configuration = makeConfiguration()
+      let probe = RouteFaultProbe()
+      let bridge = await probe.bridge(to: engine)
+      defer { bridge.cancel() }
+
+      let url = try await engine.startTestRecording(configuration: configuration)
+      defer { try? FileManager.default.removeItem(at: url) }
+
+      // No tap is installed by `startTestRecording`; a successful reinstall would
+      // set `installedTapBus`. Confirm the precondition.
+      #expect(await engine.debugInstalledTapBusForTesting() == nil)
+
+      // Simulate a teardown that has raised the sentinel (as `gracefulStop()` /
+      // `hardStop()` do) before its on-queue work cleared state.
+      await MainActor.run { engine.debugSetEngineTearingDownForTesting(true) }
+
+      // An override that WOULD reinstall (and resurrect `installedTapBus`) unless
+      // the on-queue teardown guard bails first.
+      let routeFormat = try #require(
+        AVAudioFormat(standardFormatWithSampleRate: 16000, channels: 2),
+      )
+      await MainActor.run {
+        engine.setReinstallTapOverride { _, processingFormat throws(RecordingError) in
+          try makeMockTapInstallResult(
+            tapFormat: routeFormat, processingFormat: processingFormat,
+          )
+        }
+      }
+
+      let event = AudioRouteChangeEvent(
+        reason: .newDeviceAvailable,
+        previousRoute: nil,
+        session: AVAudioSession.sharedInstance(),
+      )
+      await engine.handleRouteChange(event: event)
+
+      await MainActor.run { engine.setReinstallTapOverride(nil) }
+
+      // The reinstall bailed on the queue: no tap installed, recording still
+      // active (the stop that raised the sentinel owns teardown), and no
+      // `routeChangeContinuing` event was emitted.
+      #expect(await engine.debugInstalledTapBusForTesting() == nil)
+      #expect(await engine.isRecording == true)
+      let sawContinuing = await waitUntil(timeout: .milliseconds(300)) {
+        probe.snapshot().interruptions.contains { interruption in
+          if case .routeChangeContinuing = interruption { return true }
+          return false
+        }
+      }
+      #expect(sawContinuing == false)
+
+      // Clearing the sentinel restores normal reinstall behaviour.
+      await MainActor.run { engine.debugSetEngineTearingDownForTesting(false) }
+      _ = try? await engine.stopRecording()
+    }
+
     private func makeConfiguration(
       channels: ChannelCount = .mono,
       outputDestination: RecordingConfiguration.OutputDestination = .temporary,

@@ -322,6 +322,10 @@
 
         owner.runOnEngineControlQueue { [weak owner] in
           guard let owner else { return }
+          // Clear the teardown sentinel from on the serial queue, mirroring the
+          // microphone warm path. System audio has no AVAudioEngine tap, but the
+          // shared sentinel must be reset for any subsequent reinstall path.
+          owner.engineTearingDown.store(false, ordering: .sequentiallyConsistent)
           unsafe owner.player.stop()
         }
 
@@ -592,6 +596,12 @@
 
       owner.runOnEngineControlQueue { [weak owner] in
         guard let owner else { return }
+        // Clear the teardown sentinel from *on* the serial queue. FIFO ordering
+        // means any reinstall a prior teardown superseded was enqueued ahead of
+        // this block and already observed `engineTearingDown == true`, so
+        // clearing here cannot resurrect a stale reinstall onto this fresh
+        // bring-up (the ABA window a main-actor clear would reopen).
+        owner.engineTearingDown.store(false, ordering: .sequentiallyConsistent)
         unsafe owner.player.stop()
         unsafe owner.engine.stop()
         unsafe owner.engine.reset()
@@ -614,12 +624,24 @@
       owner.recordingFirstHostTimeAtomic.store(0, ordering: .relaxed)
       owner.recordingFirstSourceSampleTimeAtomic.store(Int64.min, ordering: .relaxed)
 
-      let tapResult = try owner.reinstallTap(
-        configuration: configuration,
-        processingFormat: processingFormat,
-        stopEngine: false,
-        overrideResult: inputs.reinstallTapOverrideResult,
-      )
+      guard
+        let tapResult = try owner.reinstallTap(
+          configuration: configuration,
+          processingFormat: processingFormat,
+          stopEngine: false,
+          overrideResult: inputs.reinstallTapOverrideResult,
+        )
+      else {
+        // Defensive: the reset block above cleared `engineTearingDown` on the
+        // same serial queue immediately before this reinstall, so a fresh warm
+        // can never actually be superseded. Throw rather than build a
+        // half-tapped graph; this aborts the warm before any further state is
+        // staged. The caller's failure path handles it — `warm()` and the
+        // `startRecording` off-main `do/catch` around `performWarm` both run
+        // `hardStop()` + `recordingFailed` and rethrow.
+        log.error("performWarm tap reinstall superseded by teardown; aborting warm")
+        throw RecordingError.engineError
+      }
 
       let audioBuffers = makeAudioBuffers(sampleRate: sampleRate, channelCount: channelCount)
       let receiverBuffers = makeAudioBuffers(sampleRate: sampleRate, channelCount: channelCount)
@@ -727,15 +749,22 @@
         return
       }
 
-      let result = try owner.reinstallTap(
-        configuration: configuration,
-        processingFormat: processingFormat,
-        stopEngine: false,
-        overrideResult: owner.reinstallTapOverrideResult(
+      guard
+        let result = try owner.reinstallTap(
           configuration: configuration,
           processingFormat: processingFormat,
-        ),
-      )
+          stopEngine: false,
+          overrideResult: owner.reinstallTapOverrideResult(
+            configuration: configuration,
+            processingFormat: processingFormat,
+          ),
+        )
+      else {
+        // A concurrent teardown superseded the interval change; the stop owns
+        // the graph now. Nothing to apply.
+        log.info("Tap interval reconfigure superseded by teardown; skipping")
+        return
+      }
       owner.applyTapInstallResult(result, processingFormat: processingFormat)
 
       log.info(
@@ -745,6 +774,10 @@
 
     @MainActor
     func hardStop() {
+      // Raise the teardown sentinel before enqueuing graph teardown so any
+      // reinstall that reaches the serial queue after this point bails. Cleared
+      // by the next `performWarm` from on the queue. See `engineTearingDown`.
+      owner.engineTearingDown.store(true, ordering: .sequentiallyConsistent)
       tearDownEngineGraphForHardStop()
       let hasActiveWriter = owner.writerSession != nil || !owner.drainingWriterSessions.isEmpty
       if let current = owner.writerSession {
@@ -795,6 +828,13 @@
     @MainActor
     func gracefulStop() async {
       log.info("gracefulStop requested")
+      // Raise the teardown sentinel BEFORE enqueuing graph teardown and before
+      // the drain `await` (where another @MainActor handler can interleave). A
+      // route-change / tap-interval reinstall that passes its `guard isRecording`
+      // during the drain — `isRecording` is flipped false only after the await —
+      // then bails on the serial queue instead of reinstalling onto the graph
+      // this stop is tearing down. See `engineTearingDown`.
+      owner.engineTearingDown.store(true, ordering: .sequentiallyConsistent)
       tearDownEngineGraphForGracefulStop()
       log.info("gracefulStop draining writer sessions")
       let stopDrainTimeout = owner.stopDrainTimeout

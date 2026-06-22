@@ -54,15 +54,23 @@
         }
 
       do {
-        let result = try reinstallTap(
-          configuration: config,
-          processingFormat: processingFormat,
-          stopEngine: true,
-          overrideResult: reinstallTapOverrideResult(
+        guard
+          let result = try reinstallTap(
             configuration: config,
             processingFormat: processingFormat,
-          ),
-        )
+            stopEngine: true,
+            overrideResult: reinstallTapOverrideResult(
+              configuration: config,
+              processingFormat: processingFormat,
+            ),
+          )
+        else {
+          // A concurrent stop/teardown superseded this route-change reinstall;
+          // the teardown owns the graph now. Do nothing — no state resurrection,
+          // no `routeChangeContinuing` event after a completed stop.
+          log.info("Route-change tap reinstall superseded by teardown; skipping")
+          return
+        }
 
         applyTapInstallResult(result, processingFormat: processingFormat)
 

@@ -211,6 +211,23 @@
         testEngineTeardownOverride = nil
       }
 
+      /// Forces the engine-teardown serialization sentinel
+      /// (``AIOEngine/engineTearingDown``) for tests, simulating a teardown that
+      /// has set the flag before its on-queue work has cleared state. Used to
+      /// drive the on-queue reinstall guard deterministically without racing a
+      /// real `gracefulStop()`.
+      @MainActor
+      public func debugSetEngineTearingDownForTesting(_ value: Bool) {
+        engineTearingDown.store(value, ordering: .sequentiallyConsistent)
+      }
+
+      /// The currently installed tap bus, or `nil` when no tap is installed.
+      /// Lets a test assert that a superseded reinstall left no tap behind.
+      @MainActor
+      public func debugInstalledTapBusForTesting() -> Int? {
+        state[locked: \.installedTapBus]
+      }
+
       /// Starts a recording session without touching AVAudioSession or AVAudioEngine.
       /// Intended for integration tests that inject buffers directly.
       @MainActor

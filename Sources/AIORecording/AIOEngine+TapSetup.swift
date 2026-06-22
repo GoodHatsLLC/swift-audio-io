@@ -5,6 +5,7 @@
   import AIOSupport
   package import AIOEngineCore
   package import AIORecordingSupport
+  import Atomics
   package import AVFoundation
   import os
   import Tools
@@ -85,27 +86,52 @@
       #endif
     }
 
+    /// Reinstalls the input tap on the engine-control queue.
+    ///
+    /// Returns `nil` — **without mutating the graph** — when a teardown
+    /// (`gracefulStop()` / `hardStop()`) has set ``AIOEngine/engineTearingDown``
+    /// before this reinstall reached the head of the serial queue. The check is
+    /// honoured **on the engine-control queue** (the only point serialized
+    /// against the teardown's enqueued work), so a route-change / tap-interval
+    /// reinstall that lost the race to a concurrent stop never reinstalls a live
+    /// tap onto a torn-down/stopped graph. Callers treat `nil` as "the teardown
+    /// owns the graph now; do nothing" — no event, no state resurrection.
     package nonisolated func reinstallTap(
       configuration: RecordingConfiguration,
       processingFormat: AVAudioFormat,
       stopEngine: Bool,
       overrideResult: Transferring<Result<TapInstallResult, RecordingError>>? = nil,
-    ) throws(RecordingError) -> TapInstallResult {
-      #if DEBUG
-        if let overrideResult {
-          switch overrideResult.value {
-          case .success(let result): return result
-          case .failure(let error): throw error
-          }
-        }
-      #else
-        _ = overrideResult
-      #endif
-
+    ) throws(RecordingError) -> TapInstallResult? {
       let installResult = runOnEngineControlQueueResult {
-        [weak self] () throws -> TapInstallResult in
+        [weak self] () throws -> TapInstallResult? in
         guard let self else { throw RecordingError.engineError }
         dispatchPrecondition(condition: .onQueue(self.engineControlQueue))
+
+        // 0. Teardown serialization guard. If a teardown superseded this
+        //    reinstall (it set `engineTearingDown` before enqueuing its
+        //    teardown, which the FIFO serial queue ran ahead of us), bail before
+        //    touching the graph. Checked here — on the serial queue — because
+        //    `gracefulStop` flips `isRecording` only *after* its drain `await`,
+        //    so a main-actor pre-check cannot close this window. The override
+        //    seam is resolved *after* this guard so tests can exercise it
+        //    deterministically without a real `AVAudioEngine`.
+        if self.engineTearingDown.load(ordering: .sequentiallyConsistent) {
+          tapSetupLog.info(
+            "reinstallTap superseded by in-flight engine teardown; skipping graph mutation",
+          )
+          return nil
+        }
+
+        #if DEBUG
+          if let overrideResult {
+            switch overrideResult.value {
+            case .success(let result): return result
+            case .failure(let error): throw error
+            }
+          }
+        #else
+          _ = overrideResult
+        #endif
 
         // 1. Remove existing tap
         let previousBus = self.state[locked: \.installedTapBus] ?? 0
@@ -205,7 +231,9 @@
 
       switch installResult {
       case .success(let result):
-        tapSetupLog.info("Tap installed: \(result.tapFormat, privacy: .public)")
+        if let result {
+          tapSetupLog.info("Tap installed: \(result.tapFormat, privacy: .public)")
+        }
         return result
       case .failure(let error):
         throw (error as? RecordingError) ?? .session(.engineStartFailed(error: ErrorContext(error)))

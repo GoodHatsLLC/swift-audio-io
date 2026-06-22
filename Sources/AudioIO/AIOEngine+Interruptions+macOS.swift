@@ -24,15 +24,21 @@
       }
 
       do {
-        let result = try reinstallTap(
-          configuration: config,
-          processingFormat: processingFormat,
-          stopEngine: true,
-          overrideResult: reinstallTapOverrideResult(
+        guard
+          let result = try reinstallTap(
             configuration: config,
             processingFormat: processingFormat,
-          ),
-        )
+            stopEngine: true,
+            overrideResult: reinstallTapOverrideResult(
+              configuration: config,
+              processingFormat: processingFormat,
+            ),
+          )
+        else {
+          // A concurrent stop/teardown superseded this route-change reinstall;
+          // the teardown owns the graph now. Do nothing.
+          return
+        }
         applyTapInstallResult(result, processingFormat: processingFormat)
         let interruption = RecordingInterruption.routeChangeContinuing(
           event: event,
