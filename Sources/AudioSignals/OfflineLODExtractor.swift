@@ -133,7 +133,13 @@
     }
 
     /// Extract LOD data from specific segments of an audio file with explicit channel strategy.
-    public func extract(
+    ///
+    /// `@concurrent` mirrors the whole-file overload above: this opens and decodes
+    /// the file (blocking I/O), so it must run off the caller's actor. Under this
+    /// package's `NonisolatedNonsendingByDefault` (SE-0461) a plain async method
+    /// awaited from `@MainActor` would otherwise decode the whole file on the main
+    /// actor.
+    @concurrent public func extract(
       from url: URL,
       segments: [ClosedRange<TimeInterval>],
       channelStrategy: ChannelStrategy,

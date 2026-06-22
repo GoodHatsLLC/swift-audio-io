@@ -19,7 +19,11 @@ enum PlatformAudioRouteEvent: Hashable {
 protocol PlatformAudioBackend: Sendable {
   var platformName: String { get }
   func routeChanges() -> AsyncSignalStream<PlatformAudioRouteEvent>
-  func availableInputs() async -> [PlatformAudioInputDescriptor]
+  // `@concurrent`: enumerating inputs is synchronous mediaserverd/CoreAudio-HAL
+  // IPC. Without it, under this package's `NonisolatedNonsendingByDefault`
+  // (SE-0461), the call would inherit the @MainActor caller and run the HAL IPC
+  // on the main actor. Conformances must match.
+  @concurrent func availableInputs() async -> [PlatformAudioInputDescriptor]
 }
 
 enum PlatformAudioBackendFactory {
@@ -76,7 +80,7 @@ enum PlatformAudioBackendFactory {
       return signal.events()
     }
 
-    func availableInputs() async -> [PlatformAudioInputDescriptor] {
+    @concurrent func availableInputs() async -> [PlatformAudioInputDescriptor] {
       let session = AVAudioSession.sharedInstance()
       let defaultInputID = session.currentRoute.inputs.first?.uid
       return (session.availableInputs ?? []).map { input in
@@ -123,7 +127,7 @@ enum PlatformAudioBackendFactory {
       return signal.events()
     }
 
-    func availableInputs() async -> [PlatformAudioInputDescriptor] {
+    @concurrent func availableInputs() async -> [PlatformAudioInputDescriptor] {
       let defaultInputID = defaultInputDeviceUID()
       return audioInputDevices().map { input in
         PlatformAudioInputDescriptor(
@@ -307,7 +311,7 @@ enum PlatformAudioBackendFactory {
       return signal.events()
     }
 
-    func availableInputs() async -> [PlatformAudioInputDescriptor] {
+    @concurrent func availableInputs() async -> [PlatformAudioInputDescriptor] {
       []
     }
   }

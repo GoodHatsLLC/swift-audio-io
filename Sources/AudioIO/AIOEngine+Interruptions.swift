@@ -31,8 +31,10 @@
 
       log.info("Handling route change: \(String(describing: event.reason), privacy: .public)")
 
-      let session = AVAudioSession.sharedInstance()
-      guard session.isInputAvailable else {
+      // Use the input-availability already captured in the route-change event
+      // snapshot rather than re-reading `AVAudioSession.isInputAvailable` live
+      // (a mediaserverd XPC round-trip) on the main actor.
+      guard event.session.isInputAvailable else {
         await handleUnrecoverableInterruption(reason: "No audio input available")
         return
       }
