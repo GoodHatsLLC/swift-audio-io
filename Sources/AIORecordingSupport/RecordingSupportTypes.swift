@@ -410,6 +410,12 @@
     package var pendingRecordingRestart: RecordingConfiguration?
     package var receiverSession: ReceiverSession?
     package var reconciliationTask: MainActorOwnedWork?
+    /// In-flight async tap-interval reconfigure scheduled by
+    /// `updateRecordingTapInterval` (kept sync). Stored so a stop/teardown can
+    /// cancel a pending reinstall rather than letting it run against a torn-down
+    /// graph; the on-queue teardown guard + post-await re-check are the
+    /// authoritative safety net, this is best-effort early cancellation.
+    package var tapIntervalReconfigureTask: MainActorOwnedWork?
     package var writerSession: WriterSession?
     package var drainingWriterSessions: [WriterSession] = []
     package var lastWriteFailure: WriteFailure?

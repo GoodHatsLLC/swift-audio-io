@@ -6,6 +6,7 @@
   import AIORecording
   public import AIOEngineCore
   import AIORecordingSupport
+  import Atomics
   import AVFoundation
   import Tools
 
@@ -24,19 +25,22 @@
       }
 
       do {
-        guard
-          let result = try reinstallTap(
+        let installed = try await reinstallTapAsync(
+          configuration: config,
+          processingFormat: processingFormat,
+          stopEngine: true,
+          overrideResult: reinstallTapOverrideResult(
             configuration: config,
             processingFormat: processingFormat,
-            stopEngine: true,
-            overrideResult: reinstallTapOverrideResult(
-              configuration: config,
-              processingFormat: processingFormat,
-            ),
-          )
+          ),
+        )
+        // Post-await liveness re-check: a stop may have completed or begun while
+        // the reinstall was suspended on the engine-control queue. See the iOS
+        // handler for the full rationale.
+        guard isRecording,
+          !engineTearingDown.load(ordering: .sequentiallyConsistent),
+          let result = installed
         else {
-          // A concurrent stop/teardown superseded this route-change reinstall;
-          // the teardown owns the graph now. Do nothing.
           return
         }
         applyTapInstallResult(result, processingFormat: processingFormat)

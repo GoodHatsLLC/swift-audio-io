@@ -744,24 +744,34 @@
     @MainActor
     func reconfigureTapForIntervalChange(
       configuration: RecordingConfiguration,
-    ) throws(RecordingError) {
+    ) async throws(RecordingError) {
       guard let processingFormat = owner.state.withLock({ $0.tapConverterOutputFormat }) else {
         return
       }
 
-      guard
-        let result = try owner.reinstallTap(
+      let installed = try await owner.reinstallTapAsync(
+        configuration: configuration,
+        processingFormat: processingFormat,
+        stopEngine: false,
+        overrideResult: owner.reinstallTapOverrideResult(
           configuration: configuration,
           processingFormat: processingFormat,
-          stopEngine: false,
-          overrideResult: owner.reinstallTapOverrideResult(
-            configuration: configuration,
-            processingFormat: processingFormat,
-          ),
-        )
+        ),
+      )
+
+      // Post-await liveness re-check (same rationale as the route-change
+      // handlers): a stop may have completed (`isRecording` false) or begun
+      // (`engineTearingDown` true) while the reinstall was suspended on the
+      // engine-control queue. `Task.isCancelled` short-circuits a body whose
+      // scheduling `tapIntervalReconfigureTask` was cancelled by a stop/teardown
+      // (`cleanUp`) — making that cancellation effective rather than advisory. A
+      // `nil` result is the in-queue guard having bailed. In any of these, the
+      // stop owns the graph — apply nothing.
+      guard !Task.isCancelled,
+        owner.isRecording,
+        !owner.engineTearingDown.load(ordering: .sequentiallyConsistent),
+        let result = installed
       else {
-        // A concurrent teardown superseded the interval change; the stop owns
-        // the graph now. Nothing to apply.
         log.info("Tap interval reconfigure superseded by teardown; skipping")
         return
       }
@@ -804,7 +814,14 @@
       if owner.state[locked: \.activeBackend] == nil {
         let tapBus = owner.state.consume(\.installedTapBus)
         let busesToRemove = Array(Set([tapBus, 0].compactMap(\.self)))
-        owner.runOnEngineControlQueue { [weak owner] in
+        // Fire-and-forget on the serial queue (mirrors
+        // `tearDownEngineGraphForGracefulStop`) so `hardStop()` — called from the
+        // synchronous start PREP `MainActor.run` and failure paths — never blocks
+        // the main thread. FIFO ordering keeps this teardown ahead of any
+        // subsequent `performWarm` reset/reinstall enqueued on the same queue,
+        // and the `engineTearingDown` sentinel (raised by `hardStop()` before
+        // this dispatch) makes any reinstall that slips in between bail.
+        owner.engineControlQueue.async { [weak owner] in
           guard let owner else { return }
           dispatchPrecondition(condition: .onQueue(owner.engineControlQueue))
           for bus in busesToRemove {
@@ -934,6 +951,10 @@
       if closeFile {
         writer?.close()
       }
+      // Cancel any pending async tap-interval reinstall so it cannot run against
+      // the graph this teardown is clearing. The on-queue teardown guard +
+      // post-await re-check are the authoritative net; this is early cancellation.
+      owner.tapIntervalReconfigureTask = nil
       owner.playbackTask = nil
     }
 

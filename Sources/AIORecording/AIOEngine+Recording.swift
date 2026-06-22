@@ -219,8 +219,8 @@
     @MainActor
     func reconfigureTapForIntervalChange(
       configuration: RecordingConfiguration,
-    ) throws(RecordingError) {
-      try recordingEngineRuntime.reconfigureTapForIntervalChange(configuration: configuration)
+    ) async throws(RecordingError) {
+      try await recordingEngineRuntime.reconfigureTapForIntervalChange(configuration: configuration)
     }
 
     /// Thread Domain: MainActor (entry point), engineControl (graph mutations).

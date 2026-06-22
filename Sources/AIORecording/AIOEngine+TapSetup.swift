@@ -86,16 +86,18 @@
       #endif
     }
 
-    /// Reinstalls the input tap on the engine-control queue.
+    /// Reinstalls the input tap **synchronously** on the engine-control queue.
+    ///
+    /// Used by the off-main `performWarm` (and the public, intentionally-sync
+    /// `warm()`), where the caller is already off the main thread or has opted
+    /// into a blocking call. `@MainActor` lifecycle handlers must use the async
+    /// ``reinstallTapAsync(configuration:processingFormat:stopEngine:overrideResult:)``
+    /// instead so they never block the main thread.
     ///
     /// Returns `nil` — **without mutating the graph** — when a teardown
     /// (`gracefulStop()` / `hardStop()`) has set ``AIOEngine/engineTearingDown``
-    /// before this reinstall reached the head of the serial queue. The check is
-    /// honoured **on the engine-control queue** (the only point serialized
-    /// against the teardown's enqueued work), so a route-change / tap-interval
-    /// reinstall that lost the race to a concurrent stop never reinstalls a live
-    /// tap onto a torn-down/stopped graph. Callers treat `nil` as "the teardown
-    /// owns the graph now; do nothing" — no event, no state resurrection.
+    /// before this reinstall reached the head of the serial queue. See
+    /// ``reinstallTapOnEngineControlQueue(configuration:processingFormat:stopEngine:overrideResult:)``.
     package nonisolated func reinstallTap(
       configuration: RecordingConfiguration,
       processingFormat: AVAudioFormat,
@@ -105,130 +107,52 @@
       let installResult = runOnEngineControlQueueResult {
         [weak self] () throws -> TapInstallResult? in
         guard let self else { throw RecordingError.engineError }
-        dispatchPrecondition(condition: .onQueue(self.engineControlQueue))
-
-        // 0. Teardown serialization guard. If a teardown superseded this
-        //    reinstall (it set `engineTearingDown` before enqueuing its
-        //    teardown, which the FIFO serial queue ran ahead of us), bail before
-        //    touching the graph. Checked here — on the serial queue — because
-        //    `gracefulStop` flips `isRecording` only *after* its drain `await`,
-        //    so a main-actor pre-check cannot close this window. The override
-        //    seam is resolved *after* this guard so tests can exercise it
-        //    deterministically without a real `AVAudioEngine`.
-        if self.engineTearingDown.load(ordering: .sequentiallyConsistent) {
-          tapSetupLog.info(
-            "reinstallTap superseded by in-flight engine teardown; skipping graph mutation",
-          )
-          return nil
-        }
-
-        #if DEBUG
-          if let overrideResult {
-            switch overrideResult.value {
-            case .success(let result): return result
-            case .failure(let error): throw error
-            }
-          }
-        #else
-          _ = overrideResult
-        #endif
-
-        // 1. Remove existing tap
-        let previousBus = self.state[locked: \.installedTapBus] ?? 0
-        unsafe self.engine.inputNode.removeTap(onBus: previousBus)
-        self.state[locked: \.installedTapBus] = nil
-
-        // 2. Stop and reset engine if requested — reset() clears cached node
-        //    formats so that prepare() queries the current hardware (critical
-        //    after a route change where the sample rate may differ).
-        if stopEngine {
-          unsafe self.engine.stop()
-          unsafe self.engine.reset()
-          if unsafe !self.engine.attachedNodes.contains(self.player) {
-            unsafe self.engine.attach(self.player)
-          }
-        }
-
-        // 3. Prepare — updates input node for current hardware
-        unsafe self.engine.prepare()
-
-        // 4. Read format — one read, one validation
-        let inputFormat = unsafe self.engine.inputNode.inputFormat(forBus: 0)
-        guard inputFormat.channelCount > 0 else {
-          throw RecordingError.session(
-            .notReady(details: "Input node has no channels (channelCount: 0)"),
-          )
-        }
-        guard inputFormat.sampleRate > 0 else {
-          throw RecordingError.session(
-            .notReady(details: "Input node has invalid sample rate (sampleRate: 0)"),
-          )
-        }
-
-        // 5. Create tap configuration
-        guard let tapConfig = configuration.tapConfiguration(bus: 0, input: inputFormat) else {
-          throw RecordingError.invalidConfiguration(details: "Cannot create tap configuration")
-        }
-        guard tapConfig.bufferSize > 0 else {
-          throw RecordingError.invalidConfiguration(details: "Tap bufferSize is 0")
-        }
-
-        // 6. Install tap with format: nil to match the node's current format
-        unsafe self.engine.inputNode.installTap(
-          onBus: tapConfig.bus,
-          bufferSize: tapConfig.bufferSize,
-          format: inputFormat,
-          block: { @Sendable [self] buffer, time in
-            self.processAudio(
-              buffer: buffer,
-              time: time,
-              to: processingFormat,
-            )
-          },
-        )
-
-        // 7. Prepare post-install, read actual format
-        unsafe self.engine.prepare()
-        let postInstallFormat = unsafe self.engine.inputNode.inputFormat(forBus: 0)
-        guard postInstallFormat.channelCount > 0, postInstallFormat.sampleRate > 0 else {
-          throw RecordingError.invalidConfiguration(
-            details:
-              "Format invalid after tap install (channels: \(postInstallFormat.channelCount), sampleRate: \(postInstallFormat.sampleRate))",
-          )
-        }
-        guard postInstallFormat.isEqual(inputFormat) else {
-          throw RecordingError.invalidConfiguration(
-            details:
-              "Format changed after tap install (channels: \(inputFormat.channelCount), sampleRate: \(inputFormat.sampleRate)) -> (channels: \(postInstallFormat.channelCount), sampleRate: \(postInstallFormat.sampleRate))",
-          )
-        }
-
-        // 8. Create conversion artifacts from the actual post-install format
-        let artifacts = try self.makeTapConversionArtifacts(
-          inputFormat: postInstallFormat,
+        return try self.reinstallTapOnEngineControlQueue(
+          configuration: configuration,
           processingFormat: processingFormat,
-          tapBufferSize: tapConfig.bufferSize,
+          stopEngine: stopEngine,
+          overrideResult: overrideResult,
         )
-
-        let result = TapInstallResult(
-          tapFormat: postInstallFormat,
-          artifacts: artifacts,
-          tapConfiguration: tapConfig,
-        )
-
-        // 9. Apply converter state before starting the engine so that
-        //    processAudio sees the correct converter from the very first
-        //    buffer delivered after start.
-        self.applyTapInstallResult(result, processingFormat: processingFormat)
-
-        // 10. Restart engine if we stopped it
-        if stopEngine {
-          try unsafe self.engine.start()
-        }
-
-        return result
       }
+      return try finishReinstall(installResult)
+    }
 
+    /// Reinstalls the input tap **without blocking the main thread**, dispatching
+    /// the graph mutation onto the engine-control queue via the async
+    /// `withEngineControlQueueResult` helper.
+    ///
+    /// `@MainActor` callers (route-change handlers, tap-interval reconfigure)
+    /// `await` this and **must** re-check liveness after the await — both
+    /// `guard isRecording` and `guard !engineTearingDown` — before applying the
+    /// result or emitting events, because a stop can complete (or begin) while
+    /// the reinstall is suspended. The on-queue teardown guard inside the shared
+    /// body closes the in-queue race; the post-await re-check closes the tail
+    /// where the reinstall ran on-queue *before* a teardown raised the sentinel.
+    package nonisolated func reinstallTapAsync(
+      configuration: RecordingConfiguration,
+      processingFormat: AVAudioFormat,
+      stopEngine: Bool,
+      overrideResult: Transferring<Result<TapInstallResult, RecordingError>>? = nil,
+    ) async throws(RecordingError) -> TapInstallResult? {
+      let installResult = await withEngineControlQueueResult {
+        [weak self] () throws -> TapInstallResult? in
+        guard let self else { throw RecordingError.engineError }
+        return try self.reinstallTapOnEngineControlQueue(
+          configuration: configuration,
+          processingFormat: processingFormat,
+          stopEngine: stopEngine,
+          overrideResult: overrideResult,
+        )
+      }
+      return try finishReinstall(installResult)
+    }
+
+    /// Maps the engine-control-queue result of a reinstall into the
+    /// `throws(RecordingError) -> TapInstallResult?` contract shared by the sync
+    /// and async wrappers.
+    private nonisolated func finishReinstall(
+      _ installResult: Result<TapInstallResult?, any Error>,
+    ) throws(RecordingError) -> TapInstallResult? {
       switch installResult {
       case .success(let result):
         if let result {
@@ -238,6 +162,148 @@
       case .failure(let error):
         throw (error as? RecordingError) ?? .session(.engineStartFailed(error: ErrorContext(error)))
       }
+    }
+
+    /// The shared on-engine-control-queue tap-reinstall body, invoked by both the
+    /// sync ``reinstallTap`` and async ``reinstallTapAsync`` wrappers. **Must run
+    /// on the engine-control queue** (asserted below).
+    ///
+    /// Returns `nil` — **without mutating the graph** — when a teardown
+    /// (`gracefulStop()` / `hardStop()`) has set ``AIOEngine/engineTearingDown``
+    /// before this reinstall reached the head of the serial queue. The check is
+    /// honoured **on the engine-control queue** (the only point serialized
+    /// against the teardown's enqueued work), so a route-change / tap-interval
+    /// reinstall that lost the race to a concurrent stop never reinstalls a live
+    /// tap onto a torn-down/stopped graph. Callers treat `nil` as "the teardown
+    /// owns the graph now; do nothing" — no event, no state resurrection.
+    nonisolated func reinstallTapOnEngineControlQueue(
+      configuration: RecordingConfiguration,
+      processingFormat: AVAudioFormat,
+      stopEngine: Bool,
+      overrideResult: Transferring<Result<TapInstallResult, RecordingError>>?,
+    ) throws -> TapInstallResult? {
+      dispatchPrecondition(condition: .onQueue(engineControlQueue))
+
+      // 0. Teardown serialization guard. If a teardown superseded this
+      //    reinstall (it set `engineTearingDown` before enqueuing its teardown,
+      //    which the FIFO serial queue ran ahead of us), bail before touching
+      //    the graph. Checked here — on the serial queue — because
+      //    `gracefulStop` flips `isRecording` only *after* its drain `await`, so
+      //    a main-actor pre-check cannot close this window. The override seam is
+      //    resolved *after* this guard so tests can exercise it deterministically
+      //    without a real `AVAudioEngine`.
+      if engineTearingDown.load(ordering: .sequentiallyConsistent) {
+        tapSetupLog.info(
+          "reinstallTap superseded by in-flight engine teardown; skipping graph mutation",
+        )
+        return nil
+      }
+
+      #if DEBUG
+        if let overrideResult {
+          switch overrideResult.value {
+          case .success(let result): return result
+          case .failure(let error): throw error
+          }
+        }
+      #else
+        _ = overrideResult
+      #endif
+
+      // 1. Remove existing tap
+      let previousBus = state[locked: \.installedTapBus] ?? 0
+      unsafe engine.inputNode.removeTap(onBus: previousBus)
+      state[locked: \.installedTapBus] = nil
+
+      // 2. Stop and reset engine if requested — reset() clears cached node
+      //    formats so that prepare() queries the current hardware (critical
+      //    after a route change where the sample rate may differ).
+      if stopEngine {
+        unsafe engine.stop()
+        unsafe engine.reset()
+        if unsafe !engine.attachedNodes.contains(player) {
+          unsafe engine.attach(player)
+        }
+      }
+
+      // 3. Prepare — updates input node for current hardware
+      unsafe engine.prepare()
+
+      // 4. Read format — one read, one validation
+      let inputFormat = unsafe engine.inputNode.inputFormat(forBus: 0)
+      guard inputFormat.channelCount > 0 else {
+        throw RecordingError.session(
+          .notReady(details: "Input node has no channels (channelCount: 0)"),
+        )
+      }
+      guard inputFormat.sampleRate > 0 else {
+        throw RecordingError.session(
+          .notReady(details: "Input node has invalid sample rate (sampleRate: 0)"),
+        )
+      }
+
+      // 5. Create tap configuration
+      guard let tapConfig = configuration.tapConfiguration(bus: 0, input: inputFormat) else {
+        throw RecordingError.invalidConfiguration(details: "Cannot create tap configuration")
+      }
+      guard tapConfig.bufferSize > 0 else {
+        throw RecordingError.invalidConfiguration(details: "Tap bufferSize is 0")
+      }
+
+      // 6. Install tap with format: nil to match the node's current format
+      unsafe engine.inputNode.installTap(
+        onBus: tapConfig.bus,
+        bufferSize: tapConfig.bufferSize,
+        format: inputFormat,
+        block: { @Sendable [self] buffer, time in
+          self.processAudio(
+            buffer: buffer,
+            time: time,
+            to: processingFormat,
+          )
+        },
+      )
+
+      // 7. Prepare post-install, read actual format
+      unsafe engine.prepare()
+      let postInstallFormat = unsafe engine.inputNode.inputFormat(forBus: 0)
+      guard postInstallFormat.channelCount > 0, postInstallFormat.sampleRate > 0 else {
+        throw RecordingError.invalidConfiguration(
+          details:
+            "Format invalid after tap install (channels: \(postInstallFormat.channelCount), sampleRate: \(postInstallFormat.sampleRate))",
+        )
+      }
+      guard postInstallFormat.isEqual(inputFormat) else {
+        throw RecordingError.invalidConfiguration(
+          details:
+            "Format changed after tap install (channels: \(inputFormat.channelCount), sampleRate: \(inputFormat.sampleRate)) -> (channels: \(postInstallFormat.channelCount), sampleRate: \(postInstallFormat.sampleRate))",
+        )
+      }
+
+      // 8. Create conversion artifacts from the actual post-install format
+      let artifacts = try makeTapConversionArtifacts(
+        inputFormat: postInstallFormat,
+        processingFormat: processingFormat,
+        tapBufferSize: tapConfig.bufferSize,
+      )
+
+      let result = TapInstallResult(
+        tapFormat: postInstallFormat,
+        artifacts: artifacts,
+        tapConfiguration: tapConfig,
+      )
+
+      // 9. Apply converter state before starting the engine so that
+      //    processAudio sees the correct converter from the very first
+      //    buffer delivered after start.
+      applyTapInstallResult(result, processingFormat: processingFormat)
+
+      // 10. Restart engine if we stopped it
+      if stopEngine {
+        try unsafe engine.start()
+      }
+
+      return result
     }
 
     /// Applies tap install results to engine state.

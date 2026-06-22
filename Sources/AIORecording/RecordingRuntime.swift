@@ -5,6 +5,7 @@
   import AIOSupport
   import AIOEngineCore
   import AIORecordingSupport
+  import Atomics
   import AVFoundation
   import Foundation
   import os
@@ -340,12 +341,20 @@
 
       guard owner.isRecording else { return }
 
-      do {
-        try owner.reconfigureTapForIntervalChange(configuration: updated)
-      } catch {
-        log.warning(
-          "Failed to update tap interval to \(interval, privacy: .public): \(error, privacy: .public)",
-        )
+      // Schedule the reinstall off the main thread (it dispatches the graph
+      // mutation to the engine-control queue via `reinstallTapAsync`). This API
+      // stays synchronous (public signature preserved); the handle is stored in
+      // `tapIntervalReconfigureTask` so a stop/teardown cancels a pending
+      // reinstall. Scheduling a fresh one cancels any prior in-flight change.
+      owner.tapIntervalReconfigureTask = MainActorOwnedWork { [weak owner] in
+        guard let owner else { return }
+        do {
+          try await owner.reconfigureTapForIntervalChange(configuration: updated)
+        } catch {
+          log.warning(
+            "Failed to update tap interval to \(interval, privacy: .public): \(error, privacy: .public)",
+          )
+        }
       }
     }
 
@@ -403,6 +412,40 @@
       return url
     }
 
+    /// Off-main file preparation for ``rotateRecordingFile()``: resolve the next
+    /// output URL, open the writer, and apply file protection. All three are
+    /// `nonisolated` blocking file I/O, so this `nonisolated async` helper runs
+    /// them on the global executor (off the main actor) when awaited from the
+    /// `@MainActor` rotate path. `writerBackend` is captured on the main actor by
+    /// the caller and passed in (it is `@MainActor`-isolated state).
+    nonisolated func prepareRotatedRecordingFile(
+      configuration: RecordingConfiguration,
+      writerBackend: WriterBackend,
+    ) async throws(RecordingError) -> (writer: any RecordingFileWriter, url: URL) {
+      let (newURL, protection): (URL, OutputFileProtection?) = try owner.resolveOutputURL(
+        for: configuration,
+        allowExplicitFile: false,
+      )
+      let newWriter = try owner.makeRecordingWriter(
+        url: newURL,
+        configuration: configuration,
+        writerBackend: writerBackend,
+      )
+      owner.applyFileProtectionIfNeeded(protection, to: newURL)
+      return (newWriter, newURL)
+    }
+
+    /// Off-main cleanup for a prepared rotation file that will not be used (a
+    /// stop completed while the file was being prepared): finalize and delete the
+    /// just-opened empty file so it is not left in the output destination.
+    nonisolated func discardPreparedRotationFile(
+      writer: any RecordingFileWriter,
+      url: URL,
+    ) async {
+      writer.close()
+      try? FileManager.default.removeItem(at: url)
+    }
+
     @MainActor
     func rotateRecordingFile() async throws(RecordingError) -> URL {
       guard owner.isRecording,
@@ -420,21 +463,34 @@
         throw RecordingError.notRecording
       }
 
-      let (newURL, protection): (URL, OutputFileProtection?) = try owner.resolveOutputURL(
-        for: configuration,
-        allowExplicitFile: false,
-      )
-      let newWriter = try owner.makeRecordingWriter(
-        url: newURL,
-        configuration: configuration,
-        writerBackend: owner.writerBackend,
-      )
-      owner.applyFileProtectionIfNeeded(protection, to: newURL)
-
       let sampleRate = Int(format.sampleRate)
       let channelCount = Int(format.channelCount)
       guard sampleRate > 0, channelCount > 0 else {
         throw RecordingError.invalidConfiguration(details: "Invalid processing format")
+      }
+
+      // Hoist the blocking file prep off the main thread. `writerBackend` is
+      // @MainActor state, captured here before the off-main hop.
+      let writerBackend = owner.writerBackend
+      let (newWriter, newURL) = try await prepareRotatedRecordingFile(
+        configuration: configuration,
+        writerBackend: writerBackend,
+      )
+
+      // Post-await liveness re-check: a stop could have completed — or begun —
+      // while the file was being prepared off-main. Must mirror the reinstall
+      // callers: check BOTH `isRecording` and `!engineTearingDown`, because
+      // gracefulStop raises the sentinel before its drain await but flips
+      // `isRecording` false only after it. An `isRecording`-only guard would pass
+      // mid-drain and swap a fresh writer/loop into a stopped recording — a
+      // leaked writer loop (never in gracefulStop's drain snapshot, so never
+      // cancelled) plus a spurious `recordingStarted` after the stop. Drop the
+      // freshly opened (empty) file instead of swapping it in.
+      guard owner.isRecording,
+        !owner.engineTearingDown.load(ordering: .sequentiallyConsistent)
+      else {
+        await discardPreparedRotationFile(writer: newWriter, url: newURL)
+        throw RecordingError.notRecording
       }
 
       let newBuffers = owner.makeAudioBuffers(

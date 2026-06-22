@@ -7,6 +7,7 @@
   import AIOSupport
   public import AIOEngineCore
   import AIORecordingSupport
+  import Atomics
   public import AVFoundation
   import Foundation
   import os
@@ -54,20 +55,28 @@
         }
 
       do {
-        guard
-          let result = try reinstallTap(
+        let installed = try await reinstallTapAsync(
+          configuration: config,
+          processingFormat: processingFormat,
+          stopEngine: true,
+          overrideResult: reinstallTapOverrideResult(
             configuration: config,
             processingFormat: processingFormat,
-            stopEngine: true,
-            overrideResult: reinstallTapOverrideResult(
-              configuration: config,
-              processingFormat: processingFormat,
-            ),
-          )
+          ),
+        )
+
+        // Post-await liveness re-check. The reinstall suspended on the
+        // engine-control queue; while suspended a stop could have COMPLETED
+        // (`isRecording` now false) or BEGUN (`engineTearingDown` now true, even
+        // if `isRecording` hasn't flipped yet because gracefulStop sets it false
+        // only after its drain await). In either case the stop owns the graph —
+        // skip without resurrecting converter state or emitting a spurious
+        // `routeChangeContinuing` event. A `nil` result is the in-queue guard
+        // having already bailed.
+        guard isRecording,
+          !engineTearingDown.load(ordering: .sequentiallyConsistent),
+          let result = installed
         else {
-          // A concurrent stop/teardown superseded this route-change reinstall;
-          // the teardown owns the graph now. Do nothing — no state resurrection,
-          // no `routeChangeContinuing` event after a completed stop.
           log.info("Route-change tap reinstall superseded by teardown; skipping")
           return
         }

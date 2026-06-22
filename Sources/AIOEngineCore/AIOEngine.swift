@@ -412,6 +412,17 @@
       }
     }
 
+    /// In-flight async tap-interval reconfigure scheduled by the (sync)
+    /// `updateRecordingTapInterval`. Setting a new value (or `nil`) cancels the
+    /// previous one, so a stop/teardown cancels a pending reinstall.
+    @MainActor package var tapIntervalReconfigureTask: MainActorOwnedWork? {
+      get { recordingRuntimeContext.tapIntervalReconfigureTask }
+      set {
+        recordingRuntimeContext.tapIntervalReconfigureTask?.cancelNow()
+        recordingRuntimeContext.tapIntervalReconfigureTask = newValue
+      }
+    }
+
     /// The current playback state, or `nil` if no audio is playing.
     @MainActor public internal(set) var playback: Playback?
     /// The default interval used to refresh `playback.time` while playback is active.

@@ -605,6 +605,48 @@
       _ = try? await engine.stopRecording()
     }
 
+    /// Chunk 1 regression: `rotateRecordingFile` hoists its file open off the
+    /// main thread, introducing an `await`. A stop that raised the
+    /// `engineTearingDown` sentinel (but has not yet flipped `isRecording`,
+    /// because gracefulStop does that late) must NOT let rotate swap a fresh
+    /// writer/loop into a stopped recording — it must bail like the reinstall
+    /// callers. The post-await guard checks `!engineTearingDown`, not just
+    /// `isRecording`.
+    @Test
+    func `rotate recording file bails when engine is tearing down`() async throws {
+      let engine = AIOEngine()
+      await engine.debugBypassEngineTeardownForTesting()
+      let outputDirectory = FileManager.default.temporaryDirectory
+        .appendingPathComponent(
+          "AIOEngineIntegrationTests-\(UUID().uuidString)", isDirectory: true,
+        )
+      defer { try? FileManager.default.removeItem(at: outputDirectory) }
+      let configuration = makeConfiguration(outputDestination: .directory(outputDirectory))
+
+      let url = try await engine.startTestRecording(configuration: configuration)
+      defer { try? FileManager.default.removeItem(at: url) }
+      engine.injectTestAudio(channels: [ramp(count: 256)])
+
+      // Simulate a teardown that has raised the sentinel (as gracefulStop does
+      // before its drain, while `isRecording` is still true).
+      await MainActor.run { engine.debugSetEngineTearingDownForTesting(true) }
+
+      await #expect(throws: RecordingError.notRecording) {
+        _ = try await engine.rotateRecordingFile()
+      }
+
+      // No swap happened: the recording URL is unchanged, and the discarded
+      // rotation file was removed (only the original remains in the directory).
+      #expect(await engine.debugCurrentRecordingURL() == url)
+      let remaining = try FileManager.default.contentsOfDirectory(
+        at: outputDirectory, includingPropertiesForKeys: nil,
+      )
+      #expect(remaining.map(\.lastPathComponent) == [url.lastPathComponent])
+
+      await MainActor.run { engine.debugSetEngineTearingDownForTesting(false) }
+      _ = try? await engine.stopRecording()
+    }
+
     private func makeConfiguration(
       channels: ChannelCount = .mono,
       outputDestination: RecordingConfiguration.OutputDestination = .temporary,
