@@ -15,6 +15,30 @@
   struct PlaybackRuntime {
     let owner: AIOEngine
 
+    /// Opens an audio file for reading **off the main actor**.
+    ///
+    /// `AVAudioFile(forReading:)` reads the file header synchronously (disk I/O)
+    /// and can block tens of milliseconds. `@concurrent` forces this body onto
+    /// the global executor even when awaited from a `@MainActor` playback path —
+    /// REQUIRED under this package's `NonisolatedNonsendingByDefault`
+    /// (SE-0461), where a plain `nonisolated async` function would otherwise
+    /// inherit the caller's (main) actor and block the main thread. The returned
+    /// file is freshly created and unshared, so it crosses back cleanly.
+    @concurrent
+    nonisolated func openFileForReading(url: URL) async throws(PlaybackError) -> sending AVAudioFile
+    {
+      #if DEBUG
+        // Guard the off-main contract at the executor (main-actor) level, not the
+        // raw OS thread: this body must not run on the main actor's executor.
+        dispatchPrecondition(condition: .notOnQueue(.main))
+      #endif
+      do {
+        return try AVAudioFile(forReading: url)
+      } catch {
+        throw PlaybackError.fileReadFailed(url: url, error: ErrorContext(error))
+      }
+    }
+
     @MainActor
     func play(url: URL) async throws(PlaybackError) -> AIOEngine.Playback {
       try await play(url: url, playbackPollingInterval: nil)
@@ -35,11 +59,12 @@
         throw PlaybackError.session(sessionError)
       }
 
-      let file: AVAudioFile
-      do {
-        file = try AVAudioFile(forReading: url)
-      } catch {
-        throw PlaybackError.fileReadFailed(url: url, error: ErrorContext(error))
+      // Open the file off the main thread (header read is blocking disk I/O).
+      let file = try await openFileForReading(url: url)
+      // Re-check after the off-main await: a recording could have started while
+      // we were suspended (the top guard ran before the suspension point).
+      guard !owner.isRecording else {
+        throw PlaybackError.cannotPlayWhileRecording
       }
       guard file.length > 0 else {
         throw PlaybackError.fileReadFailed(
@@ -114,11 +139,12 @@
         throw PlaybackError.session(sessionError)
       }
 
-      let file: AVAudioFile
-      do {
-        file = try AVAudioFile(forReading: url)
-      } catch {
-        throw PlaybackError.fileReadFailed(url: url, error: ErrorContext(error))
+      // Open the file off the main thread (header read is blocking disk I/O).
+      let file = try await openFileForReading(url: url)
+      // Re-check after the off-main await: a recording could have started while
+      // we were suspended (the top guard ran before the suspension point).
+      guard !owner.isRecording else {
+        throw PlaybackError.cannotPlayWhileRecording
       }
       let sampleRate = file.processingFormat.sampleRate
       let startFrame = AVAudioFramePosition(startTime * sampleRate)
@@ -323,15 +349,10 @@
 
     @MainActor
     func stopPlayback() async {
-      await owner.withEngineControlQueue { [weak owner] in
-        guard let owner else { return }
-        unsafe owner.player.stop()
-        unsafe owner.engine.stop()
-        unsafe owner.engine.reset()
-        if unsafe !owner.engine.attachedNodes.contains(owner.player) {
-          unsafe owner.engine.attach(owner.player)
-        }
-      }
+      // Detach the finished file on the main actor, then tear down the graph and
+      // close the file together on the engine-control queue — the file close
+      // (blocking I/O) runs off the main thread, after the player has stopped so
+      // there is no use-after-close.
       let finishedFile: AVAudioFile? = owner.playbackState {
         if let foundInstance = $0.playbackInstance {
           $0.playbackInstance = nil
@@ -340,7 +361,16 @@
           return nil
         }
       }
-      finishedFile?.close()
+      await owner.withEngineControlQueue { [weak owner, finishedFile] in
+        guard let owner else { return }
+        unsafe owner.player.stop()
+        unsafe owner.engine.stop()
+        unsafe owner.engine.reset()
+        if unsafe !owner.engine.attachedNodes.contains(owner.player) {
+          unsafe owner.engine.attach(owner.player)
+        }
+        finishedFile?.close()
+      }
       owner.playbackTask = nil
       owner.scrubTask = nil
       owner.playbackState[locked: \.playbackInstance] = nil
