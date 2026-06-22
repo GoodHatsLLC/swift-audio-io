@@ -3,6 +3,8 @@
 Date: 2026-06-22
 Status: **in progress** — recording-START fixed and shipped (`aa43c1b`); remaining areas planned below, gated on a shared serialization primitive.
 
+> **Update (later same day):** Chunks 0, 1, 3 shipped; Chunk 2 skipped (Apple-DTS conflict); a **critical SE-0461 finding** showed `aa43c1b` was a silent no-op and is now genuinely fixed; a codebase-wide audit found 13 main-thread blockers (3 surgical ones fixed, the rest documented). See **"Session outcome"** at the bottom.
+
 ## Context
 
 A report that *"beginning recording can cause main thread hangs"* prompted an audit of whether the
@@ -217,3 +219,85 @@ become non-blocking and instant; no API break.
   `tasks/w5lyyb0cm.output` (not in-repo; regenerate via the audit method above if needed).
 - Window-guard flags: `AIOEngine.isStartingRecording`, `AIOEngine.startAbortRequested`
   (`AIOEngineCore/AIOEngine.swift`).
+
+---
+
+## Session outcome (2026-06-22, continuation)
+
+Each item below: fix → adversarial review (ordering / isolation / behavior, every finding
+independently verified) → macOS `swift test` + iOS Simulator full suite → commit.
+
+### Shipped
+
+- **Chunk 0 — engine teardown serialization (`1ac54e0`).** `engineTearingDown` atomic sentinel;
+  `gracefulStop`/`hardStop` raise it before enqueuing teardown; `performWarm` clears it **on the
+  serial queue** (FIFO closes the ABA window a main-actor clear would reopen); `reinstallTap`
+  returns `TapInstallResult?` (nil = superseded) and bails on-queue. Regression test included.
+- **Chunk 1 — engine-control-queue off-main (`3e558b5`).** Factored `reinstallTapOnEngineControlQueue`;
+  added `reinstallTapAsync`. Route-change (iOS/macOS) + `reconfigureTapForIntervalChange` are async
+  with the **post-await `isRecording && !engineTearingDown && let result` re-check** (both flags
+  required — `isRecording` alone leaves the spurious-event tail open). `updateRecordingTapInterval`
+  stays sync, schedules a cancellable `tapIntervalReconfigureTask`. `hardStop` teardown →
+  `engineControlQueue.async`. `rotateRecordingFile` hoists file prep off-main. Review caught a real
+  HIGH rotate race (guard initially missed `!engineTearingDown`) — fixed + regression test.
+- **Chunk 3 — playback file I/O off-main (`12a14b3`).** `AVAudioFile(forReading:)` via a
+  `@concurrent` helper + post-await `!isRecording` re-check; `stopPlayback` folds `AVAudioFile.close()`
+  into the off-main `withEngineControlQueue` hop.
+- **🔴 SE-0461 recording-start fix (`08e1910`).** **`aa43c1b` was a silent no-op.** This package
+  enables `NonisolatedNonsendingByDefault` (SE-0461): a plain `nonisolated async` inherits the
+  **caller's actor**, it does NOT hop to the global executor. `RecordingRuntime.startRecording` was a
+  plain `nonisolated async` awaited from `@MainActor`, so `performWarm` (session IPC + `AVAudioFile`
+  open + ring-buffer alloc) ran **on the main actor** — the originally-reported "beginning recording
+  can cause main thread hangs" bug was never actually fixed (tests passed because the code was correct,
+  just on the wrong executor). Fixed with `@concurrent`; the `isStartingRecording`/`startAbortRequested`
+  window guard added by `aa43c1b` (designed for off-main bring-up) now actually engages. The genuine
+  off-main idiom in this repo is `@concurrent`, NOT plain `nonisolated async`. Pinned by
+  `Tests/AIOTests/ExecutorContractTests.swift` (`MainActor.assertIsolated()` proves the plain case runs
+  on the main actor; `@concurrent` runs off it).
+- **SE-0461 audit surgical fixes (`4e73046`).** `OfflineLODExtractor.extract(segments:)` +`@concurrent`
+  (sibling already was — silent miss); `PlatformAudioBackend.availableInputs()` +`@concurrent` (protocol
+  + all impls; HAL/mediaserverd IPC); iOS `handleRouteChange` uses `event.session.isInputAvailable`
+  snapshot instead of a live XPC read (free).
+
+### Skipped
+
+- **Chunk 2 — `AVAudioSession setActive/setCategory` off-main.** Conflicts with the explicit in-code
+  Apple-DTS guidance (`AudioEnvironmentManager.swift:210` — those stay on `MainActor` by design) and
+  would change the public `AudioSessionDelegate` protocol. Also low marginal value: post-`aa43c1b`
+  `configureAudioSession` is `nonisolated` and already runs the recording-path session IPC off-main.
+  Decision: respect the DTS guidance.
+
+### Codebase-wide SE-0461 audit — remaining work (NOT yet fixed)
+
+A 12-module audit (each finding adversarially verified) found **13 main-thread blockers**; 3 surgical
+ones are fixed above. The remainder, by root cause:
+
+- **Root cause A — highest leverage (6 findings).** `AVAudioSession` input-preference **writes** on the
+  `@MainActor` manager that bypass the project's own off-main helper
+  `AudioEnvironmentManager.executeInputConfiguration` (`DetachedOwnedWork` → `Task.detached`, lines
+  204-269, already used by `applyMono`/`applyStereo`). Sites: `AudioInputPreferenceController`
+  `setSelectedInput` / `setSelectedSource` / `setSampleRate`; `AudioInputPreferenceRestorer`
+  `restorePreferredInputAndConfigurationIfPossible`; the lifecycle orientation handler
+  (`setPreferredInputOrientation` — `executeInputConfiguration` already has an `inputOrientation` plan
+  field); `updateAudioInputs` → `AudioEnvironmentState.mirrored` (~5 chained session reads on every
+  route-change + the 15/30s poll). Net: stacked mediaserverd XPC on every route-change and device
+  selection. Migration pattern: compute plan from cached state on main → `await` the detached XPC
+  off-main → re-sync cached state. **Risk:** touches device-selection logic; the public setters are
+  sync, so they must become async or schedule the work (as `updateRecordingTapInterval` does). Worth a
+  dedicated, reviewed pass. (Explicitly NOT `setActive`/`setCategory` — the DTS deferral.)
+- **Root cause C — visualization pipeline bring-up (3 findings).** `AudioVisualizationEngine.subscribe`
+  / `VisualizationSubscription.cancel` synchronously build the FFT plan + ring/scratch buffers
+  (`AnalysisPipeline.init`), allocate the multi-MB `MultiBandLODProcessor`, and run a `queue.sync`
+  drain barrier (`VisualizationDispatchTicker.syncBarrier`) — all on the main actor. Fires on
+  subscribe / config change (not per-frame). Fix: construct the pipeline off-main and atomically swap.
+- **L1 — `RecordingRuntime.stopRecording` stat probe (low).** `FileManager.fileExists` +
+  `resourceValues([.fileSizeKey])` after `await gracefulStop()` on the main actor; only a hazard on
+  networked storage. Hoist to a `@concurrent` helper.
+
+### Key learning for future work
+
+Under `NonisolatedNonsendingByDefault` (SE-0461, enabled in `Package.swift`), **off-main intent
+requires `@concurrent`** (or delegation to a real dispatch hop). A plain `nonisolated async` helper
+silently runs on the caller's actor — correct results, wrong thread, passing tests. `ExecutorContractTests.swift`
+pins this; new "off-main" helpers must be `@concurrent` and guarded with
+`#if DEBUG dispatchPrecondition(condition: .notOnQueue(.main)) #endif`.
