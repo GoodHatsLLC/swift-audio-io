@@ -15,15 +15,15 @@
 
       @MainActor
       private func subscribeToOrientation(
-        _ onChange: @MainActor (AVAudioSession.StereoOrientation) -> Void,
+        _ onChange: @MainActor (AVAudioSession.StereoOrientation) async -> Void,
       ) async {
         let deviceInfo = PlatformDevice.create()
 
         let initial = await deviceInfo.currentOrientation
-        onChange(initial.avAudioSessionOrientation)
+        await onChange(initial.avAudioSessionOrientation)
 
         for await orientation in deviceInfo.orientationChanges() {
-          onChange(orientation.avAudioSessionOrientation)
+          await onChange(orientation.avAudioSessionOrientation)
         }
       }
 
@@ -149,11 +149,15 @@
               audioEnvironmentLifecycleLog.info(
                 "orientation changed to: \(orientation.rawValue, privacy: .public)",
               )
-              guard orientation != .none else { return }
+              guard orientation != .none, owner.isConfiguredForStereo else { return }
+              // Route the `setPreferredInputOrientation` XPC through the existing
+              // off-main helper rather than calling it on the main actor.
+              var plan = AudioEnvironmentManager.InputConfigurationPlan()
+              plan.inputOrientation = orientation
               do {
-                if owner.isConfiguredForStereo {
-                  try owner.session.setPreferredInputOrientation(orientation)
-                }
+                try await AudioEnvironmentManager.executeInputConfiguration(
+                  plan, session: owner.session,
+                )
               } catch {
                 owner.errorManager.enqueue(error)
               }

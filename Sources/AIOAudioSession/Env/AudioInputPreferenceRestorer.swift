@@ -11,6 +11,29 @@
     package struct AudioInputPreferenceRestorer {
       let owner: AudioEnvironmentManager
 
+      /// Resolves and applies the persisted preferred input **off the main
+      /// actor** (the `availableInputs` read and the `request(input:)` write are
+      /// mediaserverd XPC). Returns a thrown error, or `nil` if nothing needed
+      /// doing.
+      @concurrent
+      private static func applyPreferredInputIfNeededOffMain(
+        preferredInputId: String,
+        env: AudioEnvironment,
+      ) async -> (any Error)? {
+        guard
+          let preferredInput = env.availableInputs.first(where: { $0.id == preferredInputId }),
+          env.input?.id != preferredInputId
+        else {
+          return nil
+        }
+        do {
+          try env.request(input: preferredInput)
+          return nil
+        } catch {
+          return error
+        }
+      }
+
       @MainActor
       func restorePreferredInputAndConfigurationIfPossible(reason: String) async {
         guard !owner.isRestoringFromDefaults else { return }
@@ -20,14 +43,11 @@
         owner.preferenceStore.reload()
 
         if !owner.isAudioSessionActive,
-          let preferredInputId = owner.preferenceStore.preferredInputId,
-          let preferredInput = owner.env.availableInputs.first(where: { $0.id == preferredInputId }
-          ),
-          owner.env.input?.id != preferredInputId
+          let preferredInputId = owner.preferenceStore.preferredInputId
         {
-          do {
-            try owner.env.request(input: preferredInput)
-          } catch {
+          if let error = await Self.applyPreferredInputIfNeededOffMain(
+            preferredInputId: preferredInputId, env: owner.env,
+          ) {
             owner.errorManager.enqueue(error)
           }
         }
