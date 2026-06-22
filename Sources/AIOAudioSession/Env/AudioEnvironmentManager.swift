@@ -644,11 +644,14 @@
   extension AudioEnvironmentManager {
     @discardableResult
     @MainActor
-    func updateAudioInputs(reason: String) -> AudioDeviceChangeSummary? {
-      inputPreferenceController.updateAudioInputs(reason: reason)
+    func updateAudioInputs(reason: String) async -> AudioDeviceChangeSummary? {
+      await inputPreferenceController.updateAudioInputs(reason: reason)
     }
 
-    func filterSources(
+    // `nonisolated`: pure polar-pattern filtering with no main-actor state, so it
+    // can serve as the `@Sendable` source filter when `AudioEnvironmentState` is
+    // mirrored off the main actor (see `AudioEnvironmentState.mirroredOffMain`).
+    nonisolated func filterSources(
       _ sources: [AudioSource],
       for channelCount: ChannelCount,
     ) -> [AudioSource] {

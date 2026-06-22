@@ -165,7 +165,7 @@
               guard let owner else { return }
               let pollInterval: Duration
               if owner.isAudioSessionActive {
-                if let changes = owner.updateAudioInputs(reason: "periodic poll") {
+                if let changes = await owner.updateAudioInputs(reason: "periodic poll") {
                   audioEnvironmentLifecycleLog.info(
                     "􂡸 poll, device changes: \(changes, privacy: .public)",
                   )

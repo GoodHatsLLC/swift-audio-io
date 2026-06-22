@@ -32,7 +32,7 @@
           }
         }
 
-        owner.state = AudioEnvironmentState.mirrored(
+        owner.state = await AudioEnvironmentState.mirroredOffMain(
           env: owner.env,
           sourceFilter: owner.filterSources,
         )

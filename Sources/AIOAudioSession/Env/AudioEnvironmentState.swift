@@ -43,6 +43,21 @@
           selectedNumberOfChannels: env.input?.channelCount ?? .mono,
         )
       }
+
+      /// Off-main variant of ``mirrored(env:sourceFilter:)``.
+      ///
+      /// `mirrored` performs ~5 synchronous `AVAudioSession` reads
+      /// (`currentRoute`, `availableInputs`, `inputDataSource(s)`, `sampleRate`),
+      /// each a mediaserverd XPC round-trip. `@concurrent` runs them off the main
+      /// actor (required under this package's `NonisolatedNonsendingByDefault`);
+      /// the caller assigns the returned snapshot to cached state back on main.
+      @concurrent
+      static func mirroredOffMain(
+        env: AudioEnvironment,
+        sourceFilter: @escaping @Sendable ([AudioSource], ChannelCount) -> [AudioSource],
+      ) async -> Self {
+        mirrored(env: env, sourceFilter: sourceFilter)
+      }
     }
   }
 #endif

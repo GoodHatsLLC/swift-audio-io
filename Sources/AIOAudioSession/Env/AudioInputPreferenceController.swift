@@ -322,9 +322,11 @@
 
       @discardableResult
       @MainActor
-      func updateAudioInputs(reason: String) -> AudioDeviceChangeSummary? {
+      func updateAudioInputs(reason: String) async -> AudioDeviceChangeSummary? {
         let previousState = owner.state
-        let nextState = AudioEnvironmentState.mirrored(
+        // Snapshot the session off the main actor (5 mediaserverd XPC reads),
+        // then diff + assign cached state back on main.
+        let nextState = await AudioEnvironmentState.mirroredOffMain(
           env: owner.env,
           sourceFilter: owner.filterSources,
         )
