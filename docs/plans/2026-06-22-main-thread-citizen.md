@@ -272,19 +272,30 @@ independently verified) → macOS `swift test` + iOS Simulator full suite → co
 A 12-module audit (each finding adversarially verified) found **13 main-thread blockers**; 3 surgical
 ones are fixed above. The remainder, by root cause:
 
-- **Root cause A — highest leverage (6 findings).** `AVAudioSession` input-preference **writes** on the
-  `@MainActor` manager that bypass the project's own off-main helper
-  `AudioEnvironmentManager.executeInputConfiguration` (`DetachedOwnedWork` → `Task.detached`, lines
-  204-269, already used by `applyMono`/`applyStereo`). Sites: `AudioInputPreferenceController`
-  `setSelectedInput` / `setSelectedSource` / `setSampleRate`; `AudioInputPreferenceRestorer`
-  `restorePreferredInputAndConfigurationIfPossible`; the lifecycle orientation handler
-  (`setPreferredInputOrientation` — `executeInputConfiguration` already has an `inputOrientation` plan
-  field); `updateAudioInputs` → `AudioEnvironmentState.mirrored` (~5 chained session reads on every
-  route-change + the 15/30s poll). Net: stacked mediaserverd XPC on every route-change and device
-  selection. Migration pattern: compute plan from cached state on main → `await` the detached XPC
-  off-main → re-sync cached state. **Risk:** touches device-selection logic; the public setters are
-  sync, so they must become async or schedule the work (as `updateRecordingTapInterval` does). Worth a
-  dedicated, reviewed pass. (Explicitly NOT `setActive`/`setCategory` — the DTS deferral.)
+- **Root cause A — highest leverage (6 findings). PARTIALLY SHIPPED (`3c24731`, `9e10727`).** The
+  `AVAudioSession` input-preference IPC on the `@MainActor` manager that bypassed the project's own
+  off-main helper `AudioEnvironmentManager.executeInputConfiguration` (`DetachedOwnedWork` →
+  `Task.detached`).
+  - ✅ **A.1 (`3c24731`):** `updateAudioInputs` → `AudioEnvironmentState.mirrored` (~5 chained session
+    reads on every route-change + the 15/30s poll) now snapshots off-main via a `@concurrent`
+    `mirroredOffMain` (`filterSources` made `nonisolated`), then diffs + assigns cached state on main.
+    The preference restorer mirrors off-main too. Highest-frequency slice; reads only, no API change.
+  - ✅ **A.2 (`9e10727`):** the device-rotation handler routes `setPreferredInputOrientation` through
+    `executeInputConfiguration`; the restorer's `request(input:)` moves into a `@concurrent` helper.
+    Both are already serialized by their `for await` / awaited-restore flows.
+  - ⏳ **Setters NOT shipped:** `setSelectedInput` / `setSelectedSource` / `setSampleRate`. These are
+    sync **bindable** `@MainActor` properties (can't `await`), so they must enqueue off-main work. An
+    attempt using a cancel-on-set replacing slot (`inputPreferenceWriteTask`) was **reverted** —
+    adversarial review proved it does NOT serialize the hardware writes: `@concurrent` runs the
+    `env.request()` XPC in true parallel on the global pool, and `cancelNow()` only flags the `Task`
+    (it cannot interrupt an in-flight synchronous `setPreferred*` XPC), so `request(source:)`'s live
+    `currentRoute` read can be corrupted by a concurrent write. **Correct approach (TODO):** a single
+    **serial** async write-pipeline (serial `DispatchQueue` / `AsyncStream` consumer — FIFO, so XPC
+    never overlaps and cached-state assignments apply in request order) + an unconditional full
+    re-mirror after each committed write. The setters stay on-main meanwhile (unchanged original
+    behavior — a ~100-500 ms freeze on manual device selection, pre-existing, not a regression).
+    Lesson: cancel-on-set / replacing slots ≠ serialization for non-interruptible synchronous XPC.
+  (Explicitly NOT `setActive`/`setCategory` — the DTS deferral.)
 - **Root cause C — visualization pipeline bring-up (3 findings).** `AudioVisualizationEngine.subscribe`
   / `VisualizationSubscription.cancel` synchronously build the FFT plan + ring/scratch buffers
   (`AnalysisPipeline.init`), allocate the multi-MB `MultiBandLODProcessor`, and run a `queue.sync`
