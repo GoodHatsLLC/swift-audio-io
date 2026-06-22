@@ -133,9 +133,27 @@
       }
     }
 
+    /// Brings up a recording **off the main actor**.
+    ///
+    /// `@concurrent` is load-bearing: this package enables
+    /// `NonisolatedNonsendingByDefault` (SE-0461), under which a plain
+    /// `nonisolated async` inherits the caller's actor. This function is awaited
+    /// from the `@MainActor` reconciliation path, so without `@concurrent` its
+    /// body — including the off-main `performWarm` (audio-session IPC, file open,
+    /// ring-buffer allocation) — would run ON the main actor, reintroducing the
+    /// recording-start main-thread hang this design exists to prevent. The
+    /// genuinely main-isolated work is hopped explicitly via `MainActor.run`
+    /// (PREP / PUBLISH / failure) and `withEngineControlQueue*`.
+    @concurrent
     nonisolated func startRecording(
       configuration: RecordingConfiguration,
     ) async throws(RecordingError) -> URL {
+      #if DEBUG
+        // Prove the bring-up runs off the main actor (see the doc comment). The
+        // `performWarm` path below cannot assert this itself — it is also called
+        // synchronously on the main actor by the intentionally-sync `warm()`.
+        dispatchPrecondition(condition: .notOnQueue(.main))
+      #endif
       do {
         // (a) Stop any active player on the engine-control queue (unchanged).
         let shouldStopPlayer = await owner.withEngineControlQueue { [weak owner] in
@@ -414,14 +432,21 @@
 
     /// Off-main file preparation for ``rotateRecordingFile()``: resolve the next
     /// output URL, open the writer, and apply file protection. All three are
-    /// `nonisolated` blocking file I/O, so this `nonisolated async` helper runs
-    /// them on the global executor (off the main actor) when awaited from the
-    /// `@MainActor` rotate path. `writerBackend` is captured on the main actor by
-    /// the caller and passed in (it is `@MainActor`-isolated state).
+    /// blocking file I/O. `@concurrent` forces this body onto the global executor
+    /// (off the main actor) even when awaited from the `@MainActor` rotate path —
+    /// REQUIRED under this package's `NonisolatedNonsendingByDefault` (SE-0461),
+    /// where a plain `nonisolated async` function would inherit the caller's
+    /// (main) actor and block the main thread. `writerBackend` is captured on the
+    /// main actor by the caller and passed in (it is `@MainActor`-isolated state).
+    @concurrent
     nonisolated func prepareRotatedRecordingFile(
       configuration: RecordingConfiguration,
       writerBackend: WriterBackend,
     ) async throws(RecordingError) -> (writer: any RecordingFileWriter, url: URL) {
+      #if DEBUG
+        // Off-main contract enforced at the executor (main-actor) level.
+        dispatchPrecondition(condition: .notOnQueue(.main))
+      #endif
       let (newURL, protection): (URL, OutputFileProtection?) = try owner.resolveOutputURL(
         for: configuration,
         allowExplicitFile: false,
@@ -438,10 +463,17 @@
     /// Off-main cleanup for a prepared rotation file that will not be used (a
     /// stop completed while the file was being prepared): finalize and delete the
     /// just-opened empty file so it is not left in the output destination.
+    /// `@concurrent` keeps the blocking close + delete off the main actor (see
+    /// ``prepareRotatedRecordingFile(configuration:writerBackend:)``).
+    @concurrent
     nonisolated func discardPreparedRotationFile(
       writer: any RecordingFileWriter,
       url: URL,
     ) async {
+      #if DEBUG
+        // Off-main contract enforced at the executor (main-actor) level.
+        dispatchPrecondition(condition: .notOnQueue(.main))
+      #endif
       writer.close()
       try? FileManager.default.removeItem(at: url)
     }
