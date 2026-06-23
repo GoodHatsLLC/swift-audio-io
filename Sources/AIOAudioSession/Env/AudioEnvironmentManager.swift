@@ -169,6 +169,15 @@
     let errorManager: any ErrorManaging
     let preferenceStore: AudioEnvironmentPreferenceStore
     @ObservationIgnored var callbackTasks = MainActorTaskRunner()
+    /// Serializes every AVAudioSession input-preference XPC mutation — the
+    /// bindable setters (`setSelectedInput`/`setSelectedSource`/`setSampleRate`),
+    /// `applyMono`/`applyStereo`/`applySourceConfiguration`, the orientation
+    /// handler, and the preference restorer — onto a single FIFO off-main
+    /// consumer. The `setPreferred*` round-trips to `mediaserverd` are
+    /// synchronous and non-interruptible, so this is the only way to guarantee
+    /// they never overlap (a cancel-on-set slot can't interrupt an in-flight
+    /// XPC) and that cached-state write-backs land in request order.
+    @ObservationIgnored let inputWriteQueue = SerialAsyncWorkQueue()
     typealias PersistedInputPreferences = AudioEnvironmentPreferenceStore.InputPreferences
     private var lifecycleRuntime: AudioEnvironmentLifecycleRuntime { .init(owner: self) }
     var sessionBootstrap: AudioSessionBootstrap { .init(owner: self) }
@@ -209,11 +218,16 @@
     ///
     /// - Note: `setCategory` and `setActive` intentionally remain on MainActor per Apple
     ///   DTS guidance. Only input-preference calls are moved here.
+    ///
+    /// The work is submitted to ``inputWriteQueue`` so it is serialized FIFO
+    /// against the setters and the restorer — the blocking XPC never overlaps
+    /// another input-preference write.
     nonisolated static func executeInputConfiguration(
       _ plan: InputConfigurationPlan,
       session: AVAudioSession,
+      queue: SerialAsyncWorkQueue,
     ) async throws(ManagerError) {
-      let work = DetachedOwnedWork<Result<Void, ManagerError>> {
+      let outcome: Result<Void, ManagerError>? = await queue.submit {
         () async -> Result<
           Void, ManagerError
         > in
@@ -260,10 +274,13 @@
         }
         return .success(())
       }
-      switch await work.value {
-      case .success:
+      switch outcome {
+      case .none:
+        // Queue finished (manager teardown) — the write did not run; no-op.
         return
-      case .failure(let managerError):
+      case .some(.success):
+        return
+      case .some(.failure(let managerError)):
         throw managerError
       }
     }

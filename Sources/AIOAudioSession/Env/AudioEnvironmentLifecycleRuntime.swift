@@ -156,7 +156,7 @@
               plan.inputOrientation = orientation
               do {
                 try await AudioEnvironmentManager.executeInputConfiguration(
-                  plan, session: owner.session,
+                  plan, session: owner.session, queue: owner.inputWriteQueue,
                 )
               } catch {
                 owner.errorManager.enqueue(error)

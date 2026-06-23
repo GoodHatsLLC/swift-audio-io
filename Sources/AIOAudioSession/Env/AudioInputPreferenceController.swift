@@ -12,14 +12,40 @@
     package struct AudioInputPreferenceController {
       let owner: AudioEnvironmentManager
 
+      // The three bindable setters below are synchronous `@MainActor` properties
+      // that cannot `await`, yet each drives a blocking `setPreferred*` XPC
+      // round-trip to `mediaserverd` (100–500 ms). They enqueue the whole
+      // read-write sequence onto ``inputWriteQueue`` (FIFO, off-main), so the
+      // main thread never blocks and the writes never overlap any other
+      // input-preference write. The input/source setters commit a full hardware
+      // re-read (``AudioEnvironmentState/current(env:availableSources:selectedSource:)``)
+      // on a main hop; `setSampleRate` updates only `_selectedSampleRate` (the
+      // sole field a rate change affects), matching the original. `isRestoringFromDefaults`
+      // is sampled synchronously at call time (matching the old inline behavior)
+      // and used to suppress persistence during a restore.
+
       @MainActor
       func setSampleRate(_ newValue: SampleRate, persistPreference: Bool) {
-        owner.errorManager.report {
-          try owner.env.request(sampleRate: newValue)
-          owner._selectedSampleRate = newValue
-          owner.callbackTasks.run { [weak owner] in
-            guard let owner else { return }
-            let actual = owner.env.sampleRate
+        let suppressRestore = owner.isRestoringFromDefaults
+        owner.inputWriteQueue.enqueue { [self] in
+          let env = owner.env
+          // Logging and error handling stay off-main (os.Logger and
+          // `errorManager` are both thread-safe), so only Sendable scalars cross
+          // to the main hop — avoids smuggling a non-Sendable `any Error`.
+          var failed = false
+          do {
+            try env.request(sampleRate: newValue)
+          } catch {
+            failed = true
+            audioInputPreferenceLog.error(
+              """
+              􁐚 Sample rate \(newValue, privacy: .public) failed with: \
+              \(error, privacy: .public) Rate is \(env.sampleRate, privacy: .public).
+              """,
+            )
+          }
+          let actual = env.sampleRate
+          if !failed {
             if actual == newValue {
               audioInputPreferenceLog.info(
                 "􁐚 Sample rate set to requested value: \(newValue, privacy: .public)",
@@ -31,38 +57,28 @@
                 Set to \(actual, privacy: .public)
                 """,
               )
-              if persistPreference {
-                persistInputPreferencesIfNeeded { prefs in
-                  var rejected = Set(prefs.rejectedSampleRatesHz ?? [])
-                  rejected.insert(newValue.hz)
-                  rejected.remove(actual.hz)
-                  prefs.rejectedSampleRatesHz = rejected.sorted()
-                }
-              }
-              owner._selectedSampleRate = actual
-            }
-            if persistPreference {
-              persistInputPreferencesIfNeeded { prefs in
-                prefs.sampleRateHz = actual.hz
-              }
             }
           }
-        } catch: { error in
-          let actual = owner.env.sampleRate
-          owner._selectedSampleRate = owner.env.sampleRate
-          audioInputPreferenceLog.error(
-            """
-            􁐚 Sample rate \(newValue, privacy: .public) failed with: \(error, privacy: .public) \
-            Rate is \(actual, privacy: .public).
-            """,
-          )
-          if persistPreference {
-            persistInputPreferencesIfNeeded { prefs in
+          let rejectedOrFailed = failed || actual != newValue
+          let baseline = persistBaseline(env: env)
+          let persistAllowed = persistPreference && !suppressRestore
+
+          await MainActor.run {
+            // A sample-rate request changes only the rate — not the data source,
+            // available sources, inputs, or channel config — so (matching the
+            // original) update only `_selectedSampleRate`. A full re-mirror via
+            // `current(env:)` would reintroduce mono-hidden stereo-only sources
+            // and overwrite the selected source.
+            owner._selectedSampleRate = actual
+            guard persistAllowed else { return }
+            persistFromBaseline(baseline) { prefs in
               prefs.sampleRateHz = actual.hz
-              var rejected = Set(prefs.rejectedSampleRatesHz ?? [])
-              rejected.insert(newValue.hz)
-              rejected.remove(actual.hz)
-              prefs.rejectedSampleRatesHz = rejected.sorted()
+              if rejectedOrFailed {
+                var rejected = Set(prefs.rejectedSampleRatesHz ?? [])
+                rejected.insert(newValue.hz)
+                rejected.remove(actual.hz)
+                prefs.rejectedSampleRatesHz = rejected.sorted()
+              }
             }
           }
         }
@@ -70,63 +86,103 @@
 
       @MainActor
       func setSelectedInput(_ newValue: AudioInput?) {
-        do {
-          try owner.env.request(input: newValue)
+        let suppressRestore = owner.isRestoringFromDefaults
+        owner.inputWriteQueue.enqueue { [self] in
+          let env = owner.env
+          do {
+            try env.request(input: newValue)
 
-          var validSources = owner.env.input?.availableSources ?? []
-          var selectedSource = owner.env.source
-          if let currentSource = selectedSource, validSources.contains(currentSource) {
-            selectedSource = currentSource
-          } else {
-            selectedSource = nil
-            do {
-              if let fallback = validSources.first {
-                try owner.env.request(source: fallback)
-                selectedSource = owner.env.source
-              } else {
-                try owner.env.request(source: nil)
+            var validSources = env.input?.availableSources ?? []
+            var selectedSource = env.source
+            if let currentSource = selectedSource, validSources.contains(currentSource) {
+              selectedSource = currentSource
+            } else {
+              selectedSource = nil
+              do {
+                if let fallback = validSources.first {
+                  try env.request(source: fallback)
+                  selectedSource = env.source
+                } else {
+                  try env.request(source: nil)
+                }
+              } catch {
+                owner.errorManager.enqueue(error)
               }
-            } catch {
-              owner.errorManager.enqueue(error)
             }
-          }
 
-          validSources = owner.env.input?.availableSources ?? validSources
-          owner.state = AudioEnvironmentState.current(
-            env: owner.env,
-            availableSources: validSources,
-            selectedSource: selectedSource,
-          )
-          persistInputPreferencesIfNeeded { prefs in
-            prefs.sampleRateHz = owner.env.sampleRate.hz
-            prefs.channelCount = owner.channels.count
-            prefs.sourceId = owner.env.source?.id
+            validSources = env.input?.availableSources ?? validSources
+            let state = AudioEnvironmentState.current(
+              env: env,
+              availableSources: validSources,
+              selectedSource: selectedSource,
+            )
+            let baseline = persistBaseline(env: env)
+            // Matches the old `owner.channels.count` read taken *after* the state
+            // assign: `current(env:)` sets `selectedNumberOfChannels` to
+            // `env.input?.channelCount`.
+            let channelCount = (env.input?.channelCount ?? .mono).count
+            let sampleRateHz = env.sampleRate.hz
+            let sourceId = env.source?.id
+
+            await MainActor.run {
+              owner.state = state
+              if !suppressRestore {
+                persistFromBaseline(baseline) { prefs in
+                  prefs.sampleRateHz = sampleRateHz
+                  prefs.channelCount = channelCount
+                  prefs.sourceId = sourceId
+                }
+              }
+            }
+          } catch {
+            owner.errorManager.enqueue(error)
           }
-        } catch {
-          owner.errorManager.enqueue(error)
         }
       }
 
       @MainActor
       func setSelectedSource(_ newValue: AudioSource?) {
         if let newValue, !owner.availableSources.contains(newValue) {
-          owner._selectedSource = owner.env.source
+          // Invalid selection: re-sync the cached source from the live route,
+          // reading it off-main on the same FIFO queue.
+          owner.inputWriteQueue.enqueue { [self] in
+            let actual = owner.env.source
+            await MainActor.run { owner._selectedSource = actual }
+          }
           return
         }
-        do {
-          try owner.env.request(source: newValue)
-          owner.state = AudioEnvironmentState.current(env: owner.env)
-          persistInputPreferencesIfNeeded { prefs in
-            prefs.sourceId = owner.env.source?.id
-          }
-        } catch {
-          owner.state = AudioEnvironmentState.current(
-            env: owner.env,
-            availableSources: owner.env.input?.availableSources ?? [],
-          )
-          owner.errorManager.enqueue(error)
-          persistInputPreferencesIfNeeded { prefs in
-            prefs.sourceId = owner.env.source?.id
+        let suppressRestore = owner.isRestoringFromDefaults
+        owner.inputWriteQueue.enqueue { [self] in
+          let env = owner.env
+          do {
+            try env.request(source: newValue)
+            let state = AudioEnvironmentState.current(env: env)
+            let baseline = persistBaseline(env: env)
+            let sourceId = env.source?.id
+            await MainActor.run {
+              owner.state = state
+              if !suppressRestore {
+                persistFromBaseline(baseline) { prefs in
+                  prefs.sourceId = sourceId
+                }
+              }
+            }
+          } catch {
+            let state = AudioEnvironmentState.current(
+              env: env,
+              availableSources: env.input?.availableSources ?? [],
+            )
+            let baseline = persistBaseline(env: env)
+            let sourceId = env.source?.id
+            owner.errorManager.enqueue(error)  // nonisolated; keep off the main hop
+            await MainActor.run {
+              owner.state = state
+              if !suppressRestore {
+                persistFromBaseline(baseline) { prefs in
+                  prefs.sourceId = sourceId
+                }
+              }
+            }
           }
         }
       }
@@ -184,7 +240,9 @@
           )
         }
 
-        try await AudioEnvironmentManager.executeInputConfiguration(plan, session: owner.session)
+        try await AudioEnvironmentManager.executeInputConfiguration(
+          plan, session: owner.session, queue: owner.inputWriteQueue,
+        )
 
         if persistPreference {
           persistInputPreferencesIfNeeded { prefs in
@@ -216,6 +274,7 @@
               input: input,
               session: session,
               currentOrientation: currentOrientation,
+              queue: owner.inputWriteQueue,
             )
           }
 
@@ -249,8 +308,9 @@
         input: AudioInput,
         session: AVAudioSession,
         currentOrientation: AVAudioSession.StereoOrientation,
+        queue: SerialAsyncWorkQueue,
       ) async throws {
-        let work = DetachedOwnedWork<Result<Void, any Error>> {
+        let outcome: Result<Void, any Error>? = await queue.submit {
           () async -> Result<
             Void, any Error
           > in
@@ -274,7 +334,8 @@
           }
           return .success(())
         }
-        try await work.value.get()
+        // `nil` outcome = queue finished during teardown; treat as a no-op.
+        try outcome?.get()
       }
 
       @MainActor
@@ -311,7 +372,9 @@
           )
         }
 
-        try await AudioEnvironmentManager.executeInputConfiguration(plan, session: owner.session)
+        try await AudioEnvironmentManager.executeInputConfiguration(
+          plan, session: owner.session, queue: owner.inputWriteQueue,
+        )
 
         if persistPreference {
           persistInputPreferencesIfNeeded { prefs in
@@ -348,6 +411,45 @@
           "\(reason, privacy: .public): \(summary.description, privacy: .public)",
         )
         return summary
+      }
+
+      /// The `mediaserverd`-derived baseline that ``persistFromBaseline(_:_:)``
+      /// needs, snapshot **off the main actor** so the bindable setters never do
+      /// XPC reads on the main thread. Mirrors the reads
+      /// ``persistInputPreferencesIfNeeded(_:)`` performs inline.
+      struct PersistBaseline: Sendable {
+        let inputId: String
+        let currentSampleRate: SampleRate
+        let isConfiguredForStereo: Bool
+        let currentSourceId: String?
+      }
+
+      nonisolated private func persistBaseline(env: AudioEnvironment) -> PersistBaseline {
+        PersistBaseline(
+          inputId: env.input?.id ?? "_default",
+          currentSampleRate: env.sampleRate,
+          isConfiguredForStereo: env.session.inputNumberOfChannels > 1,
+          currentSourceId: env.source?.id,
+        )
+      }
+
+      /// Persists using a pre-computed off-main ``PersistBaseline``. Unlike
+      /// ``persistInputPreferencesIfNeeded(_:)`` this performs no XPC reads (the
+      /// caller sampled them off-main) and does not re-check
+      /// `isRestoringFromDefaults` — the bindable setters sample that at call
+      /// time and gate the call themselves.
+      @MainActor
+      private func persistFromBaseline(
+        _ baseline: PersistBaseline,
+        _ update: (inout PersistedInputPreferences) -> Void,
+      ) {
+        owner.preferenceStore.update(
+          inputId: baseline.inputId,
+          currentSampleRate: baseline.currentSampleRate,
+          isConfiguredForStereo: baseline.isConfiguredForStereo,
+          currentSourceId: baseline.currentSourceId,
+          update,
+        )
       }
 
       @MainActor

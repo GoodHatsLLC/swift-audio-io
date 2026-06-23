@@ -272,7 +272,7 @@ independently verified) → macOS `swift test` + iOS Simulator full suite → co
 A 12-module audit (each finding adversarially verified) found **13 main-thread blockers**; 3 surgical
 ones are fixed above. The remainder, by root cause:
 
-- **Root cause A — highest leverage (6 findings). PARTIALLY SHIPPED (`3c24731`, `9e10727`).** The
+- **Root cause A — highest leverage (6 findings). SHIPPED (`3c24731`, `9e10727`, + setters below).** The
   `AVAudioSession` input-preference IPC on the `@MainActor` manager that bypassed the project's own
   off-main helper `AudioEnvironmentManager.executeInputConfiguration` (`DetachedOwnedWork` →
   `Task.detached`).
@@ -283,18 +283,31 @@ ones are fixed above. The remainder, by root cause:
   - ✅ **A.2 (`9e10727`):** the device-rotation handler routes `setPreferredInputOrientation` through
     `executeInputConfiguration`; the restorer's `request(input:)` moves into a `@concurrent` helper.
     Both are already serialized by their `for await` / awaited-restore flows.
-  - ⏳ **Setters NOT shipped:** `setSelectedInput` / `setSelectedSource` / `setSampleRate`. These are
-    sync **bindable** `@MainActor` properties (can't `await`), so they must enqueue off-main work. An
-    attempt using a cancel-on-set replacing slot (`inputPreferenceWriteTask`) was **reverted** —
-    adversarial review proved it does NOT serialize the hardware writes: `@concurrent` runs the
-    `env.request()` XPC in true parallel on the global pool, and `cancelNow()` only flags the `Task`
-    (it cannot interrupt an in-flight synchronous `setPreferred*` XPC), so `request(source:)`'s live
-    `currentRoute` read can be corrupted by a concurrent write. **Correct approach (TODO):** a single
-    **serial** async write-pipeline (serial `DispatchQueue` / `AsyncStream` consumer — FIFO, so XPC
-    never overlaps and cached-state assignments apply in request order) + an unconditional full
-    re-mirror after each committed write. The setters stay on-main meanwhile (unchanged original
-    behavior — a ~100-500 ms freeze on manual device selection, pre-existing, not a regression).
-    Lesson: cancel-on-set / replacing slots ≠ serialization for non-interruptible synchronous XPC.
+  - ✅ **Setters SHIPPED — serial write-pipeline.** `setSelectedInput` / `setSelectedSource` /
+    `setSampleRate` are sync **bindable** `@MainActor` properties (can't `await`), so they enqueue
+    off-main work. The earlier cancel-on-set replacing-slot (`inputPreferenceWriteTask`) was
+    **reverted** — it does NOT serialize the hardware writes: `@concurrent` runs the `env.request()`
+    XPC in true parallel on the global pool, and `cancelNow()` only flags the `Task` (it cannot
+    interrupt an in-flight synchronous `setPreferred*` XPC), so `request(source:)`'s live
+    `currentRoute` read can be corrupted by a concurrent write. **The shipped fix is the documented
+    one:** a new `SerialAsyncWorkQueue` primitive (`Sources/Tools/Async/`) — a single FIFO consumer
+    on a `Task.detached` task (off-main under SE-0461) over an `AsyncStream<Job>`; `enqueue` =
+    fire-and-forget (the sync setters), `submit`/`submit<T>` = await-completion (async callers). It
+    is the **single funnel** for *every* input-preference XPC write: the 3 setters (`enqueue`),
+    `executeInputConfiguration` (applyMono/applySourceConfiguration + orientation), `executeStereoPreference`
+    (applyStereo), the restorer's `request(input:)`, and the startup
+    `AudioSessionBootstrap.configureInitialSession` (all `submit`). Because `enqueue` and `submit`
+    share one FIFO, a fire-and-forget setter issued before an awaited call is guaranteed to complete
+    first — this keeps the restorer's `owner.sampleRate = X` → `await applyStereo()` sequence from
+    overlapping. The setters run the whole read-write sequence off-main and commit on a brief main
+    hop: the input/source setters via a full hardware re-read (`current(env:)`, preserved from the
+    original), `setSampleRate` via a partial `_selectedSampleRate` update (a rate change touches no
+    other field; a full re-mirror via `current(env:)` would clobber the mono-filtered sources —
+    caught in adversarial review). Logging + `errorManager.enqueue` stay off-main so no non-`Sendable`
+    `any Error` crosses isolation. Adversarial review: 4 lenses (ordering / isolation / behavior /
+    lifetime), 24 raw findings, 2 confirmed (both fixed: the setSampleRate re-mirror; the bootstrap
+    out-of-funnel write). macOS 222 + iOS 245 green. Lesson stands: cancel-on-set / replacing slots
+    ≠ serialization for non-interruptible synchronous XPC — you need a genuine serial executor.
   (Explicitly NOT `setActive`/`setCategory` — the DTS deferral.)
 - **Root cause C — visualization pipeline bring-up (3 findings).** `AudioVisualizationEngine.subscribe`
   / `VisualizationSubscription.cancel` synchronously build the FFT plan + ring/scratch buffers

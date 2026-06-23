@@ -30,18 +30,30 @@
         try rebuildSessionConfiguration(configuration: configuration)
 
         do {
-          try await withThrowingTaskGroup(of: Void.self) { group in
-            group.addTask {
-              do {
-                try env.request(
-                  input: env.input
-                    ?? env.availableInputs.first(where: { $0.avAudio.portType == .builtInMic }),
-                )
-              } catch let error as AudioEnvironment.RequestError {
-                throw ManagerError.audioEnvironment(error)
-              }
+          // Route the startup `setPreferredInput` XPC through `inputWriteQueue`
+          // (off-main + FIFO) rather than a one-off task group. The bindable
+          // setters don't gate on readiness, so a UI binding could enqueue a
+          // write during this cold-start window; funneling here keeps the
+          // "input-preference writes never overlap" invariant intact.
+          let requestError: (any Error)? = await owner.inputWriteQueue.submit {
+            () -> (any Error)? in
+            do {
+              try env.request(
+                input: env.input
+                  ?? env.availableInputs.first(where: { $0.avAudio.portType == .builtInMic }),
+              )
+              return nil
+            } catch {
+              return error
             }
-            try await group.waitForAll()
+          } ?? nil
+          if let requestError {
+            // `request(input:)` only throws `RequestError`; the cast always
+            // succeeds (the fallback is defensive).
+            if let requestError = requestError as? AudioEnvironment.RequestError {
+              throw ManagerError.audioEnvironment(requestError)
+            }
+            throw ManagerError.unexpected(ErrorContext(requestError))
           }
 
           await owner.restorePreferredInputAndConfigurationIfPossible(reason: "run() startup")

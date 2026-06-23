@@ -13,25 +13,29 @@
 
       /// Resolves and applies the persisted preferred input **off the main
       /// actor** (the `availableInputs` read and the `request(input:)` write are
-      /// mediaserverd XPC). Returns a thrown error, or `nil` if nothing needed
-      /// doing.
-      @concurrent
+      /// mediaserverd XPC). Submits through ``inputWriteQueue`` so the input
+      /// request is serialized FIFO against the setters and `apply*` writes that
+      /// follow it in the restore flow. Returns a thrown error, or `nil` if
+      /// nothing needed doing.
       private static func applyPreferredInputIfNeededOffMain(
         preferredInputId: String,
         env: AudioEnvironment,
+        queue: SerialAsyncWorkQueue,
       ) async -> (any Error)? {
-        guard
-          let preferredInput = env.availableInputs.first(where: { $0.id == preferredInputId }),
-          env.input?.id != preferredInputId
-        else {
-          return nil
-        }
-        do {
-          try env.request(input: preferredInput)
-          return nil
-        } catch {
-          return error
-        }
+        await queue.submit { () async -> (any Error)? in
+          guard
+            let preferredInput = env.availableInputs.first(where: { $0.id == preferredInputId }),
+            env.input?.id != preferredInputId
+          else {
+            return nil
+          }
+          do {
+            try env.request(input: preferredInput)
+            return nil
+          } catch {
+            return error
+          }
+        } ?? nil
       }
 
       @MainActor
@@ -46,7 +50,7 @@
           let preferredInputId = owner.preferenceStore.preferredInputId
         {
           if let error = await Self.applyPreferredInputIfNeededOffMain(
-            preferredInputId: preferredInputId, env: owner.env,
+            preferredInputId: preferredInputId, env: owner.env, queue: owner.inputWriteQueue,
           ) {
             owner.errorManager.enqueue(error)
           }
