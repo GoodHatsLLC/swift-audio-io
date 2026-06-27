@@ -35,7 +35,8 @@
     func `format accessor returns the source-specific format`() {
       let format = microphoneFormat()
       let configuration = RecordingConfiguration(
-        input: .microphone(MicrophoneRecordingInput(format: format, tapInterval: .milliseconds(100))),
+        input: .microphone(
+          MicrophoneRecordingInput(format: format, tapInterval: .milliseconds(100))),
         outputConfiguration: output(),
       )
       #expect(configuration.format == format)
@@ -54,6 +55,24 @@
     }
 
     @Test
+    func `microphone input can carry a preferred audio input selection`() {
+      let selection = AudioInputSelection(
+        id: "usb-interface",
+        name: "USB Interface",
+        type: .usbAudio,
+        channelCount: .stereo,
+      )
+      let input = MicrophoneRecordingInput(
+        format: microphoneFormat(),
+        tapInterval: .milliseconds(25),
+        preferredInput: selection,
+      )
+
+      #expect(input.preferredInput == selection)
+      #expect(input.preferredInput?.description == "USB Interface")
+    }
+
+    @Test
     func `convenience and explicit inits produce equal, equally-hashing configurations`() {
       let format = microphoneFormat()
       let viaConvenience = RecordingConfiguration(
@@ -62,7 +81,8 @@
         tapInterval: .milliseconds(100),
       )
       let viaExplicit = RecordingConfiguration(
-        input: .microphone(MicrophoneRecordingInput(format: format, tapInterval: .milliseconds(100))),
+        input: .microphone(
+          MicrophoneRecordingInput(format: format, tapInterval: .milliseconds(100))),
         outputConfiguration: output(),
       )
       #expect(viaConvenience == viaExplicit)
@@ -70,10 +90,37 @@
     }
 
     @Test
+    func `different preferred microphone inputs are not equal`() {
+      let format = microphoneFormat()
+      let first = RecordingConfiguration(
+        input: .microphone(
+          MicrophoneRecordingInput(
+            format: format,
+            preferredInput: AudioInputSelection(id: "usb-a", name: "USB A", type: .usbAudio),
+          ),
+        ),
+        outputConfiguration: output(),
+      )
+      let second = RecordingConfiguration(
+        input: .microphone(
+          MicrophoneRecordingInput(
+            format: format,
+            preferredInput: AudioInputSelection(id: "usb-b", name: "USB B", type: .usbAudio),
+          ),
+        ),
+        outputConfiguration: output(),
+      )
+
+      #expect(first != second)
+    }
+
+    @Test
     func `different tap intervals are not equal`() {
       let format = microphoneFormat()
-      let a = RecordingConfiguration(inputConfiguration: format, outputConfiguration: output(), tapInterval: .milliseconds(50))
-      let b = RecordingConfiguration(inputConfiguration: format, outputConfiguration: output(), tapInterval: .milliseconds(100))
+      let a = RecordingConfiguration(
+        inputConfiguration: format, outputConfiguration: output(), tapInterval: .milliseconds(50))
+      let b = RecordingConfiguration(
+        inputConfiguration: format, outputConfiguration: output(), tapInterval: .milliseconds(100))
       #expect(a != b)
     }
   }

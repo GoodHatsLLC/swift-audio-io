@@ -331,7 +331,7 @@
       return AudioInput(
         id: descriptor.id,
         name: descriptor.name,
-        type: .unknown,
+        type: descriptor.type,
         channelCount: supportsStereo ? .stereo : .mono,
         availableSources: [defaultSource],
       )

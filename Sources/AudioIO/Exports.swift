@@ -46,6 +46,7 @@
   public typealias AudioEnvironment = AIOAudioSession.AudioEnvironment
   public typealias AudioEnvironmentManager = AIOAudioSession.AudioEnvironmentManager
   public typealias AudioInput = AIOAudioSession.AudioInput
+  public typealias AudioInputSelection = AIOAudioSession.AudioInputSelection
   public typealias AudioInterruptionOptions = AIOAudioSession.AudioInterruptionOptions
   public typealias AudioInterruptionType = AIOAudioSession.AudioInterruptionType
   public typealias AudioRouteChangeEvent = AIOAudioSession.AudioRouteChangeEvent

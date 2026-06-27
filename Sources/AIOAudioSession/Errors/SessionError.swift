@@ -32,6 +32,14 @@
     /// A system audio-session operation failed.
     case operationFailed(operation: Operation, error: ErrorContext)
 
+    /// The requested preferred recording input was not available to the active
+    /// audio session.
+    case preferredInputUnavailable(id: String, name: String)
+
+    /// The audio session accepted a preferred input request, but the current
+    /// route has not yet switched to that input.
+    case preferredInputRouteMismatch(id: String, name: String, currentInputIDs: [String])
+
     /// The underlying `AVAudioEngine` failed to start.
     case engineStartFailed(error: ErrorContext)
 
@@ -41,6 +49,10 @@
         "Audio session not ready: \(details)"
       case .operationFailed(let operation, let error):
         "Audio session operation '\(operation)' failed: \(error)"
+      case .preferredInputUnavailable(let id, let name):
+        "Preferred input '\(name)' (\(id)) is not available"
+      case .preferredInputRouteMismatch(let id, let name, let currentInputIDs):
+        "Preferred input '\(name)' (\(id)) is not the current route. Current inputs: \(currentInputIDs.joined(separator: ", "))"
       case .engineStartFailed(let error):
         "Audio engine failed to start: \(error)"
       }
@@ -53,7 +65,7 @@
     /// Returns `true` if this error might be transient and worth retrying.
     public var isTransient: Bool {
       switch self {
-      case .notReady: true
+      case .notReady, .preferredInputRouteMismatch: true
       default: false
       }
     }

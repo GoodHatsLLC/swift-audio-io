@@ -81,6 +81,7 @@
         PlatformAudioInputDescriptor(
           id: "mic-b",
           name: "USB Mic",
+          type: .usbAudio,
           channelCount: 2,
           isDefault: true,
         ),
@@ -103,6 +104,7 @@
       #expect(manager.isReady)
       #expect(manager.availableInputs.count == 2)
       #expect(manager.selectedInput?.id == "mic-b")
+      #expect(manager.selectedInput?.type == .usbAudio)
       #expect(manager.selectedInput?.channelCount == .stereo)
 
       await runTask.cancel()
@@ -146,6 +148,7 @@
           PlatformAudioInputDescriptor(
             id: "mic-b",
             name: "USB Mic",
+            type: .usbAudio,
             channelCount: 2,
             isDefault: true,
           )
@@ -157,6 +160,7 @@
 
       #expect(manager.availableInputs.count == 1)
       #expect(manager.selectedInput?.id == "mic-b")
+      #expect(manager.selectedInput?.type == .usbAudio)
       #expect(manager.selectedInput?.channelCount == .stereo)
 
       await runTask.cancel()

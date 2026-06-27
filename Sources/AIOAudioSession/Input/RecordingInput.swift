@@ -1,5 +1,42 @@
 // © GoodHatsLLC
 
+/// A stable, sendable snapshot of a selectable audio input endpoint.
+///
+/// ``AudioInput`` itself is backed by platform objects on iOS. Recording
+/// configurations carry this lightweight value instead, then resolve it against
+/// the live platform route immediately before capture starts.
+public struct AudioInputSelection: Hashable, Sendable, Identifiable, CustomStringConvertible {
+  public let id: String
+  public let name: String
+  public let type: AudioInput.InputType
+  public let channelCount: ChannelCount
+
+  public init(
+    id: String,
+    name: String,
+    type: AudioInput.InputType = .unknown,
+    channelCount: ChannelCount = .mono,
+  ) {
+    self.id = id
+    self.name = name
+    self.type = type
+    self.channelCount = channelCount
+  }
+
+  public init(input: AudioInput) {
+    self.init(
+      id: input.id,
+      name: input.name,
+      type: input.type,
+      channelCount: input.channelCount,
+    )
+  }
+
+  public var description: String {
+    name
+  }
+}
+
 /// The capture source for a recording, with source-specific options.
 ///
 /// Modeled as an enum so callers can only provide options that make sense for
@@ -35,11 +72,21 @@ public struct MicrophoneRecordingInput: Hashable, Sendable {
   /// equivalent — HAL IO cadence is chosen by the hardware, not the caller.
   public var tapInterval: Duration
 
+  /// Preferred physical/logical input endpoint to record from. If `nil`,
+  /// AudioIO uses the platform's current/default input route.
+  public var preferredInput: AudioInputSelection?
+
   /// - Parameters:
   ///   - format: The requested sample rate + channel count.
   ///   - tapInterval: The input-node tap delivery cadence. Defaults to 100 ms.
-  public init(format: InputConfiguration, tapInterval: Duration = .seconds(0.1)) {
+  ///   - preferredInput: Optional input endpoint to select before recording.
+  public init(
+    format: InputConfiguration,
+    tapInterval: Duration = .seconds(0.1),
+    preferredInput: AudioInputSelection? = nil,
+  ) {
     self.format = format
     self.tapInterval = tapInterval
+    self.preferredInput = preferredInput
   }
 }

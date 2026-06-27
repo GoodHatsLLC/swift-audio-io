@@ -7,8 +7,23 @@ import Tools
 struct PlatformAudioInputDescriptor: Hashable {
   let id: String
   let name: String
+  let type: AudioInput.InputType
   let channelCount: Int
   let isDefault: Bool
+
+  init(
+    id: String,
+    name: String,
+    type: AudioInput.InputType = .unknown,
+    channelCount: Int,
+    isDefault: Bool,
+  ) {
+    self.id = id
+    self.name = name
+    self.type = type
+    self.channelCount = channelCount
+    self.isDefault = isDefault
+  }
 }
 
 enum PlatformAudioRouteEvent: Hashable {
@@ -87,6 +102,7 @@ enum PlatformAudioBackendFactory {
         PlatformAudioInputDescriptor(
           id: input.uid,
           name: input.portName,
+          type: AudioInput.InputType(input.portType),
           channelCount: max(input.channels?.count ?? 0, 1),
           isDefault: input.uid == defaultInputID,
         )
@@ -133,6 +149,7 @@ enum PlatformAudioBackendFactory {
         PlatformAudioInputDescriptor(
           id: input.uid,
           name: input.name,
+          type: input.type,
           channelCount: input.channelCount,
           isDefault: input.uid == defaultInputID,
         )
@@ -145,6 +162,7 @@ enum PlatformAudioBackendFactory {
     private struct CoreAudioInput {
       let uid: String
       let name: String
+      let type: AudioInput.InputType
       let channelCount: Int
     }
 
@@ -174,8 +192,35 @@ enum PlatformAudioBackendFactory {
         let name =
           stringProperty(objectID: deviceID, selector: kAudioObjectPropertyName)
           ?? "Audio Input \(uid)"
-        return CoreAudioInput(uid: uid, name: name, channelCount: channels)
+        return CoreAudioInput(
+          uid: uid,
+          name: name,
+          type: AudioInput.InputType(
+            coreAudioTransportType: transportType(deviceID: deviceID),
+          ),
+          channelCount: channels,
+        )
       }
+    }
+
+    private func transportType(deviceID: AudioDeviceID) -> UInt32 {
+      var address = AudioObjectPropertyAddress(
+        mSelector: kAudioDevicePropertyTransportType,
+        mScope: kAudioObjectPropertyScopeGlobal,
+        mElement: kAudioObjectPropertyElementMain,
+      )
+      var value: UInt32 = 0
+      var dataSize = UInt32(MemoryLayout<UInt32>.size)
+      let status = unsafe AudioObjectGetPropertyData(
+        deviceID,
+        &address,
+        0,
+        nil,
+        &dataSize,
+        &value,
+      )
+      guard status == noErr else { return 0 }
+      return value
     }
 
     private func defaultInputDeviceUID() -> String? {

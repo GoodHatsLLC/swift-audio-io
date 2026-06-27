@@ -334,7 +334,11 @@
         }
         return RecordingConfiguration(
           input: .microphone(
-            MicrophoneRecordingInput(format: microphone.format, tapInterval: interval),
+            MicrophoneRecordingInput(
+              format: microphone.format,
+              tapInterval: interval,
+              preferredInput: microphone.preferredInput,
+            ),
           ),
           outputConfiguration: config.outputConfiguration,
           outputDestination: config.outputDestination,

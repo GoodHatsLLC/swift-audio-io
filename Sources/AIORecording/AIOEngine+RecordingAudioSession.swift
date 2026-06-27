@@ -55,6 +55,14 @@
           )
         }
 
+        do {
+          try session.setActive(true)
+        } catch {
+          throw .operationFailed(operation: .setActive, error: ErrorContext(error))
+        }
+
+        try applyPreferredInputIfNeeded(for: configuration, session: session)
+
         let desiredChannels = configuration.format.channels.platform
         let channelCount =
           desiredChannels > session.maximumInputNumberOfChannels
@@ -68,12 +76,6 @@
           )
         }
 
-        do {
-          try session.setActive(true)
-        } catch {
-          throw .operationFailed(operation: .setActive, error: ErrorContext(error))
-        }
-
         recordingSessionLog.info(
           "Audio session configured - Sample rate: \(session.sampleRate, privacy: .public), Buffer duration: \(session.ioBufferDuration, privacy: .public), Input channels: \(session.inputNumberOfChannels, privacy: .public)",
         )
@@ -81,6 +83,39 @@
         _ = configuration
       #endif
     }
+
+    #if os(iOS)
+      private nonisolated func applyPreferredInputIfNeeded(
+        for configuration: RecordingConfiguration,
+        session: AVAudioSession,
+      ) throws(SessionError) {
+        guard case .microphone(let microphone) = configuration.input,
+          let preferredInput = microphone.preferredInput
+        else {
+          return
+        }
+
+        guard let port = session.availableInputs?.first(where: { $0.uid == preferredInput.id })
+        else {
+          throw .preferredInputUnavailable(id: preferredInput.id, name: preferredInput.name)
+        }
+
+        do {
+          try session.setPreferredInput(port)
+        } catch {
+          throw .operationFailed(operation: .setPreferredInput, error: ErrorContext(error))
+        }
+
+        let currentInputIDs = session.currentRoute.inputs.map(\.uid)
+        guard currentInputIDs.contains(preferredInput.id) else {
+          throw .preferredInputRouteMismatch(
+            id: preferredInput.id,
+            name: preferredInput.name,
+            currentInputIDs: currentInputIDs,
+          )
+        }
+      }
+    #endif
 
     func calculatePreferredBufferDuration(sampleRate: Double) -> TimeInterval {
       let targetDuration = 0.02

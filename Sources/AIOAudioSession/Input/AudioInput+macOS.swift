@@ -1,6 +1,7 @@
 // © GoodHatsLLC
 
 #if os(macOS)
+  import CoreAudio
   public import Foundation
   public import Tools
 
@@ -105,6 +106,34 @@
           "music.note.tv"
         case .thunderbolt:
           "bolt"
+        }
+      }
+
+      init(coreAudioTransportType transportType: UInt32) {
+        switch transportType {
+        case kAudioDeviceTransportTypeBuiltIn:
+          self = .builtInMic
+        case kAudioDeviceTransportTypeUSB:
+          self = .usbAudio
+        case kAudioDeviceTransportTypeBluetooth, kAudioDeviceTransportTypeBluetoothLE:
+          self = .bluetoothHFP
+        case kAudioDeviceTransportTypeVirtual:
+          self = .virtual
+        case kAudioDeviceTransportTypePCI:
+          self = .PCI
+        case kAudioDeviceTransportTypeFireWire:
+          self = .fireWire
+        case kAudioDeviceTransportTypeDisplayPort:
+          self = .displayPort
+        case kAudioDeviceTransportTypeAVB:
+          self = .AVB
+        case kAudioDeviceTransportTypeThunderbolt:
+          self = .thunderbolt
+        case kAudioDeviceTransportTypeContinuityCaptureWired,
+          kAudioDeviceTransportTypeContinuityCaptureWireless:
+          self = .continuityMicrophone
+        default:
+          self = .unknown
         }
       }
     }

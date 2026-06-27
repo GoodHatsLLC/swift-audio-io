@@ -100,7 +100,7 @@
   }
 
   extension AudioInput {
-    public enum InputType {
+    public enum InputType: Hashable, Sendable {
       public var systemImage: String {
         switch self {
         case .unknown:

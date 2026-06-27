@@ -7,6 +7,9 @@
   package import AIORecordingSupport
   import Atomics
   package import AVFoundation
+  #if os(macOS)
+    import CoreAudio
+  #endif
   import os
   import Tools
 
@@ -226,6 +229,10 @@
         }
       }
 
+      #if os(macOS)
+        try applyPreferredInputDeviceIfNeeded(for: configuration)
+      #endif
+
       // 3. Prepare — updates input node for current hardware
       unsafe engine.prepare()
 
@@ -332,5 +339,153 @@
       }
       recordingInfrastructure.tapSnapshotLock.withLock { $0 = wrapped.value }
     }
+
+    #if os(macOS)
+      private nonisolated func applyPreferredInputDeviceIfNeeded(
+        for configuration: RecordingConfiguration,
+      ) throws(RecordingError) {
+        guard case .microphone(let microphone) = configuration.input,
+          let preferredInput = microphone.preferredInput
+        else {
+          return
+        }
+
+        let deviceID = try MacOSAudioInputDeviceResolver.inputDeviceID(
+          matchingUID: preferredInput.id,
+          name: preferredInput.name,
+        )
+        do {
+          try unsafe engine.inputNode.auAudioUnit.setDeviceID(deviceID)
+        } catch {
+          throw .captureSourceFailed(
+            sourceDescription: preferredInput.description,
+            details:
+              "Could not select audio input device \(preferredInput.id): \(error.localizedDescription)",
+          )
+        }
+      }
+    #endif
   }
+
+  #if os(macOS)
+    private enum MacOSAudioInputDeviceResolver {
+      static func inputDeviceID(
+        matchingUID uid: String,
+        name: String,
+      ) throws(RecordingError) -> AudioDeviceID {
+        for deviceID in deviceIDs() where inputChannelCount(deviceID: deviceID) > 0 {
+          guard stringProperty(objectID: deviceID, selector: kAudioDevicePropertyDeviceUID) == uid
+          else {
+            continue
+          }
+          return deviceID
+        }
+
+        throw .captureSourceUnavailable(details: "Input '\(name)' (\(uid)) is not available.")
+      }
+
+      private static func deviceIDs() -> [AudioDeviceID] {
+        let systemObjectID = AudioObjectID(kAudioObjectSystemObject)
+        var address = AudioObjectPropertyAddress(
+          mSelector: kAudioHardwarePropertyDevices,
+          mScope: kAudioObjectPropertyScopeGlobal,
+          mElement: kAudioObjectPropertyElementMain,
+        )
+        var dataSize: UInt32 = 0
+        let sizeStatus = unsafe AudioObjectGetPropertyDataSize(
+          systemObjectID,
+          &address,
+          0,
+          nil,
+          &dataSize,
+        )
+        guard sizeStatus == noErr, dataSize > 0 else { return [] }
+
+        let count = Int(dataSize) / MemoryLayout<AudioDeviceID>.stride
+        guard count > 0 else { return [] }
+        var devices = Array(repeating: AudioDeviceID(0), count: count)
+        let readStatus = unsafe AudioObjectGetPropertyData(
+          systemObjectID,
+          &address,
+          0,
+          nil,
+          &dataSize,
+          &devices,
+        )
+        guard readStatus == noErr else { return [] }
+        return devices
+      }
+
+      private static func inputChannelCount(deviceID: AudioDeviceID) -> Int {
+        var address = AudioObjectPropertyAddress(
+          mSelector: kAudioDevicePropertyStreamConfiguration,
+          mScope: kAudioObjectPropertyScopeInput,
+          mElement: kAudioObjectPropertyElementMain,
+        )
+        var dataSize: UInt32 = 0
+        let sizeStatus = unsafe AudioObjectGetPropertyDataSize(
+          deviceID,
+          &address,
+          0,
+          nil,
+          &dataSize,
+        )
+        guard sizeStatus == noErr, dataSize > 0 else { return 0 }
+
+        let rawBuffer = UnsafeMutableRawPointer.allocate(
+          byteCount: Int(dataSize),
+          alignment: MemoryLayout<AudioBufferList>.alignment,
+        )
+        defer {
+          unsafe rawBuffer.deallocate()
+        }
+
+        let readStatus = unsafe AudioObjectGetPropertyData(
+          deviceID,
+          &address,
+          0,
+          nil,
+          &dataSize,
+          rawBuffer,
+        )
+        guard readStatus == noErr else { return 0 }
+
+        let bufferList = unsafe rawBuffer.assumingMemoryBound(to: AudioBufferList.self)
+        let audioBuffers = unsafe UnsafeMutableAudioBufferListPointer(bufferList)
+        return unsafe audioBuffers.reduce(into: 0) { partialResult, buffer in
+          partialResult += unsafe Int(buffer.mNumberChannels)
+        }
+      }
+
+      private static func stringProperty(
+        objectID: AudioObjectID,
+        selector: AudioObjectPropertySelector,
+      ) -> String? {
+        var address = AudioObjectPropertyAddress(
+          mSelector: selector,
+          mScope: kAudioObjectPropertyScopeGlobal,
+          mElement: kAudioObjectPropertyElementMain,
+        )
+        var dataSize = UInt32(MemoryLayout<CFString?>.size)
+        let rawValue = UnsafeMutableRawPointer.allocate(
+          byteCount: Int(dataSize),
+          alignment: MemoryLayout<CFString?>.alignment,
+        )
+        defer {
+          unsafe rawValue.deallocate()
+        }
+        let status = unsafe AudioObjectGetPropertyData(
+          objectID,
+          &address,
+          0,
+          nil,
+          &dataSize,
+          rawValue,
+        )
+        guard status == noErr else { return nil }
+        let value = unsafe rawValue.assumingMemoryBound(to: CFString?.self).pointee
+        return value as String?
+      }
+    }
+  #endif
 #endif
