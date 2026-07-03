@@ -46,6 +46,6 @@ jobs:
       - name: iOS Simulator build (compile-only)
         run: |
           xcodebuild build-for-testing \
-            -scheme AIO-Package \
+            -scheme swift-audio-io-Package \
             -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' \
             -skipPackagePluginValidation
