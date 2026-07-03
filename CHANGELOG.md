@@ -9,6 +9,14 @@ releases follow the versioning policy in `README.md` and `ROADMAP.md`.
 
 Nothing yet.
 
+## 0.4.0 - 2026-07-03
+
+### Added
+
+- Added `PlaybackScrubMode` and `AIOEngine.scrub(to:mode:)` so callers can
+  express interactive drag scrubs separately from committed seeks without
+  reaching for playback-polling internals.
+
 ## 0.1.1 - 2026-05-28
 
 ### Fixed

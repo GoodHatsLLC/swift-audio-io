@@ -176,6 +176,32 @@
     }
 
     @Test
+    func `scrub mode controls playback polling updates`() throws {
+      let fixture = try makeFixture()
+      defer { fixture.cleanup() }
+      let engine = AIOEngine()
+      engine.playbackState[locked: \.playbackInstance] = PlaybackInstance(
+        id: .init(),
+        file: fixture.file,
+        startFrame: 0,
+        pollingInterval: .seconds(10),
+      )
+      defer {
+        engine.playbackTask = nil
+        engine.scrubTask = nil
+      }
+
+      _ = try engine.scrub(to: 0.5, mode: .interactive)
+
+      #expect(engine.playbackTask == nil)
+      engine.scrubTask = nil
+
+      _ = try engine.scrub(to: 1.0, mode: .committed)
+
+      #expect(engine.playbackTask != nil)
+    }
+
+    @Test
     func `paused playback reports the last observed time, not the start frame`() throws {
       let fixture = try makeFixture()
       defer { fixture.cleanup() }

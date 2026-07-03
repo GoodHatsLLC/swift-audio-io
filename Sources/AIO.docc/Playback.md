@@ -30,9 +30,11 @@ This shape lets segment-shaped UI controls (waveform timelines clipped to a regi
 
 ## Scrubbing
 
-``AIOEngine/scrub(to:updatePlaybackPolling:)`` reseeks the active playback to a time coordinate matching the active playback mode. For whole-file playback the coordinate is file-relative; for segment playback it's segment-relative and clamped to the segment range.
+``AIOEngine/scrub(to:mode:)`` reseeks the active playback to a time coordinate matching the active playback mode. For whole-file playback the coordinate is file-relative; for segment playback it's segment-relative and clamped to the segment range.
 
-`updatePlaybackPolling: false` is useful for scrub-during-drag interactions where you want to suppress the next polling tick that would otherwise overwrite your in-flight UI state.
+Use ``PlaybackScrubMode/interactive`` for scrub-during-drag interactions where you want to suppress the next polling tick that would otherwise overwrite your in-flight UI state. Use ``PlaybackScrubMode/committed`` for final drag releases and one-shot seeks so normal playback polling resumes immediately.
+
+The lower-level ``AIOEngine/scrub(to:updatePlaybackPolling:)`` overload remains available when a caller needs to map a custom policy directly to playback polling.
 
 ## Observing playback
 
@@ -56,6 +58,7 @@ Playback and recording are mutually exclusive. Starting playback while recording
 - ``AIOEngine/play(url:)``
 - ``AIOEngine/playSegment(url:startTime:endTime:playbackPollingInterval:)``
 - ``AIOEngine/stopPlayback()``
+- ``AIOEngine/scrub(to:mode:)``
 - ``AIOEngine/scrub(to:updatePlaybackPolling:)``
 - ``AIOEngine/playback``
 - ``AIOEngine/isPlaying``

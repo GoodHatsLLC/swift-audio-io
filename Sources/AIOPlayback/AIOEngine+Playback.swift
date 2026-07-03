@@ -79,6 +79,22 @@
       )
     }
 
+    /// Scrubs the active playback with caller intent.
+    ///
+    /// `time` is segment-relative for `playSegment` playback and file-relative for whole-file
+    /// playback. Use ``PlaybackScrubMode/interactive`` for repeated drag updates and
+    /// ``PlaybackScrubMode/committed`` for the final drag release or one-shot seek.
+    @MainActor
+    public func scrub(
+      to time: TimeInterval,
+      mode: PlaybackScrubMode,
+    ) throws(PlaybackError) -> Playback? {
+      try playbackRuntime.scrub(
+        to: time,
+        updatePlaybackPolling: mode.updatesPlaybackPolling,
+      )
+    }
+
     @MainActor
     public func stopPlayback() async {
       await playbackRuntime.stopPlayback()

@@ -82,6 +82,11 @@ func publicAPISnapshot_AIOEngineCore() throws {
   _ = VerboseError.self
 }
 
+@Test("Public API snapshot — AIOPlayback re-exports compile via AudioIO")
+func publicAPISnapshot_AIOPlayback() throws {
+  _ = PlaybackScrubMode.self
+}
+
 // Pins the reconciliation-mode start API as public (promoted from
 // `@_spi(Advanced)`). Compile-time only — never invoked; the references
 // type-check the public signatures so a future re-gating fails the build.
