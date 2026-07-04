@@ -87,19 +87,40 @@
       @MainActor
       func setSelectedInput(_ newValue: AudioInput?) {
         let suppressRestore = owner.isRestoringFromDefaults
+        let isAudioSessionActive = owner.isAudioSessionActive
         owner.inputWriteQueue.enqueue { [self] in
           let env = owner.env
           do {
-            try env.request(input: newValue)
+            if isAudioSessionActive {
+              try env.request(input: newValue)
+            }
 
-            var validSources = env.input?.availableSources ?? []
-            var selectedSource = env.source
-            if let currentSource = selectedSource, validSources.contains(currentSource) {
-              selectedSource = currentSource
-            } else {
+            let activeInput = env.input
+            let routeMatchesRequest =
+              newValue == nil || activeInput?.id == newValue?.id
+            let resolvedInput =
+              routeMatchesRequest
+              ? (activeInput ?? newValue)
+              : (newValue ?? activeInput)
+            let selectedNumberOfChannels = resolvedInput?.channelCount ?? .mono
+            var validSources = owner.filterSources(
+              resolvedInput?.availableSources ?? [],
+              for: selectedNumberOfChannels,
+            )
+            var selectedSource =
+              if routeMatchesRequest {
+                env.source
+              } else {
+                resolvedInput?.selectedSource
+              }
+
+            if let currentSource = selectedSource, !validSources.contains(currentSource) {
               selectedSource = nil
+            }
+
+            if isAudioSessionActive, routeMatchesRequest, selectedSource == nil {
               do {
-                if let fallback = validSources.first {
+                if let fallback = validSources.first, activeInput != nil {
                   try env.request(source: fallback)
                   selectedSource = env.source
                 } else {
@@ -110,19 +131,31 @@
               }
             }
 
-            validSources = env.input?.availableSources ?? validSources
-            let state = AudioEnvironmentState.current(
-              env: env,
-              availableSources: validSources,
+            if let activeInput = env.input, routeMatchesRequest {
+              validSources = owner.filterSources(
+                activeInput.availableSources,
+                for: activeInput.channelCount,
+              )
+            }
+
+            let state = AudioEnvironmentState(
+              input: resolvedInput,
               selectedSource: selectedSource,
+              selectedSampleRate: env.sampleRate,
+              availableInputs: (env.availableInputs + [resolvedInput].compactMap { $0 })
+                .removingDuplicates(),
+              availableSources: validSources,
+              selectedNumberOfChannels: selectedNumberOfChannels,
             )
-            let baseline = persistBaseline(env: env)
-            // Matches the old `owner.channels.count` read taken *after* the state
-            // assign: `current(env:)` sets `selectedNumberOfChannels` to
-            // `env.input?.channelCount`.
-            let channelCount = (env.input?.channelCount ?? .mono).count
+            let baseline = PersistBaseline(
+              inputId: resolvedInput?.id ?? "_default",
+              currentSampleRate: env.sampleRate,
+              isConfiguredForStereo: selectedNumberOfChannels.count > 1,
+              currentSourceId: selectedSource?.id,
+            )
+            let channelCount = selectedNumberOfChannels.count
             let sampleRateHz = env.sampleRate.hz
-            let sourceId = env.source?.id
+            let sourceId = selectedSource?.id
 
             await MainActor.run {
               owner.state = state
