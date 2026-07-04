@@ -221,6 +221,11 @@
     // AVAudioPlayerNode attached to the engine graph and mutated only from
     // engineControlQueue.
     package nonisolated(unsafe) let player = AVAudioPlayerNode()
+    // SAFETY: Same queue invariant as `engine` above. The jog source node is
+    // attached, connected, disconnected, and detached only on
+    // engineControlQueue; its render block communicates with control state via
+    // ManagedAtomic fields.
+    @ObservationIgnored package nonisolated(unsafe) var jogSourceNode: AVAudioSourceNode?
     package let engineControlQueue = DispatchQueue(label: "AIOEngine.engine-control", qos: .default)
     package let recordingInfrastructure = RecordingInfrastructure()
     @MainActor package var recordingRuntimeContext = RecordingRuntimeState()
@@ -425,6 +430,8 @@
 
     /// The current playback state, or `nil` if no audio is playing.
     @MainActor public internal(set) var playback: Playback?
+    /// The current gesture-scoped jog preview state, or `nil` when no jog is active.
+    @MainActor public internal(set) var playbackJog: PlaybackJogSnapshot?
     /// The default interval used to refresh `playback.time` while playback is active.
     ///
     /// This is intentionally coarse by default to avoid excessive observation churn in UI.
@@ -505,6 +512,22 @@
       set {
         playbackRuntimeContext.scrubTask?.cancelNow()
         playbackRuntimeContext.scrubTask = newValue
+      }
+    }
+
+    @MainActor package var jogPreparationTask: MainActorOwnedWork? {
+      get { playbackRuntimeContext.jogPreparationTask }
+      set {
+        playbackRuntimeContext.jogPreparationTask?.cancelNow()
+        playbackRuntimeContext.jogPreparationTask = newValue
+      }
+    }
+
+    @MainActor package var jogPollingTask: MainActorOwnedWork? {
+      get { playbackRuntimeContext.jogPollingTask }
+      set {
+        playbackRuntimeContext.jogPollingTask?.cancelNow()
+        playbackRuntimeContext.jogPollingTask = newValue
       }
     }
 
@@ -717,6 +740,12 @@
         eventSubject.send(AudioIOEvent.playbackStateChanged(playback))
       }
       eventSubject.send(AudioIOEvent.playbackUpdated(playback))
+    }
+
+    @MainActor
+    package func setPlaybackJog(_ new: PlaybackJogSnapshot?) {
+      playbackJog = new
+      eventSubject.send(AudioIOEvent.playbackJogUpdated(new))
     }
 
     package func getPlayback() -> Playback? {

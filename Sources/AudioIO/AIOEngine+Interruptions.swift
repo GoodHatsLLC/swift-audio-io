@@ -124,6 +124,7 @@
       log.info(
         "Playback route change recovery triggered: \(String(describing: event.reason), privacy: .public)",
       )
+      await cancelPlaybackJog()
       await stopPlayback()
       await restartPlayback(from: resume)
     }
@@ -189,6 +190,7 @@
 
       pendingPlaybackResume = capturePlaybackResumeState()
       if pendingPlaybackResume != nil {
+        await cancelPlaybackJog()
         await stopPlayback()
       }
 
@@ -205,6 +207,7 @@
     @MainActor
     public func handleMediaServicesReset() async {
       log.warning("Media services reset; rebuilding engine state")
+      await cancelPlaybackJog()
       await resetEngineForMediaServices()
 
       if let configuration = pendingRecordingRestart {
@@ -223,6 +226,11 @@
     @MainActor
     func resetEngineForMediaServices() async {
       await withEngineControlQueue {
+        if let jogSourceNode = unsafe self.jogSourceNode {
+          unsafe self.engine.disconnectNodeOutput(jogSourceNode)
+          unsafe self.engine.detach(jogSourceNode)
+          unsafe self.jogSourceNode = nil
+        }
         unsafe self.player.stop()
         unsafe self.engine.stop()
         unsafe self.engine.reset()

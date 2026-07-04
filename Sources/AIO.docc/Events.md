@@ -30,6 +30,7 @@ The stream emits ``AudioIOEvent``, an enum with cases for every lifecycle transi
 
 - ``AudioIOEvent/playbackStateChanged(_:)`` — play/pause/stop transitions, excluding time ticks.
 - ``AudioIOEvent/playbackUpdated(_:)`` — every observation including time ticks. Mirror this into a local `@Observable` store if you need SwiftUI bindings to react to playback position.
+- ``AudioIOEvent/playbackJogUpdated(_:)`` — gesture-scoped audible jog preview updates. Keep these separate from normal playback state and Now Playing surfaces.
 
 ## Replacing the old closure callbacks
 

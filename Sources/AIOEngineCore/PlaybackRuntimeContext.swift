@@ -10,6 +10,8 @@
       package var lastPlaybackStateSignature: PlaybackStateSignature?
       package var playbackTask: MainActorOwnedWork?
       package var scrubTask: MainActorOwnedWork?
+      package var jogPreparationTask: MainActorOwnedWork?
+      package var jogPollingTask: MainActorOwnedWork?
 
       package init() {}
     }

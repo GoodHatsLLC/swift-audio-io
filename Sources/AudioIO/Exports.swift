@@ -111,6 +111,8 @@
 
   public typealias AIOEngine = AIOEngineCore.AIOEngine
   public typealias AudioIOEvent = AIOEngineCore.AudioIOEvent
+  public typealias PlaybackJogRate = AIOEngineCore.PlaybackJogRate
+  public typealias PlaybackJogSnapshot = AIOEngineCore.PlaybackJogSnapshot
   public typealias VerboseError = AIOEngineCore.VerboseError
 
   // MARK: - AIOMicHealth re-exports

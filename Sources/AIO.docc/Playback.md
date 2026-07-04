@@ -36,6 +36,18 @@ Use ``PlaybackScrubMode/interactive`` for scrub-during-drag interactions where y
 
 The lower-level ``AIOEngine/scrub(to:updatePlaybackPolling:)`` overload remains available when a caller needs to map a custom policy directly to playback polling.
 
+## Audible jog
+
+``AIOEngine/beginPlaybackJog(at:)`` starts a gesture-scoped audible preview transport beside normal playback. Jog uses the same public time coordinates as playback: file-relative for whole-file playback and segment-relative for segment playback.
+
+```swift
+_ = try engine.beginPlaybackJog(at: 1.2)
+_ = try engine.updatePlaybackJog(rate: .normalReverse, anchorTime: 1.1)
+_ = try engine.endPlaybackJog(commit: true)
+```
+
+Jog snapshots are emitted as ``AudioIOEvent/playbackJogUpdated(_:)`` rather than ordinary playback ticks. Consumers should treat them as interaction preview state, not Now Playing or resumable playback state. Releasing the gesture with `commit: true` seeks through the ordinary scrub path; `commit: false` restores the pre-jog position and play/pause state.
+
 ## Observing playback
 
 Subscribe to ``AIOEngine/events`` for playback state:
@@ -44,8 +56,9 @@ Subscribe to ``AIOEngine/events`` for playback state:
 |---|---|
 | ``AudioIOEvent/playbackStateChanged(_:)`` | Play/pause/stop transitions, excluding time ticks. |
 | ``AudioIOEvent/playbackUpdated(_:)`` | Every observation including time ticks. |
+| ``AudioIOEvent/playbackJogUpdated(_:)`` | Gesture-scoped audible jog preview updates. |
 
-The two cases coexist by design: state-driven UI (play/pause icon) binds to `playbackStateChanged`; tick-driven UI (progress bar, scrubber) binds to `playbackUpdated`. Mirror the `Playback?` payload into a local `@Observable` store if you need SwiftUI observation.
+The playback cases coexist by design: state-driven UI (play/pause icon) binds to `playbackStateChanged`; tick-driven UI (progress bar, scrubber) binds to `playbackUpdated`. Mirror the `Playback?` payload into a local `@Observable` store if you need SwiftUI observation. Keep jog snapshots separate so interactive waveform preview does not churn normal playback state.
 
 ## Conflicts with recording
 
@@ -60,13 +73,20 @@ Playback and recording are mutually exclusive. Starting playback while recording
 - ``AIOEngine/stopPlayback()``
 - ``AIOEngine/scrub(to:mode:)``
 - ``AIOEngine/scrub(to:updatePlaybackPolling:)``
+- ``AIOEngine/beginPlaybackJog(at:)``
+- ``AIOEngine/updatePlaybackJog(rate:anchorTime:)``
+- ``AIOEngine/endPlaybackJog(commit:)``
+- ``AIOEngine/cancelPlaybackJog()``
 - ``AIOEngine/playback``
+- ``AIOEngine/playbackJog``
 - ``AIOEngine/isPlaying``
 - ``AIOEngine/isPlayback``
 
 ### Snapshot
 
 - ``AIOEngine/Playback``
+- ``PlaybackJogRate``
+- ``PlaybackJogSnapshot``
 
 ### Errors
 

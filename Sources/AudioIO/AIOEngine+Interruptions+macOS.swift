@@ -85,6 +85,7 @@
 
       pendingPlaybackResume = capturePlaybackResumeState()
       if pendingPlaybackResume != nil {
+        await cancelPlaybackJog()
         await stopPlayback()
       }
 
@@ -100,6 +101,7 @@
 
     @MainActor
     public func handleMediaServicesReset() async {
+      await cancelPlaybackJog()
       await resetEngineForMediaServices()
 
       if let configuration = pendingRecordingRestart {
@@ -140,6 +142,11 @@
     @MainActor
     private func resetEngineForMediaServices() async {
       await withEngineControlQueue {
+        if let jogSourceNode = unsafe self.jogSourceNode {
+          unsafe self.engine.disconnectNodeOutput(jogSourceNode)
+          unsafe self.engine.detach(jogSourceNode)
+          unsafe self.jogSourceNode = nil
+        }
         unsafe self.player.stop()
         unsafe self.engine.stop()
         unsafe self.engine.reset()

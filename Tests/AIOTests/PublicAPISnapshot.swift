@@ -85,6 +85,8 @@ func publicAPISnapshot_AIOEngineCore() throws {
 @Test("Public API snapshot — AIOPlayback re-exports compile via AudioIO")
 func publicAPISnapshot_AIOPlayback() throws {
   _ = PlaybackScrubMode.self
+  _ = PlaybackJogRate.self
+  _ = PlaybackJogSnapshot.self
 }
 
 // Pins the reconciliation-mode start API as public (promoted from

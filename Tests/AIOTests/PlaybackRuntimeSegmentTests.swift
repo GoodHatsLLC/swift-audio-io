@@ -247,8 +247,171 @@
       #expect(playback.time == 0.75)
     }
 
+    @Test
+    func `begin jog inside segment reports segment-relative time and duration`() throws {
+      let fixture = try makeFixture()
+      defer { fixture.cleanup() }
+      let engine = AIOEngine()
+      let segment = PlaybackSegment(
+        startFrame: fixture.frames(seconds: 1),
+        frameCount: AVAudioFrameCount(fixture.frames(seconds: 2)),
+      )
+      installPlayback(on: engine, fixture: fixture, startFrame: segment.startFrame, segment: segment)
+      defer { clearJog(on: engine) }
+
+      let snapshot = try #require(try engine.beginPlaybackJog(at: 0.75))
+      engine.jogPreparationTask = nil
+      engine.jogPollingTask = nil
+      let jogInstance = try #require(engine.playbackState[locked: \.playbackJogInstance])
+
+      #expect(snapshot.time == 0.75)
+      #expect(snapshot.duration == 2)
+      #expect(snapshot.rate == 0)
+      #expect(jogInstance.currentCursorFrame == Double(segment.startFrame + fixture.frames(seconds: 0.75)))
+    }
+
+    @Test
+    func `update jog applies clamped rate and segment-relative anchor`() throws {
+      let fixture = try makeFixture()
+      defer { fixture.cleanup() }
+      let engine = AIOEngine()
+      let segment = PlaybackSegment(
+        startFrame: fixture.frames(seconds: 1),
+        frameCount: AVAudioFrameCount(fixture.frames(seconds: 2)),
+      )
+      installPlayback(on: engine, fixture: fixture, startFrame: segment.startFrame, segment: segment)
+      defer { clearJog(on: engine) }
+      _ = try engine.beginPlaybackJog(at: 0.5)
+      engine.jogPreparationTask = nil
+      engine.jogPollingTask = nil
+
+      let snapshot = try #require(
+        try engine.updatePlaybackJog(rate: PlaybackJogRate(-8), anchorTime: 1.25),
+      )
+      let jogInstance = try #require(engine.playbackState[locked: \.playbackJogInstance])
+
+      #expect(snapshot.rate == -4)
+      #expect(snapshot.time == 1.25)
+      #expect(jogInstance.currentCursorFrame == Double(segment.startFrame + fixture.frames(seconds: 1.25)))
+    }
+
+    @Test
+    func `ending committed jog seeks through normal playback instance`() throws {
+      let fixture = try makeFixture()
+      defer { fixture.cleanup() }
+      let engine = AIOEngine()
+      installPlayback(on: engine, fixture: fixture, startFrame: 0)
+      defer {
+        engine.scrubTask = nil
+        clearJog(on: engine)
+      }
+      _ = try engine.beginPlaybackJog(at: 0.5)
+      engine.jogPreparationTask = nil
+      engine.jogPollingTask = nil
+      _ = try engine.updatePlaybackJog(rate: .paused, anchorTime: 1.5)
+
+      let playback = try #require(try engine.endPlaybackJog(commit: true))
+      let updated = try #require(engine.playbackState[locked: \.playbackInstance])
+      engine.scrubTask = nil
+
+      #expect(playback.time == 1.5)
+      #expect(updated.startFrame == fixture.frames(seconds: 1.5))
+      #expect(engine.playbackState[locked: \.playbackJogInstance] == nil)
+    }
+
+    @Test
+    func `ending reverted jog restores pre-jog time`() throws {
+      let fixture = try makeFixture()
+      defer { fixture.cleanup() }
+      let engine = AIOEngine()
+      installPlayback(on: engine, fixture: fixture, startFrame: fixture.frames(seconds: 0.75))
+      defer {
+        engine.scrubTask = nil
+        clearJog(on: engine)
+      }
+      _ = try engine.beginPlaybackJog(at: 0.75)
+      engine.jogPreparationTask = nil
+      engine.jogPollingTask = nil
+      _ = try engine.updatePlaybackJog(rate: PlaybackJogRate.normalForward, anchorTime: 1.75)
+
+      let playback = try #require(try engine.endPlaybackJog(commit: false))
+      let updated = try #require(engine.playbackState[locked: \.playbackInstance])
+      engine.scrubTask = nil
+
+      #expect(playback.time == 0.75)
+      #expect(updated.startFrame == fixture.frames(seconds: 0.75))
+      #expect(engine.playbackState[locked: \.playbackJogInstance] == nil)
+    }
+
+    @Test
+    func `jog render state advances cursor forward and backward`() throws {
+      let store = PlaybackJogPCMStore(
+        baseFrame: 0,
+        channels: [Array(repeating: 0.25, count: 64)],
+      )
+      let forward = PlaybackJogRenderState(
+        cursorFrame: 8,
+        rate: 1,
+        lowerBoundFrame: 0,
+        upperBoundFrame: 64,
+        sourceSampleRate: sampleRate,
+        channels: 1,
+        pcm: store,
+      )
+      let reverse = PlaybackJogRenderState(
+        cursorFrame: 32,
+        rate: -1,
+        lowerBoundFrame: 0,
+        upperBoundFrame: 64,
+        sourceSampleRate: sampleRate,
+        channels: 1,
+        pcm: store,
+      )
+      let format = try #require(AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1))
+      let forwardBuffer = try #require(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 8))
+      let reverseBuffer = try #require(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 8))
+
+      #expect(
+        unsafe forward.render(
+          frameCount: 8,
+          outputData: forwardBuffer.mutableAudioBufferList,
+        ) == noErr,
+      )
+      #expect(
+        unsafe reverse.render(
+          frameCount: 8,
+          outputData: reverseBuffer.mutableAudioBufferList,
+        ) == noErr,
+      )
+
+      #expect(forward.cursorFrame == 16)
+      #expect(reverse.cursorFrame == 24)
+    }
+
     private func makeFixture() throws -> AudioFixture {
       try AudioFixture(duration: 4, sampleRate: sampleRate)
+    }
+
+    private func installPlayback(
+      on engine: AIOEngine,
+      fixture: AudioFixture,
+      startFrame: AVAudioFramePosition,
+      segment: PlaybackSegment? = nil,
+    ) {
+      engine.playbackState[locked: \.playbackInstance] = PlaybackInstance(
+        id: .init(),
+        file: fixture.file,
+        startFrame: startFrame,
+        pollingInterval: .seconds(0.5),
+        activeSegment: segment,
+      )
+    }
+
+    private func clearJog(on engine: AIOEngine) {
+      engine.jogPreparationTask = nil
+      engine.jogPollingTask = nil
+      engine.playbackState[locked: \.playbackJogInstance] = nil
+      engine.setPlaybackJog(nil)
     }
   }
 

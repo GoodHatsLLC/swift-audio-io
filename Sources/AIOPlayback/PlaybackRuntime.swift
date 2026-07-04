@@ -11,6 +11,7 @@
   import Tools
 
   private let log = SystemLog.make()
+  private let playbackJogDecodeCapBytes = 64 * 1024 * 1024
 
   struct PlaybackRuntime {
     let owner: AIOEngine
@@ -36,6 +37,78 @@
         return try AVAudioFile(forReading: url)
       } catch {
         throw PlaybackError.fileReadFailed(url: url, error: ErrorContext(error))
+      }
+    }
+
+    @concurrent
+    nonisolated func decodePlaybackJogPCM(
+      request: PlaybackJogDecodeRequest,
+    ) async throws(PlaybackError) -> sending PlaybackJogPreparedAudio {
+      #if DEBUG
+        dispatchPrecondition(condition: .notOnQueue(.main))
+      #endif
+      do {
+        let file = try AVAudioFile(forReading: request.fileURL)
+        let format = file.processingFormat
+        let sampleRate = format.sampleRate
+        let channelCount = max(1, Int(format.channelCount))
+        let requestedLower = max(0, min(request.lowerBoundFrame, file.length))
+        let requestedUpper = max(requestedLower, min(request.upperBoundFrame, file.length))
+        let requestedFrames = max(0, requestedUpper - requestedLower)
+        guard requestedFrames > 0 else {
+          throw PlaybackError.fileReadFailed(
+            url: request.fileURL,
+            error: ErrorContext(EmptyAudioFileError(url: request.fileURL)),
+          )
+        }
+
+        let bytesPerFrame = max(1, channelCount) * MemoryLayout<Float>.stride
+        let maximumFrames = max(1, playbackJogDecodeCapBytes / bytesPerFrame)
+        let decodeFrameCount = min(Int(requestedFrames), maximumFrames)
+        let centerFrame = AVAudioFramePosition(request.cursorFrame.rounded())
+        var baseFrame = centerFrame - AVAudioFramePosition(decodeFrameCount / 2)
+        baseFrame = max(requestedLower, min(baseFrame, requestedUpper - AVAudioFramePosition(decodeFrameCount)))
+        let framesToRead = AVAudioFrameCount(max(1, min(decodeFrameCount, Int(requestedUpper - baseFrame))))
+
+        guard
+          let buffer = AVAudioPCMBuffer(
+            pcmFormat: format,
+            frameCapacity: framesToRead,
+          )
+        else {
+          throw PlaybackError.fileReadFailed(
+            url: request.fileURL,
+            error: ErrorContext(MissingAudioFileError(url: request.fileURL)),
+          )
+        }
+
+        file.framePosition = baseFrame
+        try file.read(into: buffer, frameCount: framesToRead)
+        let frameLength = Int(buffer.frameLength)
+        guard frameLength > 0, let floatData = unsafe buffer.floatChannelData else {
+          throw PlaybackError.fileReadFailed(
+            url: request.fileURL,
+            error: ErrorContext(EmptyAudioFileError(url: request.fileURL)),
+          )
+        }
+
+        var channels: [[Float]] = []
+        channels.reserveCapacity(channelCount)
+        for channel in 0..<channelCount {
+          let source = unsafe floatData[channel]
+          let copied = unsafe Array(UnsafeBufferPointer(start: source, count: frameLength))
+          channels.append(copied)
+        }
+
+        return PlaybackJogPreparedAudio(
+          pcm: PlaybackJogPCMStore(baseFrame: baseFrame, channels: channels),
+          sampleRate: sampleRate,
+          channelCount: channelCount,
+        )
+      } catch let error as PlaybackError {
+        throw error
+      } catch {
+        throw PlaybackError.fileReadFailed(url: request.fileURL, error: ErrorContext(error))
       }
     }
 
@@ -250,6 +323,292 @@
       }
     }
 
+    @MainActor
+    func beginPlaybackJog(at time: TimeInterval) throws(PlaybackError) -> PlaybackJogSnapshot? {
+      if owner.playbackState[locked: \.playbackJogInstance] != nil {
+        clearPlaybackJog(scheduleGraphTeardown: true)
+      }
+      guard let initialInstance = owner.playbackState[locked: \.playbackInstance] else {
+        return nil
+      }
+      let playback = owner.getPlayback(for: initialInstance)
+      let allowsUpperBound = initialInstance.activeSegment != nil
+      guard time >= 0,
+        allowsUpperBound ? playback.duration >= time : playback.duration > time
+      else {
+        throw PlaybackError.invalidScrubTime(value: time)
+      }
+
+      let sampleRate = initialInstance.file.processingFormat.sampleRate
+      let framePosition = absoluteFrame(
+        for: time,
+        in: initialInstance,
+        sampleRate: sampleRate,
+      )
+      guard let resume = capturePlaybackResumeState() else { return nil }
+      let lowerBoundFrame = initialInstance.activeSegment?.startFrame ?? 0
+      let upperBoundFrame = initialInstance.activeSegment?.endFrame ?? initialInstance.file.length
+      guard upperBoundFrame > lowerBoundFrame else { return nil }
+
+      let jogInstance = PlaybackJogInstance(
+        id: .init(),
+        fileURL: initialInstance.file.url,
+        activeSegment: initialInstance.activeSegment,
+        duration: playback.duration,
+        originalPlayback: resume,
+        sampleRate: sampleRate,
+        lowerBoundFrame: lowerBoundFrame,
+        upperBoundFrame: upperBoundFrame,
+        cursorFrame: Double(framePosition),
+      )
+
+      owner.playbackState[locked: \.playbackJogInstance] = jogInstance
+      owner.playbackTask = nil
+      owner.scrubTask = nil
+      owner.jogPreparationTask = MainActorOwnedWork(priority: .utility) { [weak owner] in
+        guard let owner else { return }
+        await PlaybackRuntime(owner: owner).preparePlaybackJog(instanceID: jogInstance.id)
+      }
+      resetPlaybackJogPolling(to: jogInstance.id)
+      owner.engineControlQueue.async { [weak owner] in
+        unsafe owner?.player.pause()
+      }
+
+      let snapshot = jogInstance.snapshot()
+      owner.setPlaybackJog(snapshot)
+      return snapshot
+    }
+
+    @MainActor
+    func updatePlaybackJog(
+      rate: PlaybackJogRate,
+      anchorTime: TimeInterval?,
+    ) throws(PlaybackError) -> PlaybackJogSnapshot? {
+      guard let current = owner.playbackState[locked: \.playbackJogInstance] else {
+        return nil
+      }
+      let anchorFrame: Double?
+      if let anchorTime {
+        guard anchorTime >= 0, current.duration >= anchorTime else {
+          throw PlaybackError.invalidScrubTime(value: anchorTime)
+        }
+        anchorFrame = Double(
+          absoluteFrame(
+            for: anchorTime,
+            activeSegment: current.activeSegment,
+            sampleRate: current.sampleRate,
+          ),
+        )
+      } else {
+        anchorFrame = nil
+      }
+
+      var result: PlaybackJogSnapshot?
+      owner.playbackState.withLock { state in
+        guard var jogInstance = state.playbackJogInstance, jogInstance.id == current.id else {
+          return
+        }
+        let clampedRate = min(max(rate.value, -4), 4)
+        jogInstance.rate = clampedRate
+        if let anchorFrame {
+          jogInstance.cursorFrame = jogInstance.clampedFrame(anchorFrame)
+        }
+        if let renderState = jogInstance.renderState {
+          renderState.setRate(clampedRate)
+          if let anchorFrame {
+            renderState.publishAnchor(frame: anchorFrame)
+          }
+        }
+        result = jogInstance.snapshot()
+        state.playbackJogInstance = jogInstance
+      }
+
+      if let result {
+        owner.setPlaybackJog(result)
+      }
+      return result
+    }
+
+    @MainActor
+    func endPlaybackJog(commit: Bool) throws(PlaybackError) -> AIOEngine.Playback? {
+      guard let jogInstance = owner.playbackState[locked: \.playbackJogInstance] else {
+        return nil
+      }
+      let snapshot = jogInstance.snapshot()
+      let resume = jogInstance.originalPlayback
+      clearPlaybackJog(scheduleGraphTeardown: true)
+
+      let targetTime = commit ? snapshot.time : resume.time
+      return try scrub(
+        to: targetTime,
+        updatePlaybackPolling: true,
+        playOverride: resume.wasPlaying,
+      )
+    }
+
+    @MainActor
+    func cancelPlaybackJog() async {
+      clearPlaybackJog(scheduleGraphTeardown: false)
+      await owner.withEngineControlQueue { [weak owner] in
+        guard let owner else { return }
+        PlaybackRuntime(owner: owner).detachPlaybackJogNode()
+      }
+    }
+
+    @MainActor
+    func resetPlaybackJogPolling(to instanceID: UUID) {
+      owner.jogPollingTask = MainActorOwnedWork { [owner] in
+        let pollingPolicy = PollingPolicy(interval: .milliseconds(33))
+        while !Task.isCancelled {
+          try? await pollingPolicy.waitForNextPoll()
+          if Task.isCancelled { return }
+          guard let snapshot = owner.playbackState.withLock({ state -> PlaybackJogSnapshot? in
+            guard let jogInstance = state.playbackJogInstance, jogInstance.id == instanceID else {
+              return nil
+            }
+            return jogInstance.snapshot()
+          }) else {
+            return
+          }
+          owner.setPlaybackJog(snapshot)
+        }
+      }
+    }
+
+    @MainActor
+    func preparePlaybackJog(instanceID: UUID) async {
+      guard let request = owner.playbackState.withLock({ state -> PlaybackJogDecodeRequest? in
+        guard let jogInstance = state.playbackJogInstance, jogInstance.id == instanceID else {
+          return nil
+        }
+        return jogInstance.decodeRequest
+      }) else {
+        return
+      }
+
+      do {
+        let prepared = try await decodePlaybackJogPCM(request: request)
+        guard let format = AVAudioFormat(
+          standardFormatWithSampleRate: prepared.sampleRate,
+          channels: AVAudioChannelCount(prepared.channelCount),
+        ) else {
+          throw PlaybackError.fileReadFailed(
+            url: request.fileURL,
+            error: ErrorContext(MissingAudioFileError(url: request.fileURL)),
+          )
+        }
+
+        let renderState = PlaybackJogRenderState(
+          cursorFrame: request.cursorFrame,
+          rate: 0,
+          lowerBoundFrame: request.lowerBoundFrame,
+          upperBoundFrame: request.upperBoundFrame,
+          sourceSampleRate: prepared.sampleRate,
+          channels: prepared.channelCount,
+          pcm: prepared.pcm,
+        )
+
+        let stillActive = owner.playbackState.withLock { state -> Bool in
+          guard var jogInstance = state.playbackJogInstance, jogInstance.id == instanceID else {
+            return false
+          }
+          renderState.setRate(jogInstance.rate)
+          renderState.publishAnchor(frame: jogInstance.cursorFrame)
+          jogInstance.renderState = renderState
+          state.playbackJogInstance = jogInstance
+          return true
+        }
+        guard stillActive else { return }
+
+        let startResult = await owner.withEngineControlQueueResult { [weak owner] in
+          guard let owner else { return }
+          PlaybackRuntime(owner: owner).detachPlaybackJogNode()
+          let sourceNode = unsafe AVAudioSourceNode(format: format) { _, _, frameCount, outputData in
+            unsafe renderState.render(frameCount: frameCount, outputData: outputData)
+          }
+          unsafe owner.jogSourceNode = sourceNode
+          unsafe owner.engine.attach(sourceNode)
+          unsafe owner.engine.connect(
+            sourceNode,
+            to: owner.engine.mainMixerNode,
+            format: format,
+          )
+          if unsafe !owner.engine.isRunning {
+            try unsafe owner.engine.start()
+          }
+        }
+        if case .failure(let error) = startResult {
+          owner.eventSubject.send(
+            AudioIOEvent.error(PlaybackError.session(.engineStartFailed(error: ErrorContext(error)))),
+          )
+        }
+
+        if let snapshot = owner.playbackState.withLock({ state -> PlaybackJogSnapshot? in
+          guard let jogInstance = state.playbackJogInstance, jogInstance.id == instanceID else {
+            return nil
+          }
+          return jogInstance.snapshot()
+        }) {
+          owner.setPlaybackJog(snapshot)
+        }
+      } catch let error as PlaybackError {
+        owner.eventSubject.send(AudioIOEvent.error(error))
+      } catch {
+        owner.eventSubject.send(
+          AudioIOEvent.error(PlaybackError.fileReadFailed(url: request.fileURL, error: ErrorContext(error))),
+        )
+      }
+    }
+
+    @MainActor
+    func clearPlaybackJog(scheduleGraphTeardown: Bool) {
+      let renderState = owner.playbackState.withLock { state -> PlaybackJogRenderState? in
+        let renderState = state.playbackJogInstance?.renderState
+        state.playbackJogInstance = nil
+        return renderState
+      }
+      renderState?.stop()
+      owner.jogPreparationTask = nil
+      owner.jogPollingTask = nil
+      owner.setPlaybackJog(nil)
+      guard scheduleGraphTeardown else { return }
+      owner.engineControlQueue.async { [weak owner] in
+        guard let owner else { return }
+        PlaybackRuntime(owner: owner).detachPlaybackJogNode()
+      }
+    }
+
+    nonisolated func detachPlaybackJogNode() {
+      guard let node = unsafe owner.jogSourceNode else { return }
+      unsafe owner.engine.disconnectNodeOutput(node)
+      unsafe owner.engine.detach(node)
+      unsafe owner.jogSourceNode = nil
+    }
+
+    private func absoluteFrame(
+      for time: TimeInterval,
+      in instance: PlaybackInstance,
+      sampleRate: Double,
+    ) -> AVAudioFramePosition {
+      absoluteFrame(
+        for: time,
+        activeSegment: instance.activeSegment,
+        sampleRate: sampleRate,
+      )
+    }
+
+    private func absoluteFrame(
+      for time: TimeInterval,
+      activeSegment: PlaybackSegment?,
+      sampleRate: Double,
+    ) -> AVAudioFramePosition {
+      if let activeSegment {
+        activeSegment.clampedAbsoluteFrame(forRelativeTime: time, sampleRate: sampleRate)
+      } else {
+        AVAudioFramePosition(time * sampleRate)
+      }
+    }
+
     @concurrent
     nonisolated func scrub(
       framePosition: AVAudioFramePosition,
@@ -289,9 +648,11 @@
     func scrub(
       to time: TimeInterval,
       updatePlaybackPolling: Bool = true,
+      playOverride: Bool? = nil,
     ) throws(PlaybackError) -> AIOEngine.Playback? {
       if let initialInstance = owner.playbackState[locked: \.playbackInstance] {
         let playback = owner.getPlayback(for: initialInstance)
+        let shouldPlay = playOverride ?? playback.isPlaying
         let file = initialInstance.file
         let allowsUpperBound = initialInstance.activeSegment != nil
         guard time >= 0,
@@ -323,7 +684,7 @@
             framePosition: framePosition,
             file: file,
             newInstance: newInstance,
-            play: playback.isPlaying,
+            play: shouldPlay,
             callbackTasks: owner.playbackCallbackTasks,
           )
         }
@@ -331,7 +692,7 @@
         let newPlayback = AIOEngine.Playback(
           id: newInstance.id,
           file: file.url,
-          isPlaying: playback.isPlaying,
+          isPlaying: shouldPlay,
           time: newInstance.playbackTime(forAbsoluteFrame: framePosition),
           duration: playback.duration,
         )
@@ -349,6 +710,7 @@
 
     @MainActor
     func stopPlayback() async {
+      await cancelPlaybackJog()
       // Detach the finished file on the main actor, then tear down the graph and
       // close the file together on the engine-control queue — the file close
       // (blocking I/O) runs off the main thread, after the player has stopped so
@@ -381,6 +743,7 @@
     @MainActor
     func pausePlayback() {
       guard owner.isPlayback else { return }
+      clearPlaybackJog(scheduleGraphTeardown: true)
       owner.engineControlQueue.async { [weak owner] in
         unsafe owner?.player.pause()
       }
@@ -451,6 +814,9 @@
 
     @MainActor
     func capturePlaybackResumeState() -> PlaybackResume? {
+      if let jogInstance = owner.playbackState[locked: \.playbackJogInstance] {
+        return jogInstance.originalPlayback
+      }
       guard let instance = owner.playbackState[locked: \.playbackInstance] else { return nil }
       let playback = owner.getPlayback(for: instance)
       let time =

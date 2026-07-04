@@ -95,6 +95,49 @@
       )
     }
 
+    /// Starts gesture-scoped audible jog playback at the requested time.
+    ///
+    /// `time` follows the active playback coordinate system: file-relative for
+    /// whole-file playback and segment-relative for segment playback.
+    @MainActor
+    public func beginPlaybackJog(at time: TimeInterval) throws(PlaybackError)
+      -> PlaybackJogSnapshot?
+    {
+      try playbackRuntime.beginPlaybackJog(at: time)
+    }
+
+    /// Updates the active audible jog rate and optional drift-correction anchor.
+    ///
+    /// `anchorTime` follows the active playback coordinate system. Passing
+    /// `nil` leaves the render-owned cursor moving at the current rate.
+    @MainActor
+    public func updatePlaybackJog(
+      rate: PlaybackJogRate,
+      anchorTime: TimeInterval?,
+    ) throws(PlaybackError) -> PlaybackJogSnapshot? {
+      try playbackRuntime.updatePlaybackJog(rate: rate, anchorTime: anchorTime)
+    }
+
+    /// Ends audible jog playback.
+    ///
+    /// When `commit` is `true`, the current jog cursor is committed through the
+    /// ordinary scrub/seek path. When `false`, playback is restored to the
+    /// pre-jog position and play/pause state.
+    @MainActor
+    public func endPlaybackJog(commit: Bool) throws(PlaybackError) -> Playback? {
+      try playbackRuntime.endPlaybackJog(commit: commit)
+    }
+
+    /// Cancels audible jog without attempting playback recovery.
+    ///
+    /// Route-change and media-services recovery paths call this before their
+    /// normal playback restart logic so jog preview state is never serialized or
+    /// treated as resumable playback.
+    @MainActor
+    public func cancelPlaybackJog() async {
+      await playbackRuntime.cancelPlaybackJog()
+    }
+
     @MainActor
     public func stopPlayback() async {
       await playbackRuntime.stopPlayback()

@@ -35,6 +35,9 @@
   /// - ``playbackUpdated(_:)`` — every playback observation including
   ///   time ticks. Mirror this into a local `@Observable` store if you
   ///   need SwiftUI bindings to react to playback position.
+  /// - ``playbackJogUpdated(_:)`` — gesture-scoped jog/scrub preview
+  ///   updates. These are intentionally separate from ordinary playback
+  ///   ticks.
   public enum AudioIOEvent: Sendable {
     /// An engine-level error that the engine couldn't surface via a
     /// `throws` signature — typically because the failure originated on
@@ -83,5 +86,11 @@
     /// stored property so that SwiftUI observation reliably fires for
     /// downstream views.
     case playbackUpdated(AIOEngine.Playback?)
+
+    /// Audible jog preview changed while an interactive gesture is active.
+    ///
+    /// Jog is not resumable playback state; consumers should keep these
+    /// snapshots separate from Now Playing / normal transport state.
+    case playbackJogUpdated(PlaybackJogSnapshot?)
   }
 #endif
