@@ -226,11 +226,7 @@
     @MainActor
     func resetEngineForMediaServices() async {
       await withEngineControlQueue {
-        if let jogSourceNode = unsafe self.jogSourceNode {
-          unsafe self.engine.disconnectNodeOutput(jogSourceNode)
-          unsafe self.engine.detach(jogSourceNode)
-          unsafe self.jogSourceNode = nil
-        }
+        self.detachPlaybackJogGraph()
         unsafe self.player.stop()
         unsafe self.engine.stop()
         unsafe self.engine.reset()

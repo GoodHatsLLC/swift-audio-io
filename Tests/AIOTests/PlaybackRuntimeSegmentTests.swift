@@ -367,9 +367,19 @@
         channels: 1,
         pcm: store,
       )
+      let fastForward = PlaybackJogRenderState(
+        cursorFrame: 16,
+        rate: 4,
+        lowerBoundFrame: 0,
+        upperBoundFrame: 64,
+        sourceSampleRate: sampleRate,
+        channels: 1,
+        pcm: store,
+      )
       let format = try #require(AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1))
       let forwardBuffer = try #require(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 8))
       let reverseBuffer = try #require(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 8))
+      let fastForwardBuffer = try #require(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 8))
 
       #expect(
         unsafe forward.render(
@@ -383,9 +393,67 @@
           outputData: reverseBuffer.mutableAudioBufferList,
         ) == noErr,
       )
+      #expect(
+        unsafe fastForward.render(
+          frameCount: 8,
+          outputData: fastForwardBuffer.mutableAudioBufferList,
+        ) == noErr,
+      )
 
       #expect(forward.cursorFrame == 16)
       #expect(reverse.cursorFrame == 24)
+      #expect(fastForward.cursorFrame == 24)
+    }
+
+    @Test
+    func `jog render state decomposes signed rate for pitch preserved playback`() {
+      #expect(PlaybackJogRenderState.sourceStep(for: 4) == 1)
+      #expect(PlaybackJogRenderState.sourceStep(for: 0.5) == 1)
+      #expect(PlaybackJogRenderState.sourceStep(for: -2) == -1)
+      #expect(PlaybackJogRenderState.sourceStep(for: 0) == 0)
+
+      #expect(PlaybackJogRenderState.timePitchRate(for: 4) == 4)
+      #expect(PlaybackJogRenderState.timePitchRate(for: -2) == 2)
+      #expect(PlaybackJogRenderState.timePitchRate(for: 0.5) == 0.5)
+      #expect(PlaybackJogRenderState.timePitchRate(for: 0) == 1)
+      #expect(PlaybackJogRenderState.timePitchRate(for: 0.001) == 1.0 / 32.0)
+      #expect(PlaybackJogRenderState.timePitchRate(for: 64) == 32)
+    }
+
+    @Test
+    func `paused jog render outputs silence instead of a held sample`() throws {
+      let store = PlaybackJogPCMStore(
+        baseFrame: 0,
+        channels: [Array(repeating: 0.25, count: 64)],
+      )
+      let paused = PlaybackJogRenderState(
+        cursorFrame: 8,
+        rate: 0,
+        lowerBoundFrame: 0,
+        upperBoundFrame: 64,
+        sourceSampleRate: sampleRate,
+        channels: 1,
+        pcm: store,
+      )
+      let format = try #require(AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1))
+      let buffer = try #require(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 8))
+
+      #expect(
+        unsafe paused.render(
+          frameCount: 8,
+          outputData: buffer.mutableAudioBufferList,
+        ) == noErr,
+      )
+
+      let sampleValues: [Float]
+      if let samples = unsafe buffer.floatChannelData?[0] {
+        sampleValues = unsafe Array(UnsafeBufferPointer(start: samples, count: 8))
+      } else {
+        sampleValues = []
+      }
+      #expect(sampleValues.allSatisfy { $0 == 0 })
+      #expect(paused.cursorFrame == 8)
+      #expect(paused.isAudible == false)
     }
 
     private func makeFixture() throws -> AudioFixture {

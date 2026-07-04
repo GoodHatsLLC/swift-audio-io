@@ -425,6 +425,7 @@
 
       if let result {
         owner.setPlaybackJog(result)
+        applyPlaybackJogTimePitchRate(for: result.rate)
       }
       return result
     }
@@ -519,6 +520,7 @@
           return true
         }
         guard stillActive else { return }
+        let timePitchRate = PlaybackJogRenderState.timePitchRate(for: renderState.rate)
 
         let startResult = await owner.withEngineControlQueueResult { [weak owner] in
           guard let owner else { return }
@@ -526,10 +528,20 @@
           let sourceNode = unsafe AVAudioSourceNode(format: format) { _, _, frameCount, outputData in
             unsafe renderState.render(frameCount: frameCount, outputData: outputData)
           }
+          let timePitchNode = AVAudioUnitTimePitch()
+          timePitchNode.pitch = 0
+          timePitchNode.rate = Float(timePitchRate)
           unsafe owner.jogSourceNode = sourceNode
+          unsafe owner.jogTimePitchNode = timePitchNode
           unsafe owner.engine.attach(sourceNode)
+          unsafe owner.engine.attach(timePitchNode)
           unsafe owner.engine.connect(
             sourceNode,
+            to: timePitchNode,
+            format: format,
+          )
+          unsafe owner.engine.connect(
+            timePitchNode,
             to: owner.engine.mainMixerNode,
             format: format,
           )
@@ -579,10 +591,14 @@
     }
 
     nonisolated func detachPlaybackJogNode() {
-      guard let node = unsafe owner.jogSourceNode else { return }
-      unsafe owner.engine.disconnectNodeOutput(node)
-      unsafe owner.engine.detach(node)
-      unsafe owner.jogSourceNode = nil
+      owner.detachPlaybackJogGraph()
+    }
+
+    private func applyPlaybackJogTimePitchRate(for signedRate: Double) {
+      let timePitchRate = PlaybackJogRenderState.timePitchRate(for: signedRate)
+      owner.engineControlQueue.async { [weak owner] in
+        unsafe owner?.jogTimePitchNode?.rate = Float(timePitchRate)
+      }
     }
 
     private func absoluteFrame(

@@ -40,6 +40,11 @@ The lower-level ``AIOEngine/scrub(to:updatePlaybackPolling:)`` overload remains 
 
 ``AIOEngine/beginPlaybackJog(at:)`` starts a gesture-scoped audible preview transport beside normal playback. Jog uses the same public time coordinates as playback: file-relative for whole-file playback and segment-relative for segment playback.
 
+Jog preserves pitch while changing speed. The custom source node still owns
+forward/reverse cursor movement, but playback-rate magnitude is handled through
+the engine's time-pitch stage so faster and slower jog gestures do not produce
+tape-style pitch shifts.
+
 ```swift
 _ = try engine.beginPlaybackJog(at: 1.2)
 _ = try engine.updatePlaybackJog(rate: .normalReverse, anchorTime: 1.1)

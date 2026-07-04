@@ -369,7 +369,7 @@
     ) {
       cursorFrameBits = ManagedAtomic(cursorFrame.bitPattern)
       rateBits = ManagedAtomic(rate.bitPattern)
-      effectiveRateBits = ManagedAtomic(rate.bitPattern)
+      effectiveRateBits = ManagedAtomic(Self.sourceStep(for: rate).bitPattern)
       pendingAnchorFrameBits = ManagedAtomic(cursorFrame.bitPattern)
       pendingAnchorSequence = ManagedAtomic(0)
       consumedAnchorSequence = ManagedAtomic(0)
@@ -408,6 +408,20 @@
 
     package func setRate(_ rate: Double) {
       storeAtomicDouble(rate, in: rateBits)
+    }
+
+    package static func sourceStep(for signedRate: Double) -> Double {
+      guard signedRate.isFinite else { return 0 }
+      if signedRate > 0 { return 1 }
+      if signedRate < 0 { return -1 }
+      return 0
+    }
+
+    package static func timePitchRate(for signedRate: Double) -> Double {
+      guard signedRate.isFinite else { return 1 }
+      let magnitude = abs(signedRate)
+      guard magnitude > 0 else { return 1 }
+      return min(max(magnitude, 1.0 / 32.0), 32.0)
     }
 
     package func publishAnchor(frame: Double) {
@@ -449,8 +463,9 @@
       }
 
       let targetRate = loadAtomicDouble(rateBits)
-      var effectiveRate = loadAtomicDouble(effectiveRateBits)
-      let rateStep = (targetRate - effectiveRate) / Double(outputFrames)
+      let targetSourceStep = Self.sourceStep(for: targetRate)
+      var effectiveSourceStep = loadAtomicDouble(effectiveRateBits)
+      let rateStep = (targetSourceStep - effectiveSourceStep) / Double(outputFrames)
       var renderedAudibleSample = false
       let lower = Double(lowerBoundFrame)
       let upper = Double(max(lowerBoundFrame, upperBoundFrame - 1))
@@ -476,8 +491,12 @@
       for frameIndex in 0..<outputFrames {
         let readFrame = clampedFrame(cursor)
         let movingOutward =
-          (cursor <= lower && effectiveRate < 0) || (cursor >= upper && effectiveRate > 0)
-        let sourceAvailable = !movingOutward && cursor >= lower && cursor <= upper
+          (cursor <= lower && effectiveSourceStep < 0) || (cursor >= upper && effectiveSourceStep > 0)
+        let sourceAvailable =
+          abs(effectiveSourceStep) > 0.000_001
+          && !movingOutward
+          && cursor >= lower
+          && cursor <= upper
 
         for bufferIndex in buffers.indices {
           guard let data = unsafe buffers[bufferIndex].mData else { continue }
@@ -498,12 +517,12 @@
           }
         }
 
-        effectiveRate += rateStep
-        cursor = clampedFrame(cursor + effectiveRate)
+        effectiveSourceStep += rateStep
+        cursor = clampedFrame(cursor + effectiveSourceStep)
       }
 
       storeAtomicDouble(cursor, in: cursorFrameBits)
-      storeAtomicDouble(effectiveRate, in: effectiveRateBits)
+      storeAtomicDouble(effectiveSourceStep, in: effectiveRateBits)
       isAudibleAtomic.store(renderedAudibleSample || abs(targetRate) > 0, ordering: .relaxed)
       return noErr
     }

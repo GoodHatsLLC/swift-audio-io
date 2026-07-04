@@ -221,11 +221,12 @@
     // AVAudioPlayerNode attached to the engine graph and mutated only from
     // engineControlQueue.
     package nonisolated(unsafe) let player = AVAudioPlayerNode()
-    // SAFETY: Same queue invariant as `engine` above. The jog source node is
-    // attached, connected, disconnected, and detached only on
-    // engineControlQueue; its render block communicates with control state via
-    // ManagedAtomic fields.
+    // SAFETY: Same queue invariant as `engine` above. The jog source/time-pitch
+    // nodes are attached, connected, disconnected, and detached only on
+    // engineControlQueue; the source render block communicates with control
+    // state via ManagedAtomic fields.
     @ObservationIgnored package nonisolated(unsafe) var jogSourceNode: AVAudioSourceNode?
+    @ObservationIgnored package nonisolated(unsafe) var jogTimePitchNode: AVAudioUnitTimePitch?
     package let engineControlQueue = DispatchQueue(label: "AIOEngine.engine-control", qos: .default)
     package let recordingInfrastructure = RecordingInfrastructure()
     @MainActor package var recordingRuntimeContext = RecordingRuntimeState()
@@ -746,6 +747,20 @@
     package func setPlaybackJog(_ new: PlaybackJogSnapshot?) {
       playbackJog = new
       eventSubject.send(AudioIOEvent.playbackJogUpdated(new))
+    }
+
+    package nonisolated func detachPlaybackJogGraph() {
+      if let sourceNode = unsafe jogSourceNode {
+        unsafe engine.disconnectNodeOutput(sourceNode)
+        unsafe engine.detach(sourceNode)
+        unsafe jogSourceNode = nil
+      }
+      if let timePitchNode = unsafe jogTimePitchNode {
+        unsafe engine.disconnectNodeInput(timePitchNode)
+        unsafe engine.disconnectNodeOutput(timePitchNode)
+        unsafe engine.detach(timePitchNode)
+        unsafe jogTimePitchNode = nil
+      }
     }
 
     package func getPlayback() -> Playback? {
