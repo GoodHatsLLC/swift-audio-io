@@ -228,7 +228,9 @@
           } else {
             let startResult = await owner.withEngineControlQueueResult { [weak owner] in
               guard let owner else { return }
-              try unsafe owner.engine.start()
+              try AudioSessionAccess.throwing {
+                try unsafe owner.engine.start()
+              }
             }
             if case .failure(let error) = startResult {
               throw RecordingError.session(.engineStartFailed(error: ErrorContext(error)))

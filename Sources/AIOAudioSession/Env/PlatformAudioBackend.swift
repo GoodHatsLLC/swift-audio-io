@@ -54,6 +54,7 @@ enum PlatformAudioBackendFactory {
 }
 
 #if os(iOS)
+  import AIOSupport
   import AVFoundation
 
   struct IOSPlatformAudioBackend: PlatformAudioBackend {
@@ -96,19 +97,21 @@ enum PlatformAudioBackendFactory {
     }
 
     @concurrent func availableInputs() async -> [PlatformAudioInputDescriptor] {
-      let session = AVAudioSession.sharedInstance()
-      let defaultInputID = session.currentRoute.inputs.first?.uid
-      return (session.availableInputs ?? []).map { input in
-        PlatformAudioInputDescriptor(
-          id: input.uid,
-          name: input.portName,
-          type: AudioInput.InputType(input.portType),
-          channelCount: max(input.channels?.count ?? 0, 1),
-          isDefault: input.uid == defaultInputID,
-        )
-      }
-      .sorted { lhs, rhs in
-        lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
+      await AudioSessionAccess.async {
+        let session = AVAudioSession.sharedInstance()
+        let defaultInputID = session.currentRoute.inputs.first?.uid
+        return (session.availableInputs ?? []).map { input in
+          PlatformAudioInputDescriptor(
+            id: input.uid,
+            name: input.portName,
+            type: AudioInput.InputType(input.portType),
+            channelCount: max(input.channels?.count ?? 0, 1),
+            isDefault: input.uid == defaultInputID,
+          )
+        }
+        .sorted { lhs, rhs in
+          lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
+        }
       }
     }
   }

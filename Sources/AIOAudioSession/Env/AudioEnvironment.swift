@@ -53,8 +53,10 @@
 
     /// The current audio input.
     public var input: AudioInput? {
-      session.currentRoute.inputs.first.map {
-        AudioInput(port: $0)
+      AudioSessionAccess.sync {
+        session.currentRoute.inputs.first.map {
+          AudioInput(port: $0)
+        }
       }
     }
 
@@ -63,28 +65,37 @@
     /// - Parameter input: The audio input to request.
     /// - Throws: An error if the input cannot be set.
     public func request(input: AudioInput?) throws(RequestError) {
-      do {
-        try session.setPreferredInput(input?.avAudio)
-      } catch {
-        throw .operationFailed(operation: .setPreferredInput, error: ErrorContext(error))
-      }
+      try AudioSessionAccess.result(catching: RequestError.self) {
+        () throws(RequestError) -> Void in
+        do {
+          try session.setPreferredInput(input?.avAudio)
+        } catch {
+          throw .operationFailed(operation: .setPreferredInput, error: ErrorContext(error))
+        }
+      }.get()
     }
 
     /// The available audio inputs.
     public var availableInputs: [AudioInput] {
-      (session.availableInputs ?? []).map { AudioInput(port: $0) }
+      AudioSessionAccess.sync {
+        (session.availableInputs ?? []).map { AudioInput(port: $0) }
+      }
     }
 
     /// The current audio source.
     public var source: AudioSource? {
-      session.inputDataSource.map {
-        AudioSource(avAudio: $0)
+      AudioSessionAccess.sync {
+        session.inputDataSource.map {
+          AudioSource(avAudio: $0)
+        }
       }
     }
 
     /// The current sample rate.
     public var sampleRate: SampleRate {
-      SampleRate(session.sampleRate)
+      AudioSessionAccess.sync {
+        SampleRate(session.sampleRate)
+      }
     }
 
     /// Requests a specific sample rate.
@@ -95,11 +106,14 @@
     /// - Returns: The actual sample rate after the request.
     /// - Throws: An error if the sample rate cannot be set.
     public func request(sampleRate: SampleRate) throws(RequestError) {
-      do {
-        try session.setPreferredSampleRate(sampleRate.hz)
-      } catch {
-        throw .operationFailed(operation: .setPreferredSampleRate, error: ErrorContext(error))
-      }
+      try AudioSessionAccess.result(catching: RequestError.self) {
+        () throws(RequestError) -> Void in
+        do {
+          try session.setPreferredSampleRate(sampleRate.hz)
+        } catch {
+          throw .operationFailed(operation: .setPreferredSampleRate, error: ErrorContext(error))
+        }
+      }.get()
     }
 
     /// Requests a specific audio source.
@@ -107,25 +121,32 @@
     /// - Parameter source: The audio source to request.
     /// - Throws: An error if the source cannot be set.
     public func request(source: AudioSource?) throws(RequestError) {
-      // Always set the data source on the currently active input from the route.
-      // This ensures we target the correct port in multi-input scenarios where
-      // preferredInput might be nil (system defaults) or point to an inactive device.
-      guard let activeInput = session.currentRoute.inputs.first else {
-        throw .noActiveAudioInputForDataSource
-      }
-      do {
-        try activeInput.setPreferredDataSource(source?.avAudio)
-      } catch {
-        throw .operationFailed(operation: .setPreferredDataSource, error: ErrorContext(error))
-      }
+      try AudioSessionAccess.result(catching: RequestError.self) {
+        () throws(RequestError) -> Void in
+        // Always set the data source on the currently active input from the route.
+        // This ensures we target the correct port in multi-input scenarios where
+        // preferredInput might be nil (system defaults) or point to an inactive device.
+        guard let activeInput = session.currentRoute.inputs.first else {
+          throw .noActiveAudioInputForDataSource
+        }
+        do {
+          try activeInput.setPreferredDataSource(source?.avAudio)
+        } catch {
+          throw .operationFailed(operation: .setPreferredDataSource, error: ErrorContext(error))
+        }
+      }.get()
     }
 
     /// The available audio sources.
     public var availableSources: [AudioSource] {
-      if let sources = session.inputDataSources {
-        return sources.map { AudioSource(avAudio: $0) }
+      AudioSessionAccess.sync {
+        if let sources = session.inputDataSources {
+          return sources.map { AudioSource(avAudio: $0) }
+        }
+        return session.currentRoute.inputs.first.map { activeInput in
+          (activeInput.dataSources ?? []).map { AudioSource(avAudio: $0) }
+        } ?? []
       }
-      return input?.availableSources ?? []
     }
   }
 

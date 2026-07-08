@@ -34,51 +34,54 @@
       sessionConfiguration: AudioSessionConfiguration,
     ) throws(SessionError) {
       #if os(iOS)
-        let session = AVAudioSession.sharedInstance()
+        try AudioSessionAccess.result(catching: SessionError.self) {
+          () throws(SessionError) -> Void in
+          let session = AVAudioSession.sharedInstance()
 
-        try applyAudioSessionConfiguration(session, configuration: sessionConfiguration)
+          try applyAudioSessionConfiguration(session, configuration: sessionConfiguration)
 
-        do {
-          try session.setPreferredSampleRate(configuration.format.sampleRate.hz)
-        } catch {
-          throw .operationFailed(operation: .setPreferredSampleRate, error: ErrorContext(error))
-        }
+          do {
+            try session.setPreferredSampleRate(configuration.format.sampleRate.hz)
+          } catch {
+            throw .operationFailed(operation: .setPreferredSampleRate, error: ErrorContext(error))
+          }
 
-        let preferredDuration = calculatePreferredBufferDuration(
-          sampleRate: configuration.format.sampleRate.hz,
-        )
-        do {
-          try session.setPreferredIOBufferDuration(preferredDuration)
-        } catch {
-          throw .operationFailed(
-            operation: .setPreferredIOBufferDuration, error: ErrorContext(error),
+          let preferredDuration = calculatePreferredBufferDuration(
+            sampleRate: configuration.format.sampleRate.hz,
           )
-        }
+          do {
+            try session.setPreferredIOBufferDuration(preferredDuration)
+          } catch {
+            throw .operationFailed(
+              operation: .setPreferredIOBufferDuration, error: ErrorContext(error),
+            )
+          }
 
-        do {
-          try session.setActive(true)
-        } catch {
-          throw .operationFailed(operation: .setActive, error: ErrorContext(error))
-        }
+          do {
+            try session.setActive(true)
+          } catch {
+            throw .operationFailed(operation: .setActive, error: ErrorContext(error))
+          }
 
-        try applyPreferredInputIfNeeded(for: configuration, session: session)
+          try applyPreferredInputIfNeeded(for: configuration, session: session)
 
-        let desiredChannels = configuration.format.channels.platform
-        let channelCount =
-          desiredChannels > session.maximumInputNumberOfChannels
-          ? AVAudioChannelCount(session.maximumInputNumberOfChannels) : desiredChannels
-        do {
-          try session.setPreferredInputNumberOfChannels(Int(channelCount))
-        } catch {
-          throw .operationFailed(
-            operation: .setPreferredInputNumberOfChannels,
-            error: ErrorContext(error),
+          let desiredChannels = configuration.format.channels.platform
+          let channelCount =
+            desiredChannels > session.maximumInputNumberOfChannels
+            ? AVAudioChannelCount(session.maximumInputNumberOfChannels) : desiredChannels
+          do {
+            try session.setPreferredInputNumberOfChannels(Int(channelCount))
+          } catch {
+            throw .operationFailed(
+              operation: .setPreferredInputNumberOfChannels,
+              error: ErrorContext(error),
+            )
+          }
+
+          recordingSessionLog.info(
+            "Audio session configured - Sample rate: \(session.sampleRate, privacy: .public), Buffer duration: \(session.ioBufferDuration, privacy: .public), Input channels: \(session.inputNumberOfChannels, privacy: .public)",
           )
-        }
-
-        recordingSessionLog.info(
-          "Audio session configured - Sample rate: \(session.sampleRate, privacy: .public), Buffer duration: \(session.ioBufferDuration, privacy: .public), Input channels: \(session.inputNumberOfChannels, privacy: .public)",
-        )
+        }.get()
       #else
         _ = configuration
       #endif

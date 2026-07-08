@@ -160,6 +160,7 @@
             await MainActor.run {
               owner.state = state
               if !suppressRestore {
+                owner.preferenceStore.setPreferredInputId(newValue?.id)
                 persistFromBaseline(baseline) { prefs in
                   prefs.sampleRateHz = sampleRateHz
                   prefs.channelCount = channelCount

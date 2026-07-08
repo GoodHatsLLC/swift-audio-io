@@ -90,48 +90,51 @@
       _ session: AVAudioSession,
       configuration: AudioSessionConfiguration,
     ) throws(ManagerError) {
-      do {
-        try session.setCategory(
-          configuration.category,
-          mode: configuration.mode,
-          options: configuration.options,
-        )
-      } catch {
-        throw .audioSessionFailed(operation: .setCategory, error: ErrorContext(error))
-      }
+      try AudioSessionAccess.result(catching: ManagerError.self) {
+        () throws(ManagerError) -> Void in
+        do {
+          try session.setCategory(
+            configuration.category,
+            mode: configuration.mode,
+            options: configuration.options,
+          )
+        } catch {
+          throw .audioSessionFailed(operation: .setCategory, error: ErrorContext(error))
+        }
 
-      do {
-        try session.setAllowHapticsAndSystemSoundsDuringRecording(
-          configuration.allowsHapticsAndSystemSoundsDuringRecording,
-        )
-      } catch {
-        throw .audioSessionFailed(
-          operation: .setAllowHapticsAndSystemSoundsDuringRecording,
-          error: ErrorContext(error),
-        )
-      }
+        do {
+          try session.setAllowHapticsAndSystemSoundsDuringRecording(
+            configuration.allowsHapticsAndSystemSoundsDuringRecording,
+          )
+        } catch {
+          throw .audioSessionFailed(
+            operation: .setAllowHapticsAndSystemSoundsDuringRecording,
+            error: ErrorContext(error),
+          )
+        }
 
-      do {
-        try session.setPrefersNoInterruptionsFromSystemAlerts(
-          configuration.prefersNoInterruptionsFromSystemAlerts,
-        )
-      } catch {
-        throw .audioSessionFailed(
-          operation: .setPrefersNoInterruptionsFromSystemAlerts,
-          error: ErrorContext(error),
-        )
-      }
+        do {
+          try session.setPrefersNoInterruptionsFromSystemAlerts(
+            configuration.prefersNoInterruptionsFromSystemAlerts,
+          )
+        } catch {
+          throw .audioSessionFailed(
+            operation: .setPrefersNoInterruptionsFromSystemAlerts,
+            error: ErrorContext(error),
+          )
+        }
 
-      do {
-        try session.setPrefersInterruptionOnRouteDisconnect(
-          configuration.prefersInterruptionOnRouteDisconnect,
-        )
-      } catch {
-        throw .audioSessionFailed(
-          operation: .setPrefersInterruptionOnRouteDisconnect,
-          error: ErrorContext(error),
-        )
-      }
+        do {
+          try session.setPrefersInterruptionOnRouteDisconnect(
+            configuration.prefersInterruptionOnRouteDisconnect,
+          )
+        } catch {
+          throw .audioSessionFailed(
+            operation: .setPrefersInterruptionOnRouteDisconnect,
+            error: ErrorContext(error),
+          )
+        }
+      }.get()
     }
 
     /// Creates a new `AudioEnvironmentManager` instance.
@@ -494,14 +497,26 @@
       inputPreferenceController.setSampleRate(newValue, persistPreference: persistPreference)
     }
 
-    /// The currently selected audio input.
+    /// The input explicitly selected by the user, if any.
+    ///
+    /// `nil` means AudioIO should follow the platform's current/default route.
+    /// The active route is still mirrored internally through `state.input`;
+    /// this property is the user preference that should be forwarded to
+    /// `MicrophoneRecordingInput.preferredInput`.
     public var selectedInput: AudioInput? {
       get {
-        _input ?? env.input ?? env.availableInputs.first
+        preferredInput
       }
       set {
         inputPreferenceController.setSelectedInput(newValue)
       }
+    }
+
+    /// Alias for the explicit input preference used by recording configuration.
+    public var preferredInput: AudioInput? {
+      guard let preferredInputId = preferenceStore.preferredInputId else { return nil }
+      return _availableInputs.first(where: { $0.id == preferredInputId })
+        ?? (_input?.id == preferredInputId ? _input : nil)
     }
 
     /// The currently selected audio source.

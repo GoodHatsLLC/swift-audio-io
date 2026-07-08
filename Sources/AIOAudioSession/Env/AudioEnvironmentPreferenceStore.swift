@@ -13,7 +13,7 @@
     }
 
     private enum StorageKey {
-      static let preferredInputId = "aio.audio_env.preferred_input_id.v1"
+      static let preferredInputId = "aio.audio_env.explicit_preferred_input_id.v2"
       static let inputPrefsById = "aio.audio_env.input_prefs_by_id.v1"
       static let useMeasurement = "aio.audio_env.use_measurement"
     }
@@ -32,6 +32,14 @@
 
     var preferredInputId: String? {
       defaults.string(forKey: StorageKey.preferredInputId)
+    }
+
+    func setPreferredInputId(_ inputId: String?) {
+      if let inputId {
+        defaults.set(inputId, forKey: StorageKey.preferredInputId)
+      } else {
+        defaults.removeObject(forKey: StorageKey.preferredInputId)
+      }
     }
 
     func hasPreferences(for inputId: String) -> Bool {
@@ -53,8 +61,6 @@
       currentSourceId: String?,
       _ update: (inout InputPreferences) -> Void,
     ) {
-      defaults.set(inputId, forKey: StorageKey.preferredInputId)
-
       var prefs =
         inputPreferencesById[inputId]
         ?? InputPreferences(

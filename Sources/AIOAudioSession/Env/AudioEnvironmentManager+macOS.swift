@@ -164,6 +164,10 @@
       }
     }
 
+    public var preferredInput: AudioInput? {
+      _selectedInput
+    }
+
     public var selectedSource: AudioSource? {
       get { _selectedSource }
       set {
