@@ -7,6 +7,10 @@ releases follow the versioning policy in `README.md` and `ROADMAP.md`.
 
 ## Unreleased
 
+Nothing yet.
+
+## 0.5.4 - 2026-07-08
+
 ### Fixed
 
 - macOS: an input-route change (device added/removed, default input changed)
