@@ -187,6 +187,18 @@
     ) throws -> TapInstallResult? {
       dispatchPrecondition(condition: .onQueue(engineControlQueue))
 
+      #if os(macOS)
+        // System-audio capture owns this recording (Core Audio process tap +
+        // aggregate device); there is no AVAudioEngine input tap to reinstall,
+        // and installing one would start the microphone and overwrite the tap
+        // converter shared with the capture pump. Bail without touching the
+        // graph — same "do nothing" contract as the teardown guard below.
+        if case .systemAudio = configuration.input {
+          tapSetupLog.info("reinstallTap skipped: system-audio capture has no input tap")
+          return nil
+        }
+      #endif
+
       // 0. Teardown serialization guard. If a teardown superseded this
       //    reinstall (it set `engineTearingDown` before enqueuing its teardown,
       //    which the FIFO serial queue ran ahead of us), bail before touching

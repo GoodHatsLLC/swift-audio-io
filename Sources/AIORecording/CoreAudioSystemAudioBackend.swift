@@ -35,9 +35,20 @@
     private var didCleanup = false
 
     init(input: SystemAudioRecordingInput, capacitySeconds: Double) throws(RecordingError) {
+      let currentProcessObjectID = SystemAudioProcessObjectID.currentProcess
+      if input.excludesCurrentProcess, currentProcessObjectID == nil {
+        // Self-exclusion by process object failed — the HAL has no process
+        // object for this process (possible when it has not opened an audio
+        // device yet). The tap description falls back to excluding the host
+        // by bundle identifier; log it so any self-capture (the recorder
+        // hearing its own playback) is diagnosable from logs.
+        log.warning(
+          "⚠️ No HAL process object for host; excluding own audio by bundle id fallback (\(Bundle.main.bundleIdentifier ?? "unknown", privacy: .public))",
+        )
+      }
       let description = CoreAudioTapDescriptionBuilder.make(
         input: input,
-        currentProcessObjectID: SystemAudioProcessObjectID.currentProcess,
+        currentProcessObjectID: currentProcessObjectID,
         hostBundleIdentifier: Bundle.main.bundleIdentifier,
       )
 

@@ -24,6 +24,15 @@
         return
       }
 
+      // System-audio capture (Core Audio process tap + private aggregate device)
+      // does not use the AVAudioEngine input path, so an input-route change
+      // requires no reconfiguration. Reinstalling the input tap here would start
+      // the microphone and overwrite the tap converter the capture pump feeds —
+      // injecting mic audio into (or silencing) the system-audio recording.
+      if case .systemAudio = config.input {
+        return
+      }
+
       do {
         let installed = try await reinstallTapAsync(
           configuration: config,

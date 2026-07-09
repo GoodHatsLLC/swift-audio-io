@@ -1,0 +1,78 @@
+// © GoodHatsLLC
+
+#if os(macOS)
+  import AVFoundation
+  import Testing
+
+  @testable import AIOAudioSession
+  @testable import AIORecording
+  @testable import AIORecordingSupport
+  @_spi(TESTING) @testable import AudioIO
+
+  /// A route change during a system-audio recording must not touch the
+  /// AVAudioEngine input tap: the recording is fed by the Core Audio process
+  /// tap, and reinstalling the input tap would start the microphone and
+  /// overwrite the shared tap converter — injecting mic audio into (or
+  /// silencing) the system-audio recording.
+  @MainActor
+  struct SystemAudioRouteChangeTests {
+    @Test
+    func `route change during system-audio recording does not reinstall the input tap`()
+      async throws
+    {
+      let engine = AIOEngine()
+      let configuration = makeSystemAudioConfiguration()
+
+      // Fabricate an established system-audio recording: staged configuration
+      // plus the published `isRecording` flag. The real capture session needs
+      // system-audio TCC permission, so the state is staged directly.
+      engine.state.withLock { $0.recordingConfiguration = configuration }
+      engine.isRecording = true
+
+      // `handleRouteChange` resolves this seam before dispatching a reinstall,
+      // so an invocation means the system-audio guard was bypassed.
+      var reinstallRequested = false
+      engine.testReinstallTapOverride = { (_, _) throws(RecordingError) in
+        reinstallRequested = true
+        throw RecordingError.engineError
+      }
+
+      await engine.handleRouteChange(event: AudioRouteChangeEvent(userMessage: "test"))
+
+      #expect(reinstallRequested == false)
+      #expect(engine.isRecording == true)
+    }
+
+    @Test
+    func `reinstallTap is a no-op for system-audio configurations`() async throws {
+      let engine = AIOEngine()
+      let configuration = makeSystemAudioConfiguration()
+      let processingFormat = try #require(configuration.processingFormat)
+
+      // Would throw or mutate the graph without the guard; the system-audio
+      // guard must return nil before touching the AVAudioEngine.
+      let result = try engine.reinstallTap(
+        configuration: configuration,
+        processingFormat: processingFormat,
+        stopEngine: false,
+      )
+
+      #expect(result == nil)
+    }
+
+    private func makeSystemAudioConfiguration() -> RecordingConfiguration {
+      RecordingConfiguration(
+        input: .systemAudio(
+          SystemAudioRecordingInput(
+            format: InputConfiguration(sampleRate: .dvd, channels: .stereo),
+          ),
+        ),
+        outputConfiguration: OutputConfiguration(
+          fileFormat: .caf,
+          bitDepth: .pcmFloat32,
+          quality: .high,
+        ),
+      )
+    }
+  }
+#endif

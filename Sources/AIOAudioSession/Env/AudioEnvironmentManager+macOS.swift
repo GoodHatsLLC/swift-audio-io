@@ -80,6 +80,13 @@
     public private(set) var isAudioSessionActive = false
 
     private var _selectedInput: AudioInput?
+    /// The device id of the user's explicit input selection. Unlike
+    /// `_selectedInput` (the resolved selection), this survives the device
+    /// disappearing so the selection re-attaches when the device returns.
+    /// `nil` means "follow the system default input".
+    private var _explicitInputID: String?
+    /// The system-default input device id from the most recent platform refresh.
+    private var _defaultInputID: String?
     private var _availableInputs: [AudioInput]
     private var _selectedSource: AudioSource?
     private var _availableSources: [AudioSource]
@@ -146,26 +153,47 @@
     public var selectedInput: AudioInput? {
       get { _selectedInput }
       set {
-        let requestedChannelPreference = _channels
+        _explicitInputID = newValue?.id
         _selectedInput = newValue
-        _availableSources = newValue?.availableSources ?? []
-        if let selected = _selectedSource, !_availableSources.contains(selected) {
-          _selectedSource = _availableSources.first
-        } else if _selectedSource == nil {
-          _selectedSource = _availableSources.first
-        }
-
-        let maxSupportedChannels = newValue?.channelCount ?? .mono
-        if requestedChannelPreference == .stereo, maxSupportedChannels == .stereo {
-          _channels = .stereo
-        } else {
-          _channels = .mono
-        }
+        updateDerivedSourceState()
       }
     }
 
     public var preferredInput: AudioInput? {
       _selectedInput
+    }
+
+    /// The system-default input, resolved against the current input list.
+    private var defaultInput: AudioInput? {
+      guard let id = _defaultInputID else { return nil }
+      return _availableInputs.first(where: { $0.id == id })
+    }
+
+    /// The input that capability state (sources/channels) derives from: the
+    /// explicit selection when present, otherwise the system default. A `nil`
+    /// explicit selection means "follow the system default input" — it must
+    /// never be replaced with a pinned concrete device, because recording
+    /// passes `preferredInput` through and pinning would stop recordings from
+    /// following default-input changes.
+    private var activeInput: AudioInput? {
+      _selectedInput ?? defaultInput
+    }
+
+    private func updateDerivedSourceState() {
+      let requestedChannelPreference = _channels
+      _availableSources = activeInput?.availableSources ?? []
+      if let selected = _selectedSource, !_availableSources.contains(selected) {
+        _selectedSource = _availableSources.first
+      } else if _selectedSource == nil {
+        _selectedSource = _availableSources.first
+      }
+
+      let maxSupportedChannels = activeInput?.channelCount ?? .mono
+      if requestedChannelPreference == .stereo, maxSupportedChannels == .stereo {
+        _channels = .stereo
+      } else {
+        _channels = .mono
+      }
     }
 
     public var selectedSource: AudioSource? {
@@ -203,7 +231,7 @@
     }
 
     public func applyStereo() async throws(ManagerError) {
-      guard selectedInput?.channelCount == .stereo else {
+      guard activeInput?.channelCount == .stereo else {
         throw .unsupportedOperation
       }
       _channels = .stereo
@@ -315,12 +343,15 @@
       }
 
       _availableInputs = inputs
-      let defaultInputID = descriptors.first(where: \.isDefault)?.id
-      let selected =
-        inputs.first(where: { $0.id == _selectedInput?.id })
-        ?? inputs.first(where: { $0.id == defaultInputID })
-        ?? inputs.first
-      selectedInput = selected
+      _defaultInputID = descriptors.first(where: \.isDefault)?.id
+      // Re-resolve the explicit selection against the refreshed list. When the
+      // explicitly selected device is absent, the resolved selection drops to
+      // `nil` (follow the system default) instead of pinning another device;
+      // the explicit id is kept so the selection re-attaches when the device
+      // returns. Assigned directly — the `selectedInput` setter would record a
+      // new explicit intent and erase a temporarily-disconnected selection.
+      _selectedInput = _explicitInputID.flatMap { id in inputs.first(where: { $0.id == id }) }
+      updateDerivedSourceState()
     }
 
     private func makeAudioInput(from descriptor: PlatformAudioInputDescriptor) -> AudioInput {

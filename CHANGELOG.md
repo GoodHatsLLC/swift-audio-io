@@ -7,7 +7,27 @@ releases follow the versioning policy in `README.md` and `ROADMAP.md`.
 
 ## Unreleased
 
-Nothing yet.
+### Fixed
+
+- macOS: an input-route change (device added/removed, default input changed)
+  during a system-audio recording no longer reinstalls the AVAudioEngine input
+  tap. Previously the route-change handler treated every active recording as a
+  microphone recording: it started the microphone and overwrote the shared tap
+  converter, so the system-audio file silently captured microphone audio (or
+  went silent). `reinstallTap` now also refuses system-audio configurations
+  outright.
+- macOS: `AudioEnvironmentManager` no longer pins a concrete input device when
+  the selection is "system default" (`selectedInput == nil`). Refreshes keep
+  `nil` selections so recordings follow default-input changes, a disappeared
+  explicit selection falls back to the system default instead of an arbitrary
+  remaining device, and the explicit selection re-attaches when its device
+  returns.
+
+### Added
+
+- macOS: a diagnostic warning is logged when system-audio self-exclusion cannot
+  resolve the host's HAL process object and falls back to bundle-identifier
+  exclusion.
 
 ## 0.4.0 - 2026-07-03
 
