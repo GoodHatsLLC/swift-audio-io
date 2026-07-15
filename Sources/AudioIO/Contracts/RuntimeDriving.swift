@@ -70,6 +70,7 @@
     var availableInputs: [AudioInput] { get }
     var availableSources: [AudioSource] { get }
     var availableChannelCountsForSelectedSource: [ChannelCount] { get }
+    var channelConfigurationAvailability: AudioChannelConfigurationAvailability { get }
     var likelySupportedSampleRates: [SampleRate] { get }
 
     func applyMono() async throws(AudioEnvironmentError)

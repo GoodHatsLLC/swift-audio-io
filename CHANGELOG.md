@@ -7,7 +7,13 @@ releases follow the versioning policy in `README.md` and `ROADMAP.md`.
 
 ## Unreleased
 
-Nothing yet.
+### Added
+
+- Added `AudioChannelConfigurationAvailability` and
+  `AudioEnvironmentConfiguring.channelConfigurationAvailability` so clients can
+  distinguish an unresolved input from a fixed mono/stereo input or an input
+  whose channel configuration is user-selectable. The capability follows the
+  system-default input without pinning it as a preferred device.
 
 ## 0.5.4 - 2026-07-08
 

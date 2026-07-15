@@ -57,6 +57,8 @@
     public typealias AudioRouteSnapshot = AIOAudioSession.AudioRouteSnapshot
     public typealias AudioSessionSnapshot = AIOAudioSession.AudioSessionSnapshot
   #endif
+  public typealias AudioChannelConfigurationAvailability =
+    AIOAudioSession.AudioChannelConfigurationAvailability
   public typealias AnyErrorManager = AIOAudioSession.AnyErrorManager
   public typealias AudioIOError = AIOAudioSession.AudioIOError
   public typealias BitDepth = AIOAudioSession.BitDepth

@@ -596,6 +596,24 @@
       }
     }
 
+    /// Channel configuration capability of the explicit input, or of the
+    /// current/default route when no input is explicitly selected.
+    ///
+    /// This is derived from cached observable route state. Reading it does not
+    /// pin the current default device as a preferred input.
+    public var channelConfigurationAvailability: AudioChannelConfigurationAvailability {
+      guard isReady, let input = _input else { return .unresolved }
+
+      let supportsStereoConfiguration = input.availableSources.contains { source in
+        source.supportedPolarPatterns.contains(.stereo)
+      }
+      if supportsStereoConfiguration {
+        return .configurable([.mono, .stereo])
+      }
+
+      return .fixed(_selectedNumberOfChannels)
+    }
+
     /// A Boolean value that indicates whether the audio session is configured for stereo.
     public var isConfiguredForStereo: Bool {
       session.inputNumberOfChannels > 1

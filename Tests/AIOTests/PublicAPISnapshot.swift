@@ -33,6 +33,10 @@ func publicAPISnapshot_AIOAudioSession() throws {
     _ = AudioSessionSnapshot.self
   #endif
   _ = AnyErrorManager.self
+  _ = AudioChannelConfigurationAvailability.self
+  _ = AudioChannelConfigurationAvailability.unresolved
+  _ = AudioChannelConfigurationAvailability.fixed(.mono)
+  _ = AudioChannelConfigurationAvailability.configurable([.mono, .stereo])
   _ = BitDepth.self
   _ = ChannelCount.self
   _ = EncodingQuality.self

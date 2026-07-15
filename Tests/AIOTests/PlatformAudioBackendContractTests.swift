@@ -95,6 +95,7 @@
         defaults: makeIsolatedDefaults(),
         platformAudioBackend: backend,
       )
+      #expect(manager.channelConfigurationAvailability == .unresolved)
 
       let runTask = MainActorOwnedWork {
         try? await manager.run()
@@ -110,6 +111,9 @@
       #expect(manager.selectedInput == nil)
       #expect(manager.preferredInput == nil)
       #expect(manager.inputHasStereoSource)
+      #expect(
+        manager.channelConfigurationAvailability == .configurable([.mono, .stereo]),
+      )
 
       await runTask.cancel()
     }
@@ -141,6 +145,7 @@
 
       await state.waitForSubscriber()
       #expect(manager.isReady)
+      #expect(manager.channelConfigurationAvailability == .fixed(.mono))
 
       let refreshed = AsyncContinuation<Void>()
       let subscriberID = manager.addRouteChangeSubscriber { _ in
@@ -167,6 +172,9 @@
       // following the system default instead of pinning the new device.
       #expect(manager.selectedInput == nil)
       #expect(manager.inputHasStereoSource)
+      #expect(
+        manager.channelConfigurationAvailability == .configurable([.mono, .stereo]),
+      )
 
       await runTask.cancel()
     }

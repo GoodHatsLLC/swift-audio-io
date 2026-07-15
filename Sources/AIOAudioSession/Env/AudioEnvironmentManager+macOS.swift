@@ -217,6 +217,14 @@
       return selectedSource.hasStereo ? [.mono, .stereo] : [.mono]
     }
 
+    /// Channel configuration capability of the explicit input, or of the
+    /// system-default input when no device is explicitly selected.
+    public var channelConfigurationAvailability: AudioChannelConfigurationAvailability {
+      guard isReady, let activeInput else { return .unresolved }
+      guard activeInput.channelCount == .stereo else { return .fixed(.mono) }
+      return .configurable([.mono, .stereo])
+    }
+
     public var isConfiguredForStereo: Bool {
       _channels == .stereo
     }
