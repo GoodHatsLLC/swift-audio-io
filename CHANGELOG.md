@@ -7,6 +7,10 @@ releases follow the versioning policy in `README.md` and `ROADMAP.md`.
 
 ## Unreleased
 
+Nothing yet.
+
+## 0.6.0 - 2026-07-14
+
 ### Added
 
 - Added `AudioChannelConfigurationAvailability` and
