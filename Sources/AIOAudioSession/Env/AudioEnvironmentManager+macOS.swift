@@ -65,6 +65,7 @@
     private let errorManager: any ErrorManaging
     private let defaults: UserDefaults
     private let platformAudioBackend: any PlatformAudioBackend
+    private let callbackTasks = MainActorTaskRunner()
     private var sessionController: AudioSessionController { .init(owner: self) }
     private var routeObserver: AudioRouteObserver { .init(owner: self) }
     private var backendRouteTask: MainActorOwnedWork?
@@ -104,10 +105,13 @@
           handler(newValue)
           return
         }
-        do {
-          try setAudioSessionActive(newValue)
-        } catch {
-          errorManager.enqueue(error)
+        callbackTasks.run { [weak self] in
+          guard let self else { return }
+          do {
+            try await setAudioSessionActive(newValue)
+          } catch {
+            errorManager.enqueue(error)
+          }
         }
       }
     }
@@ -318,8 +322,8 @@
       }
     }
 
-    public func setAudioSessionActive(_ active: Bool) throws(ManagerError) {
-      try sessionController.setAudioSessionActive(active)
+    public func setAudioSessionActive(_ active: Bool) async throws(ManagerError) {
+      try await sessionController.setAudioSessionActive(active)
     }
 
     public func run() async throws(ManagerError) {
@@ -391,7 +395,7 @@
       let owner: AudioEnvironmentManager
 
       @MainActor
-      func setAudioSessionActive(_ active: Bool) throws(ManagerError) {
+      func setAudioSessionActive(_ active: Bool) async throws(ManagerError) {
         guard owner.isRunning else {
           return
         }

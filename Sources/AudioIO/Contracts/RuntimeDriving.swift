@@ -53,7 +53,7 @@
     var channels: ChannelCount { get }
 
     func applyStereo() async throws(AudioEnvironmentError)
-    func setAudioSessionActive(_ active: Bool) throws(AudioEnvironmentError)
+    func setAudioSessionActive(_ active: Bool) async throws(AudioEnvironmentError)
 
     func readySignal() async throws(AudioEnvironmentError)
     func run() async throws(AudioEnvironmentError)

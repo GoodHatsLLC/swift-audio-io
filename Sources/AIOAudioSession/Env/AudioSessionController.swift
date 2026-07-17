@@ -13,17 +13,20 @@
       let owner: AudioEnvironmentManager
 
       @MainActor
-      func setAudioSessionActive(_ active: Bool) throws(ManagerError) {
+      func setAudioSessionActive(_ active: Bool) async throws(ManagerError) {
         guard owner.isRunning else {
           audioSessionControllerLog.warning(
             "Cannot set audio session active state when manager is not running",
           )
           return
         }
-        try AudioSessionAccess.result(catching: AudioEnvironmentManager.ManagerError.self) {
+        guard owner.isAudioSessionActive != active else { return }
+
+        let session = owner.env.session
+        try await AudioSessionAccess.result(catching: AudioEnvironmentManager.ManagerError.self) {
           () throws(AudioEnvironmentManager.ManagerError) -> Void in
           do {
-            try owner.env.session.setActive(active, options: .notifyOthersOnDeactivation)
+            try session.setActive(active, options: .notifyOthersOnDeactivation)
           } catch {
             throw .audioSessionFailed(operation: .setActive, error: ErrorContext(error))
           }

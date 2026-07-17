@@ -466,32 +466,69 @@
       )
     }
 
-    /// Public `@MainActor` warm entry point. Already on the main actor, so it
-    /// activates the session delegate, captures ``WarmInputs`` locally, and runs
-    /// ``performWarm(configuration:inputs:)`` synchronously (behaviour-equivalent
-    /// to the previous blocking implementation).
+    /// Public warm entry point. Main-actor state is captured before the blocking
+    /// engine/session preparation is moved to the global executor.
     @MainActor
-    func warm(configuration: RecordingConfiguration) throws(RecordingError) {
+    func warm(configuration: RecordingConfiguration) async throws(RecordingError) {
       guard !owner.isRecording, !owner.isPlaying else {
         return
+      }
+      guard !owner.isStartingRecording else {
+        throw RecordingError.session(
+          .notReady(details: "Another audio bring-up is already in progress"),
+        )
       }
       // Validate before activating the session delegate so an invalid
       // configuration never activates the audio session.
       try validateRecordingConfiguration(configuration)
+
+      owner.isStartingRecording = true
+      owner.startAbortRequiresFailureEvent = false
+      owner.startAbortRequested = false
+
       do {
-        try owner.activateAudioSessionDelegate(owner.audioSessionDelegate)
-      } catch let sessionError {
-        throw RecordingError.session(sessionError)
-      }
-      let inputs = makeWarmInputs(configuration: configuration, alreadyActive: false)
-      do {
-        try performWarm(configuration: configuration, inputs: inputs)
+        try await owner.activateAudioSessionDelegate(owner.audioSessionDelegate)
+        guard !Task.isCancelled, !owner.startAbortRequested else {
+          throw RecordingError.engineError
+        }
+
+        let inputs = makeWarmInputs(configuration: configuration, alreadyActive: false)
+        try await performWarmOffMain(configuration: configuration, inputs: inputs)
       } catch {
+        owner.isStartingRecording = false
+        owner.startAbortRequested = false
+        owner.startAbortRequiresFailureEvent = false
         log.error("Failed to warm engine: \(error, privacy: .public)")
         hardStop()
         owner.eventSubject.send(AudioIOEvent.recordingFailed)
-        throw error
+        if let recordingError = error as? RecordingError {
+          throw recordingError
+        }
+        if let sessionError = error as? SessionError {
+          throw RecordingError.session(sessionError)
+        }
+        throw RecordingError.engineError
       }
+
+      owner.isStartingRecording = false
+      guard !Task.isCancelled, !owner.startAbortRequested else {
+        let emitFailure = owner.startAbortRequiresFailureEvent
+        owner.startAbortRequested = false
+        owner.startAbortRequiresFailureEvent = false
+        hardStop()
+        if emitFailure {
+          owner.eventSubject.send(AudioIOEvent.recordingFailed)
+        }
+        throw RecordingError.engineError
+      }
+    }
+
+    @concurrent
+    private nonisolated func performWarmOffMain(
+      configuration: RecordingConfiguration,
+      inputs: WarmInputs,
+    ) async throws(RecordingError) {
+      try performWarm(configuration: configuration, inputs: inputs)
     }
 
     /// Nonisolated core of `warm`. Performs all blocking bring-up work — audio
@@ -881,7 +918,7 @@
       owner.wantsRecording = false
       owner.reconciliationTask = nil
       log.info("gracefulStop completed")
-      owner.deactivateAudioSessionIfNeeded(reason: "recording stopped")
+      await owner.deactivateAudioSessionIfNeeded(reason: "recording stopped")
     }
 
     /// Stops the active capture backend or tears down the `AVAudioEngine` tap/graph.

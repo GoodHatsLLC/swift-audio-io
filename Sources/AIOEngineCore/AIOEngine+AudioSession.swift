@@ -16,9 +16,9 @@
 
   extension AIOEngine {
     @MainActor
-    package func configureAudioSessionForPlayback() throws(SessionError) {
+    package func configureAudioSessionForPlayback() async throws(SessionError) {
       do {
-        try audioSessionDelegate?.setAudioSessionActive(true)
+        try await audioSessionDelegate?.setAudioSessionActive(true)
       } catch {
         throw .operationFailed(operation: .setActive, error: ErrorContext(error))
       }
@@ -92,12 +92,12 @@
     #endif
 
     @MainActor
-    package func deactivateAudioSessionIfNeeded(reason: String) {
+    package func deactivateAudioSessionIfNeeded(reason: String) async {
       guard deactivateAudioSessionOnStop else { return }
       guard !isRecording, !isPlayback, !wantsRecording else { return }
 
       do {
-        try audioSessionDelegate?.setAudioSessionActive(false)
+        try await audioSessionDelegate?.setAudioSessionActive(false)
       } catch {
         let wrapped = SessionError.operationFailed(
           operation: .setActive,

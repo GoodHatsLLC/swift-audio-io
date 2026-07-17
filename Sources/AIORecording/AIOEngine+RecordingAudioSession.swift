@@ -21,9 +21,9 @@
     @MainActor
     package func activateAudioSessionDelegate(
       _ sessionDelegate: (any AudioSessionDelegate)?,
-    ) throws(SessionError) {
+    ) async throws(SessionError) {
       do {
-        try sessionDelegate?.setAudioSessionActive(true)
+        try await sessionDelegate?.setAudioSessionActive(true)
       } catch {
         throw .operationFailed(operation: .setActive, error: ErrorContext(error))
       }

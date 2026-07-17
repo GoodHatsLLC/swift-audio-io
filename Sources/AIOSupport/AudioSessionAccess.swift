@@ -52,4 +52,21 @@ package enum AudioSessionAccess {
       }
     }
   }
+
+  package static func result<T: Sendable, E: Error & Sendable>(
+    catching _: E.Type,
+    _ body: @escaping @Sendable () throws(E) -> T,
+  ) async -> Result<T, E> {
+    await withCheckedContinuation { continuation in
+      queue.async {
+        do {
+          continuation.resume(returning: .success(try body()))
+        } catch let error as E {
+          continuation.resume(returning: .failure(error))
+        } catch {
+          preconditionFailure("Typed throws produced unexpected error type: \(error)")
+        }
+      }
+    }
+  }
 }

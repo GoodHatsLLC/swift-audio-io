@@ -127,7 +127,7 @@
       }
 
       do {
-        try owner.configureAudioSessionForPlayback()
+        try await owner.configureAudioSessionForPlayback()
       } catch let sessionError {
         throw PlaybackError.session(sessionError)
       }
@@ -207,7 +207,7 @@
       }
 
       do {
-        try owner.configureAudioSessionForPlayback()
+        try await owner.configureAudioSessionForPlayback()
       } catch let sessionError {
         throw PlaybackError.session(sessionError)
       }
@@ -753,7 +753,7 @@
       owner.scrubTask = nil
       owner.playbackState[locked: \.playbackInstance] = nil
       owner.setPlayback(nil)
-      owner.deactivateAudioSessionIfNeeded(reason: "playback stopped")
+      await owner.deactivateAudioSessionIfNeeded(reason: "playback stopped")
     }
 
     @MainActor
@@ -803,12 +803,15 @@
           }
         }
         callbackTasks.run { [weak runtimeOwner] in
-          await MainActor.run {
-            if runtimeOwner?.playbackState[locked: \.playbackInstance] == nil {
-              runtimeOwner?.setPlayback(nil)
-              runtimeOwner?.deactivateAudioSessionIfNeeded(reason: "playback finished")
+          let shouldDeactivate = await MainActor.run {
+            guard runtimeOwner?.playbackState[locked: \.playbackInstance] == nil else {
+              return false
             }
+            runtimeOwner?.setPlayback(nil)
+            return true
           }
+          guard shouldDeactivate, let runtimeOwner else { return }
+          await runtimeOwner.deactivateAudioSessionIfNeeded(reason: "playback finished")
         }
         finishedFile.close()
       }

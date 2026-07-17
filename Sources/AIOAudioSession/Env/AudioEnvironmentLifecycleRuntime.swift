@@ -79,13 +79,12 @@
         await withCancellationOperation {
           if wasActive {
             do {
-              try owner.env.session.setActive(false, options: .notifyOthersOnDeactivation)
+              try await owner.setAudioSessionActive(false)
             } catch {
               audioEnvironmentLifecycleLog.error(
                 "Failed to deactivate AudioSession on cancellation: \(error, privacy: .public)",
               )
             }
-            await MainActor.run { owner.isAudioSessionActive = false }
           }
         }
 

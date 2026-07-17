@@ -178,8 +178,8 @@
     /// - Parameter configuration: The configuration to use for recording.
     /// - Throws: A ``RecordingError`` if the configuration is invalid or if the engine fails to warm up.
     @MainActor
-    public func warm(configuration: RecordingConfiguration) throws(RecordingError) {
-      try recordingEngineRuntime.warm(configuration: configuration)
+    public func warm(configuration: RecordingConfiguration) async throws(RecordingError) {
+      try await recordingEngineRuntime.warm(configuration: configuration)
     }
 
     package func makeAudioBuffers(

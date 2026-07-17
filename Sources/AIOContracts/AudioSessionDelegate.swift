@@ -2,5 +2,5 @@
 
 @MainActor
 public protocol AudioSessionDelegate {
-  func setAudioSessionActive(_: Bool) throws
+  func setAudioSessionActive(_: Bool) async throws
 }

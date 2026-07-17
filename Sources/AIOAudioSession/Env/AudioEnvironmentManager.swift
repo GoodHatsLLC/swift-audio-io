@@ -219,8 +219,8 @@
     /// synchronous XPC round-trips to `mediaserverd` that can each block for 100–500 ms.
     /// Running them off the main actor prevents UIKit run-loop hangs.
     ///
-    /// - Note: `setCategory` and `setActive` intentionally remain on MainActor per Apple
-    ///   DTS guidance. Only input-preference calls are moved here.
+    /// - Note: Session activation and these input-preference writes both execute
+    ///   off MainActor through serialized AudioIO-owned queues.
     ///
     /// The work is submitted to ``inputWriteQueue`` so it is serialized FIFO
     /// against the setters and the restorer — the blocking XPC never overlaps
@@ -343,17 +343,20 @@
         if let handler = onRequestAudioSessionActive {
           handler(newValue)
         } else {
-          do {
-            try setAudioSessionActive(newValue)
-          } catch {
-            errorManager.enqueue(
-              error,
-              visibility: .userInterrupting,
-              userMessage: newValue
-                ? "Couldn't enable the microphone."
-                : "Couldn't disable the microphone.",
-              context: "Audio session",
-            )
+          callbackTasks.run { [weak self] in
+            guard let self else { return }
+            do {
+              try await setAudioSessionActive(newValue)
+            } catch {
+              errorManager.enqueue(
+                error,
+                visibility: .userInterrupting,
+                userMessage: newValue
+                  ? "Couldn't enable the microphone."
+                  : "Couldn't disable the microphone.",
+                context: "Audio session",
+              )
+            }
           }
         }
       }
@@ -674,8 +677,8 @@
     ///
     /// - Parameter active: Whether the audio session should be active.
     /// - Throws: An error if the audio session state cannot be changed.
-    public func setAudioSessionActive(_ active: Bool) throws(ManagerError) {
-      try sessionController.setAudioSessionActive(active)
+    public func setAudioSessionActive(_ active: Bool) async throws(ManagerError) {
+      try await sessionController.setAudioSessionActive(active)
     }
   }
 

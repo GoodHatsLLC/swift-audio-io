@@ -7,7 +7,13 @@ releases follow the versioning policy in `README.md` and `ROADMAP.md`.
 
 ## Unreleased
 
-Nothing yet.
+### Changed
+
+- Audio-session activation and deactivation now use async AudioIO APIs and run
+  the blocking iOS `AVAudioSession.setActive` operation on AudioIO's serialized
+  off-main session queue. `AudioEnvironmentManager.setAudioSessionActive`,
+  `AudioSessionDelegate.setAudioSessionActive`, and `AIOEngine.warm` are now
+  async so callers can suspend without blocking the main thread.
 
 ## 0.6.0 - 2026-07-14
 

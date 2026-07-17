@@ -80,6 +80,18 @@ func publicAPISnapshot_AIOContracts() throws {
   _ = BufferTiming.self
 }
 
+@MainActor
+func publicAPISnapshotAsyncAudioSessionAPI(
+  environment: AudioEnvironmentManager,
+  delegate: any AudioSessionDelegate,
+  engine: AIOEngine,
+  configuration: RecordingConfiguration,
+) async throws {
+  try await environment.setAudioSessionActive(true)
+  try await delegate.setAudioSessionActive(true)
+  try await engine.warm(configuration: configuration)
+}
+
 @Test("Public API snapshot — AIOEngineCore re-exports compile via AudioIO")
 func publicAPISnapshot_AIOEngineCore() throws {
   _ = AIOEngine.self

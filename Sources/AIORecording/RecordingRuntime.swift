@@ -150,8 +150,8 @@
     ) async throws(RecordingError) -> URL {
       #if DEBUG
         // Prove the bring-up runs off the main actor (see the doc comment). The
-        // `performWarm` path below cannot assert this itself — it is also called
-        // synchronously on the main actor by the intentionally-sync `warm()`.
+        // `performWarm` path below cannot assert this itself because it is a
+        // synchronous core also invoked by the async public warm wrapper.
         dispatchPrecondition(condition: .notOnQueue(.main))
       #endif
       do {
@@ -167,52 +167,13 @@
           }
         }
 
-        // (b) MainActor PREP hop: publish main-isolated teardown/state changes and
-        // capture the values the off-main warm path needs.
-        let inputs: RecordingEngineRuntime.WarmInputs = try await MainActor.run {
-          if shouldStopPlayer || owner.playback != nil {
-            owner.playbackState[locked: \.playbackInstance] = nil
-            owner.setPlayback(nil)
-          }
-          owner.lastWriteFailure = nil
-          owner.lastRecordingConfiguration = configuration
-
-          // If a *different* configuration is already warmed, tear it down here on
-          // the main actor so the nonisolated warm core never needs `hardStop()`.
-          if let existing = owner.state[locked: \.recordingConfiguration],
-            existing != configuration
-          {
-            owner.hardStop()
-          }
-
-          let alreadyActive = owner.isRecording || owner.isPlaying
-
-          // Activate the `@MainActor` audio-session delegate here (it cannot run on
-          // the off-main warm path). Skipped when already active, mirroring the
-          // early-return guard in `performWarm`.
-          if !alreadyActive {
-            do throws(SessionError) {
-              try owner.activateAudioSessionDelegate(owner.audioSessionDelegate)
-            } catch {
-              throw RecordingError.session(error)
-            }
-          }
-
-          // Open the bring-up window only AFTER the fallible main-actor prep
-          // (delegate activation) has succeeded, so an early throw can never leave
-          // `isStartingRecording` stuck `true`. The remainder of this closure
-          // cannot throw. From here, teardown handlers and stop paths defer rather
-          // than tear down the half-built engine inline (see
-          // `AIOEngine.isStartingRecording`); reset the abort signal/flags.
-          owner.isStartingRecording = true
-          owner.startAbortRequiresFailureEvent = false
-          owner.startAbortRequested = false
-
-          return owner.recordingEngineRuntime.makeWarmInputs(
-            configuration: configuration,
-            alreadyActive: alreadyActive,
-          )
-        }
+        // (b) MainActor PREP hop: claim the bring-up window, publish
+        // main-isolated teardown/state changes, activate the session, and capture
+        // the values the off-main warm path needs.
+        let inputs = try await prepareStart(
+          configuration: configuration,
+          shouldStopPlayer: shouldStopPlayer,
+        )
 
         do {
           // (c) OFF-MAIN: blocking bring-up + engine/backend start, never on main.
@@ -318,6 +279,60 @@
         throw error
       } catch {
         throw .session(.engineStartFailed(error: ErrorContext(error)))
+      }
+    }
+
+    @MainActor
+    private func prepareStart(
+      configuration: RecordingConfiguration,
+      shouldStopPlayer: Bool,
+    ) async throws(RecordingError) -> RecordingEngineRuntime.WarmInputs {
+      guard !owner.isStartingRecording else {
+        throw RecordingError.session(
+          .notReady(details: "Another audio bring-up is already in progress"),
+        )
+      }
+      owner.isStartingRecording = true
+      owner.startAbortRequiresFailureEvent = false
+      owner.startAbortRequested = false
+
+      if shouldStopPlayer || owner.playback != nil {
+        owner.playbackState[locked: \.playbackInstance] = nil
+        owner.setPlayback(nil)
+      }
+      owner.lastWriteFailure = nil
+      owner.lastRecordingConfiguration = configuration
+
+      // If a *different* configuration is already warmed, tear it down here on
+      // the main actor so the nonisolated warm core never needs `hardStop()`.
+      if let existing = owner.state[locked: \.recordingConfiguration],
+        existing != configuration
+      {
+        owner.hardStop()
+      }
+
+      do throws(RecordingError) {
+        let alreadyActive = owner.isRecording || owner.isPlaying
+        if !alreadyActive {
+          do throws(SessionError) {
+            try await owner.activateAudioSessionDelegate(owner.audioSessionDelegate)
+          } catch {
+            throw RecordingError.session(error)
+          }
+        }
+        guard !Task.isCancelled, !owner.startAbortRequested else {
+          throw RecordingError.engineError
+        }
+
+        return owner.recordingEngineRuntime.makeWarmInputs(
+          configuration: configuration,
+          alreadyActive: alreadyActive,
+        )
+      } catch {
+        owner.isStartingRecording = false
+        owner.startAbortRequested = false
+        owner.startAbortRequiresFailureEvent = false
+        throw error
       }
     }
 

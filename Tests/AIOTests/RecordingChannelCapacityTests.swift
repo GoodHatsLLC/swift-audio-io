@@ -11,12 +11,12 @@
   struct RecordingChannelCapacityTests {
     @Test
     @MainActor
-    func `warming unsupported runtime channel count emits typed error`() throws {
+    func `warming unsupported runtime channel count emits typed error`() async throws {
       let engine = AIOEngine()
       let configuration = makeConfiguration(fileFormat: .caf, channels: .init(platform: 33))
 
       do {
-        try engine.warm(configuration: configuration)
+        try await engine.warm(configuration: configuration)
         Issue.record("Expected unsupportedChannelCount")
       } catch RecordingError.unsupportedChannelCount(
         let requested,

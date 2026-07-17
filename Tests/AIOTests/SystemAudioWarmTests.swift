@@ -13,7 +13,7 @@
     // on-device.)
     @MainActor
     @Test
-    func `system audio rejects more than two channels before touching the HAL`() {
+    func `system audio rejects more than two channels before touching the HAL`() async {
       let engine = AIOEngine()
       let configuration = RecordingConfiguration(
         input: .systemAudio(
@@ -29,7 +29,7 @@
       )
 
       do {
-        try engine.warm(configuration: configuration)
+        try await engine.warm(configuration: configuration)
         Issue.record("expected unsupportedChannelCount")
       } catch RecordingError.unsupportedChannelCount(let requested, let maximum) {
         #expect(requested == 6)
