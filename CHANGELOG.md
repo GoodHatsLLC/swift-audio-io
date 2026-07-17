@@ -7,6 +7,20 @@ releases follow the versioning policy in `README.md` and `ROADMAP.md`.
 
 ## Unreleased
 
+Nothing yet.
+
+## 0.8.0 - 2026-07-17
+
+### Added
+
+- `RecordingTimingSnapshot` now reports the last persisted-buffer host time,
+  exact persisted frame count, and exact frame count spanning the measured host
+  interval. Multi-device clients can use the interval to measure effective
+  capture rate without estimating from file duration or counting dropped tap
+  callbacks.
+
+## 0.7.0 - 2026-07-16
+
 ### Changed
 
 - Audio-session activation and deactivation now use async AudioIO APIs and run
