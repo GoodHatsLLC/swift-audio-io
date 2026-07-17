@@ -270,6 +270,72 @@
       recordingInfrastructure.recordingFirstSourceSampleTimeAtomic
     }
 
+    package var recordingLastHostTimeAtomic: ManagedAtomic<UInt64> {
+      recordingInfrastructure.recordingLastHostTimeAtomic
+    }
+
+    package var recordingCapturedFrameCountAtomic: ManagedAtomic<UInt64> {
+      recordingInfrastructure.recordingCapturedFrameCountAtomic
+    }
+
+    package var recordingFirstHostFramePositionAtomic: ManagedAtomic<UInt64> {
+      recordingInfrastructure.recordingFirstHostFramePositionAtomic
+    }
+
+    package var recordingHostTimeSpanFrameCountAtomic: ManagedAtomic<UInt64> {
+      recordingInfrastructure.recordingHostTimeSpanFrameCountAtomic
+    }
+
+    /// Reset every value in the segment timing snapshot before a fresh capture starts.
+    package nonisolated func resetRecordingTiming() {
+      recordingSampleTimeAtomic.store(0, ordering: .relaxed)
+      recordingFirstSourceSampleTimeAtomic.store(Int64.min, ordering: .relaxed)
+      recordingLastHostTimeAtomic.store(0, ordering: .relaxed)
+      recordingCapturedFrameCountAtomic.store(0, ordering: .relaxed)
+      recordingFirstHostFramePositionAtomic.store(0, ordering: .relaxed)
+      recordingHostTimeSpanFrameCountAtomic.store(0, ordering: .relaxed)
+      // Publish the reset last: readers use this as the snapshot's availability sentinel.
+      recordingFirstHostTimeAtomic.store(0, ordering: .releasing)
+    }
+
+    /// Record one buffer accepted by the file-writer path.
+    ///
+    /// The capture callback is the sole writer. Keeping this bookkeeping in one lock-free helper
+    /// lets microphone capture, system-audio capture, and the deterministic test seam share the
+    /// exact same persisted-frame semantics.
+    package nonisolated func recordPersistedBufferTiming(
+      frameCount: Int,
+      hostTime: UInt64?,
+      sourceSampleTime: Int64?,
+    ) {
+      guard frameCount > 0 else { return }
+      let capturedBefore = recordingCapturedFrameCountAtomic.load(ordering: .relaxed)
+      recordingCapturedFrameCountAtomic.store(
+        capturedBefore &+ UInt64(frameCount),
+        ordering: .relaxed,
+      )
+      guard let hostTime else { return }
+
+      let firstHostTime = recordingFirstHostTimeAtomic.load(ordering: .acquiring)
+      if firstHostTime == 0 {
+        recordingFirstSourceSampleTimeAtomic.store(
+          sourceSampleTime ?? Int64.min,
+          ordering: .relaxed,
+        )
+        recordingFirstHostFramePositionAtomic.store(capturedBefore, ordering: .relaxed)
+        recordingHostTimeSpanFrameCountAtomic.store(0, ordering: .relaxed)
+        recordingLastHostTimeAtomic.store(hostTime, ordering: .releasing)
+        recordingFirstHostTimeAtomic.store(hostTime, ordering: .releasing)
+      } else {
+        let firstPosition = recordingFirstHostFramePositionAtomic.load(ordering: .relaxed)
+        recordingHostTimeSpanFrameCountAtomic.store(
+          capturedBefore &- firstPosition,
+          ordering: .relaxed,
+        )
+        recordingLastHostTimeAtomic.store(hostTime, ordering: .releasing)
+      }
+    }
+
     package var writerDrainTimeout: Duration {
       recordingInfrastructure.writerDrainTimeout
     }

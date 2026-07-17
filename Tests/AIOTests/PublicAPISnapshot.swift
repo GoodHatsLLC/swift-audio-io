@@ -78,6 +78,7 @@ func publicAPISnapshot_AIOContracts() throws {
   _ = (any BufferReceiver<Float>).self
   _ = BufferReceiverToken.self
   _ = BufferTiming.self
+  _ = RecordingTimingSnapshot.self
 }
 
 @MainActor

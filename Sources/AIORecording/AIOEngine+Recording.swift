@@ -403,7 +403,7 @@
       try await recordingRuntime.rotateRecordingFile()
     }
 
-    /// The host-time anchor of the first captured buffer of the current (or just-finished)
+    /// The host-time interval and exact persisted frame counts of the current (or just-finished)
     /// recording segment. See ``RecordingTimingSnapshot``.
     ///
     /// Returns `nil` until the first buffer with a valid host time has been captured. The value is
@@ -412,12 +412,15 @@
     /// anchor the just-finished segment for cross-device alignment.
     @MainActor
     public func recordingTimingSnapshot() -> RecordingTimingSnapshot? {
-      let hostTime = recordingFirstHostTimeAtomic.load(ordering: .relaxed)
-      guard hostTime != 0 else { return nil }
+      let firstHostTime = recordingFirstHostTimeAtomic.load(ordering: .acquiring)
+      guard firstHostTime != 0 else { return nil }
       let rawSampleTime = recordingFirstSourceSampleTimeAtomic.load(ordering: .relaxed)
       return RecordingTimingSnapshot(
-        firstBufferHostTime: hostTime,
+        firstBufferHostTime: firstHostTime,
         firstBufferSampleTime: rawSampleTime == Int64.min ? nil : rawSampleTime,
+        lastBufferHostTime: recordingLastHostTimeAtomic.load(ordering: .acquiring),
+        capturedFrameCount: recordingCapturedFrameCountAtomic.load(ordering: .relaxed),
+        hostTimeSpanFrameCount: recordingHostTimeSpanFrameCountAtomic.load(ordering: .relaxed),
       )
     }
   }

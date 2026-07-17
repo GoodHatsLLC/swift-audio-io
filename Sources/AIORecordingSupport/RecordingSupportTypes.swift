@@ -439,6 +439,15 @@
     /// "no valid source sample time for the first host-timed frame". Stored before the host-time
     /// store so a reader observing a non-zero host time also observes this value.
     package let recordingFirstSourceSampleTimeAtomic = ManagedAtomic<Int64>(Int64.min)
+    /// Mach host time of the first frame in the latest persisted buffer that carried valid host
+    /// time. Published after `recordingHostTimeSpanFrameCountAtomic` is updated.
+    package let recordingLastHostTimeAtomic = ManagedAtomic<UInt64>(0)
+    /// Exact frames accepted by the recording writer during the current segment.
+    package let recordingCapturedFrameCountAtomic = ManagedAtomic<UInt64>(0)
+    /// Writer-frame position immediately before the first host-timed persisted buffer.
+    package let recordingFirstHostFramePositionAtomic = ManagedAtomic<UInt64>(0)
+    /// Persisted frames between the first and latest host-timed buffer starts.
+    package let recordingHostTimeSpanFrameCountAtomic = ManagedAtomic<UInt64>(0)
     package let writerDrainTimeout: Duration = .seconds(5)
     package let stopDrainTimeout: Duration = .seconds(6)
     package let receiverPollingInterval: Duration = .milliseconds(20)

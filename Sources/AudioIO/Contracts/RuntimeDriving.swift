@@ -134,12 +134,12 @@
     @MainActor func stopRecording() async throws(RecordingError) -> URL
     @MainActor func rotateRecordingFile() async throws(RecordingError) -> URL
 
-    /// The host-time anchor of the first captured buffer of the current (or just-finished)
-    /// recording segment, for multi-device alignment. Returns `nil` if no buffer with a valid
-    /// host time has been captured since the last recording start. Captured on the real-time tap
-    /// thread and reset at each start; the value persists after ``stopRecording()`` until the next
-    /// start, so read it immediately after stopping to anchor that segment. Defaults to `nil` for
-    /// conformers that do not surface tap timing.
+    /// The host-time interval and exact persisted frame counts of the current (or just-finished)
+    /// recording segment, for multi-device alignment and effective sample-rate measurement.
+    /// Returns `nil` if no persisted buffer with a valid host time has been captured since the last
+    /// recording start. The value persists after ``stopRecording()`` until the next start, so read
+    /// it immediately after stopping for a complete snapshot. Defaults to `nil` for conformers that
+    /// do not surface capture timing.
     @MainActor func recordingTimingSnapshot() -> RecordingTimingSnapshot?
 
     @discardableResult

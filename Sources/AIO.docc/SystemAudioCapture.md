@@ -114,7 +114,8 @@ are terminal. See <doc:ErrorHandling> for the error model.
 ## Lifecycle and threading
 
 System audio honors the same stop/drain, ``AIOEngine/rotateRecordingFile()``,
-and ``AIOEngine/recordingTimingSnapshot()`` semantics as the microphone. The
+and ``AIOEngine/recordingTimingSnapshot()`` semantics as the microphone, including exact persisted
+frame counts and the first-to-last host-time interval used to measure effective capture rate. The
 realtime Core Audio IO callback only performs a bounded, lock-free copy; format
 conversion, file writing, and buffer-receiver delivery happen off the realtime
 thread, matching the guarantees described in <doc:ThreadingModel>.

@@ -37,6 +37,9 @@
       let snapshot = try #require(await engine.recordingTimingSnapshot())
       #expect(snapshot.firstBufferHostTime == 12_345_678)
       #expect(snapshot.firstBufferSampleTime == 9_000)
+      #expect(snapshot.lastBufferHostTime == 12_345_678)
+      #expect(snapshot.capturedFrameCount == 64)
+      #expect(snapshot.hostTimeSpanFrameCount == 0)
 
       _ = try await engine.stopRecording()
     }
@@ -53,6 +56,9 @@
       let snapshot = try #require(await engine.recordingTimingSnapshot())
       #expect(snapshot.firstBufferHostTime == 1_000)
       #expect(snapshot.firstBufferSampleTime == 10)
+      #expect(snapshot.lastBufferHostTime == 2_000)
+      #expect(snapshot.capturedFrameCount == 64)
+      #expect(snapshot.hostTimeSpanFrameCount == 32)
 
       _ = try await engine.stopRecording()
     }
@@ -69,6 +75,9 @@
       let snapshot = try #require(await engine.recordingTimingSnapshot())
       #expect(snapshot.firstBufferHostTime == 7_777)
       #expect(snapshot.firstBufferSampleTime == 42)
+      #expect(snapshot.lastBufferHostTime == 7_777)
+      #expect(snapshot.capturedFrameCount == 64)
+      #expect(snapshot.hostTimeSpanFrameCount == 0)
     }
 
     @Test
@@ -86,6 +95,31 @@
       let snapshot = try #require(await engine.recordingTimingSnapshot())
       #expect(snapshot.firstBufferHostTime == 555)
       #expect(snapshot.firstBufferSampleTime == nil)
+      #expect(snapshot.lastBufferHostTime == 555)
+      #expect(snapshot.capturedFrameCount == 64)
+      #expect(snapshot.hostTimeSpanFrameCount == 0)
+
+      _ = try await engine.stopRecording()
+    }
+
+    @Test
+    func `host time span excludes persisted frames before the first host-timed buffer`()
+      async throws
+    {
+      let engine = AIOEngine()
+      let url = try await engine.startTestRecording(configuration: makeConfiguration())
+      defer { try? FileManager.default.removeItem(at: url) }
+
+      engine.injectTestAudio(channels: [ramp(count: 16)], hostTime: nil)
+      engine.injectTestAudio(channels: [ramp(count: 32)], hostTime: 1_000)
+      engine.injectTestAudio(channels: [ramp(count: 64)], hostTime: 2_000)
+      engine.injectTestAudio(channels: [ramp(count: 8)], hostTime: nil)
+
+      let snapshot = try #require(await engine.recordingTimingSnapshot())
+      #expect(snapshot.firstBufferHostTime == 1_000)
+      #expect(snapshot.lastBufferHostTime == 2_000)
+      #expect(snapshot.capturedFrameCount == 120)
+      #expect(snapshot.hostTimeSpanFrameCount == 32)
 
       _ = try await engine.stopRecording()
     }

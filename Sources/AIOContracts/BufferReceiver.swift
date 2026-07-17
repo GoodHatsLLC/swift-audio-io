@@ -98,11 +98,18 @@ public struct BufferTiming: Sendable, Equatable {
 /// A host-time anchor for a recording segment, used to align recordings captured on multiple
 /// devices into a single multi-channel timeline.
 ///
-/// `firstBufferHostTime` is the `mach_absolute_time`-domain host time of the first captured frame
-/// of the segment that carried a valid host time. It is captured on the real-time tap thread and
-/// reset at each recording start. Read it immediately after `stopRecording()` to anchor the
-/// just-finished segment, then combine it with a cross-device clock offset to express each
-/// device's start instant in a shared time domain.
+/// The host-time fields are the `mach_absolute_time`-domain start times of the first and last
+/// persisted buffers that carried valid host time. `hostTimeSpanFrameCount` is the exact number of
+/// persisted frames between those two buffer starts, so callers can measure the effective capture
+/// rate without estimating from file duration:
+///
+/// ```swift
+/// effectiveSampleRate = hostTimeSpanFrameCount / hostTimeSpanSeconds
+/// ```
+///
+/// The values are captured on the recording path and reset together at each recording start. Read
+/// the snapshot immediately after `stopRecording()` for a complete, stable view of the
+/// just-finished segment.
 public struct RecordingTimingSnapshot: Sendable, Hashable {
   /// Host time (`mach_absolute_time` units) of the first captured frame with a valid host time.
   public let firstBufferHostTime: UInt64
@@ -111,9 +118,32 @@ public struct RecordingTimingSnapshot: Sendable, Hashable {
   /// sample time; otherwise `nil`.
   public let firstBufferSampleTime: Int64?
 
-  public init(firstBufferHostTime: UInt64, firstBufferSampleTime: Int64? = nil) {
+  /// Host time of the first frame in the latest persisted buffer that carried a valid host time.
+  /// Equal to `firstBufferHostTime` until a second host-timed buffer is persisted.
+  public let lastBufferHostTime: UInt64
+
+  /// Exact number of frames accepted by the recording writer for this segment, including buffers
+  /// without valid host time. This describes persisted PCM, not merely frames presented by the
+  /// capture callback.
+  public let capturedFrameCount: UInt64
+
+  /// Exact number of persisted frames between `firstBufferHostTime` and `lastBufferHostTime`.
+  /// Divide this by the converted host-time interval to measure the effective sample rate. A value
+  /// of zero means fewer than two distinct host-timed buffer starts were captured.
+  public let hostTimeSpanFrameCount: UInt64
+
+  public init(
+    firstBufferHostTime: UInt64,
+    firstBufferSampleTime: Int64? = nil,
+    lastBufferHostTime: UInt64? = nil,
+    capturedFrameCount: UInt64 = 0,
+    hostTimeSpanFrameCount: UInt64 = 0,
+  ) {
     self.firstBufferHostTime = firstBufferHostTime
     self.firstBufferSampleTime = firstBufferSampleTime
+    self.lastBufferHostTime = lastBufferHostTime ?? firstBufferHostTime
+    self.capturedFrameCount = capturedFrameCount
+    self.hostTimeSpanFrameCount = hostTimeSpanFrameCount
   }
 }
 
