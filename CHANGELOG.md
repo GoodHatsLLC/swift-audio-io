@@ -7,6 +7,10 @@ releases follow the versioning policy in `README.md` and `ROADMAP.md`.
 
 ## Unreleased
 
+Nothing yet.
+
+## 0.8.1 - 2026-07-20
+
 ### Fixed
 
 - iOS microphone activation now awaits persisted input/channel restoration, and
