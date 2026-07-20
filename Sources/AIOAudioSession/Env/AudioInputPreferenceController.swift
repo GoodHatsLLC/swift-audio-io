@@ -310,6 +310,16 @@
               currentOrientation: currentOrientation,
               queue: owner.inputWriteQueue,
             )
+
+            // Selecting a stereo polar pattern does not itself promise that the
+            // session will expose two input channels. Apply the channel-count
+            // preference explicitly so the mirrored state below describes a
+            // fully configured route rather than a partially selected source.
+            var plan = AudioEnvironmentManager.InputConfigurationPlan()
+            plan.channelCount = ChannelCount.stereo.count
+            try await AudioEnvironmentManager.executeInputConfiguration(
+              plan, session: session, queue: owner.inputWriteQueue,
+            )
           }
 
           owner.state = AudioEnvironmentState.mirrored(

@@ -674,6 +674,15 @@
         throw RecordingError.engineError
       }
 
+      do {
+        try RecordingInputChannelContract.validateCaptureFormat(
+          requested: channelCount,
+          actual: Int(tapResult.tapFormat.channelCount),
+        )
+      } catch let sessionError {
+        throw RecordingError.session(sessionError)
+      }
+
       let audioBuffers = makeAudioBuffers(sampleRate: sampleRate, channelCount: channelCount)
       let receiverBuffers = makeAudioBuffers(sampleRate: sampleRate, channelCount: channelCount)
       let timingCapacity = max(

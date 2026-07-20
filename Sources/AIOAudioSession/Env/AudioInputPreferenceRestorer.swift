@@ -40,9 +40,19 @@
 
       @MainActor
       func restorePreferredInputAndConfigurationIfPossible(reason: String) async {
-        guard !owner.isRestoringFromDefaults else { return }
+        if let activeRestoration = owner.inputPreferenceRestorationSignal {
+          await activeRestoration()
+          return
+        }
+
+        let restorationSignal = AsyncContinuation<Void>()
+        owner.inputPreferenceRestorationSignal = restorationSignal
         owner.isRestoringFromDefaults = true
-        defer { owner.isRestoringFromDefaults = false }
+        defer {
+          owner.isRestoringFromDefaults = false
+          owner.inputPreferenceRestorationSignal = nil
+          try? restorationSignal.yield()
+        }
 
         owner.preferenceStore.reload()
 
@@ -114,6 +124,17 @@
             "Skipping input preference defaults; audio session inactive (\(reason, privacy: .public))",
           )
         }
+
+        // Some preference properties expose synchronous SwiftUI setters and
+        // therefore enqueue their XPC write. Cross the same FIFO with an
+        // awaited no-op before declaring restoration complete, then publish one
+        // final hardware snapshot. This makes activation a real configuration
+        // barrier for recording callers.
+        await owner.inputWriteQueue.submit {}
+        owner.state = await AudioEnvironmentState.mirroredOffMain(
+          env: owner.env,
+          sourceFilter: owner.filterSources,
+        )
 
         audioInputPreferenceRestorerLog.info(
           "Restored audio environment preferences (\(reason, privacy: .public); \(modeStatus, privacy: .public))",

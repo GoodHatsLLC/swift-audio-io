@@ -65,18 +65,23 @@
 
           try applyPreferredInputIfNeeded(for: configuration, session: session)
 
-          let desiredChannels = configuration.format.channels.platform
-          let channelCount =
-            desiredChannels > session.maximumInputNumberOfChannels
-            ? AVAudioChannelCount(session.maximumInputNumberOfChannels) : desiredChannels
+          let desiredChannels = Int(configuration.format.channels.platform)
+          try RecordingInputChannelContract.validateRouteCapacity(
+            requested: desiredChannels,
+            maximum: session.maximumInputNumberOfChannels,
+          )
           do {
-            try session.setPreferredInputNumberOfChannels(Int(channelCount))
+            try session.setPreferredInputNumberOfChannels(desiredChannels)
           } catch {
             throw .operationFailed(
               operation: .setPreferredInputNumberOfChannels,
               error: ErrorContext(error),
             )
           }
+          try RecordingInputChannelContract.validateCaptureFormat(
+            requested: desiredChannels,
+            actual: session.inputNumberOfChannels,
+          )
 
           recordingSessionLog.info(
             "Audio session configured - Sample rate: \(session.sampleRate, privacy: .public), Buffer duration: \(session.ioBufferDuration, privacy: .public), Input channels: \(session.inputNumberOfChannels, privacy: .public)",

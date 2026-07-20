@@ -20,7 +20,12 @@
           )
           return
         }
-        guard owner.isAudioSessionActive != active else { return }
+        guard owner.isAudioSessionActive != active else {
+          if active {
+            await owner.waitForInputPreferenceRestorationIfNeeded()
+          }
+          return
+        }
 
         let session = owner.env.session
         try await AudioSessionAccess.result(catching: AudioEnvironmentManager.ManagerError.self) {
@@ -36,11 +41,13 @@
           "🔊 Audio session manually set to \(active ? "active" : "inactive", privacy: .public)",
         )
         if active {
-          owner.callbackTasks.run { [weak owner] in
-            await owner?.restorePreferredInputAndConfigurationIfPossible(
-              reason: "audio session activated",
-            )
-          }
+          // Activation is a readiness boundary, not merely a request to
+          // `AVAudioSession`. Callers build recording configurations as soon as
+          // this method returns, so the cached route/input state and persisted
+          // channel preferences must already match the active session.
+          await owner.restorePreferredInputAndConfigurationIfPossible(
+            reason: "audio session activated",
+          )
         }
       }
     }

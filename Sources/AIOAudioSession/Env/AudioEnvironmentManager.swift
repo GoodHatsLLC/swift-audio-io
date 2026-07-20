@@ -289,6 +289,13 @@
     }
 
     var isRestoringFromDefaults: Bool = false
+    @ObservationIgnored var inputPreferenceRestorationSignal: AsyncContinuation<Void>?
+
+    func waitForInputPreferenceRestorationIfNeeded() async {
+      if let signal = inputPreferenceRestorationSignal {
+        await signal()
+      }
+    }
 
     public var shouldAutoSelectStereoWhenAvailable: Bool {
       let inputId = env.input?.id ?? "_default"
@@ -619,7 +626,7 @@
 
     /// A Boolean value that indicates whether the audio session is configured for stereo.
     public var isConfiguredForStereo: Bool {
-      session.inputNumberOfChannels > 1
+      channels.count > 1
     }
 
     /// Applies a mono audio configuration.

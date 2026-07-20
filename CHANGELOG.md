@@ -7,7 +7,13 @@ releases follow the versioning policy in `README.md` and `ROADMAP.md`.
 
 ## Unreleased
 
-Nothing yet.
+### Fixed
+
+- iOS microphone activation now awaits persisted input/channel restoration, and
+  stereo selection explicitly requests two input channels before publishing its
+  state. Recording bring-up rejects and retries a route or input tap that exposes
+  fewer channels than requested instead of silently producing duplicated mono in
+  a stereo processing format.
 
 ## 0.8.0 - 2026-07-17
 
