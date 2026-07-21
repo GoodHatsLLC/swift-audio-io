@@ -37,5 +37,16 @@
       store.setPreferredInputId(nil)
       #expect(store.preferredInputId == nil)
     }
+
+    @Test
+    func `measurement preference remains isolated to the injected domain`() throws {
+      let first = AudioEnvironmentPreferenceStore(defaults: try makeIsolatedDefaults())
+      let second = AudioEnvironmentPreferenceStore(defaults: try makeIsolatedDefaults())
+
+      first.setUseMeasurement(true)
+
+      #expect(first.useMeasurement)
+      #expect(!second.useMeasurement)
+    }
   }
 #endif

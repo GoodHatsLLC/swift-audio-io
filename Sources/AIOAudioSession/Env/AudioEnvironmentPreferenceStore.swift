@@ -30,6 +30,10 @@
       defaults.bool(forKey: StorageKey.useMeasurement)
     }
 
+    func setUseMeasurement(_ useMeasurement: Bool) {
+      defaults.set(useMeasurement, forKey: StorageKey.useMeasurement)
+    }
+
     var preferredInputId: String? {
       defaults.string(forKey: StorageKey.preferredInputId)
     }

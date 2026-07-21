@@ -145,7 +145,7 @@
     public init(
       env: AudioEnvironment,
       errorManager: any ErrorManaging,
-      defaults: UserDefaults = .standard,
+      defaults: UserDefaults = UserDefaults(),
     ) {
       let preferenceStore = AudioEnvironmentPreferenceStore(defaults: defaults)
       self.env = env
@@ -159,6 +159,7 @@
       _orientation = .none
       _selectedNumberOfChannels = (env.input?.channelCount) ?? .mono
       _useMeasurement = preferenceStore.useMeasurement
+      sessionConfiguration = .recordingConfiguration(useMeasurement: preferenceStore.useMeasurement)
     }
 
     let env: AudioEnvironment
@@ -302,13 +303,15 @@
       return !preferenceStore.hasPreferences(for: inputId)
     }
 
-    public var useMeasurement: Bool = AudioSessionConfiguration.useMeasurement {
-      willSet {
-        if AudioSessionConfiguration.useMeasurement != newValue {
-          AudioSessionConfiguration.useMeasurement = newValue
-        }
+    public var useMeasurement: Bool {
+      didSet {
+        guard oldValue != useMeasurement else { return }
+        preferenceStore.setUseMeasurement(useMeasurement)
+        sessionConfiguration = .recordingConfiguration(useMeasurement: useMeasurement)
       }
     }
+
+    public var recordingUsesMeasurementMode: Bool { useMeasurement }
 
     /// A Boolean value that indicates whether this `AudioEnvironmentManager` is fully primed and subscribed.
     public internal(set) var isReady: Bool = false {

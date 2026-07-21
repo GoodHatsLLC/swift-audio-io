@@ -40,7 +40,7 @@
     public init(
       env: AudioEnvironment,
       errorManager: any ErrorManaging,
-      defaults: UserDefaults = .standard,
+      defaults: UserDefaults = UserDefaults(),
     ) {
       self.env = env
       self.errorManager = errorManager

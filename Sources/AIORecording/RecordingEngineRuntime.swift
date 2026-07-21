@@ -456,8 +456,13 @@
           processingFormat: processingFormat,
         )
       }
+      var sessionConfiguration = owner.recordingSessionConfiguration
+      if let audioSessionDelegate = owner.audioSessionDelegate {
+        sessionConfiguration.mode =
+          audioSessionDelegate.recordingUsesMeasurementMode ? .measurement : .default
+      }
       return WarmInputs(
-        sessionConfiguration: owner.recordingSessionConfiguration,
+        sessionConfiguration: sessionConfiguration,
         writerBackend: owner.writerBackend,
         alreadyActive: alreadyActive,
         reinstallTapOverrideResult: overrideResult,

@@ -25,28 +25,11 @@
       self.allowsHapticsAndSystemSoundsDuringRecording = allowsHapticsAndSystemSoundsDuringRecording
       self.prefersNoInterruptionsFromSystemAlerts = prefersNoInterruptionsFromSystemAlerts
       self.prefersInterruptionOnRouteDisconnect = prefersInterruptionOnRouteDisconnect
-      if mode != .measurement {
-        UserDefaults.standard.setValue(false, forKey: StorageKey.useMeasurement)
-      }
     }
 
-    private enum StorageKey {
-      static let useMeasurement = "aio.audio_session_conf.use_measurement"
-    }
-
-    public static var useMeasurement: Bool {
-      get {
-        UserDefaults.standard.bool(forKey: StorageKey.useMeasurement)
-      }
-      set {
-        let current = useMeasurement
-        if newValue != current {
-          UserDefaults.standard.setValue(newValue, forKey: StorageKey.useMeasurement)
-        }
-      }
-    }
-
-    public static var recordingConfiguration: AudioSessionConfiguration {
+    public static func recordingConfiguration(
+      useMeasurement: Bool
+    ) -> AudioSessionConfiguration {
       let options: AVAudioSession.CategoryOptions = [
         .defaultToSpeaker,
         .allowBluetoothA2DP,
@@ -64,6 +47,8 @@
         prefersInterruptionOnRouteDisconnect: false,
       )
     }
+
+    public static let recordingConfiguration = recordingConfiguration(useMeasurement: false)
 
     public static var playbackConfiguration: AudioSessionConfiguration {
       let options: AVAudioSession.CategoryOptions = [
@@ -163,26 +148,17 @@
       self.prefersInterruptionOnRouteDisconnect = prefersInterruptionOnRouteDisconnect
     }
 
-    private enum StorageKey {
-      static let useMeasurement = "aio.audio_session_conf.use_measurement"
-    }
-
-    public static var useMeasurement: Bool {
-      get {
-        UserDefaults.standard.bool(forKey: StorageKey.useMeasurement)
-      }
-      set {
-        UserDefaults.standard.setValue(newValue, forKey: StorageKey.useMeasurement)
-      }
-    }
-
-    public static var recordingConfiguration: AudioSessionConfiguration {
+    public static func recordingConfiguration(
+      useMeasurement: Bool
+    ) -> AudioSessionConfiguration {
       AudioSessionConfiguration(
         category: .playAndRecord,
         mode: useMeasurement ? .measurement : .default,
         options: [],
       )
     }
+
+    public static let recordingConfiguration = recordingConfiguration(useMeasurement: false)
 
     public static var playbackConfiguration: AudioSessionConfiguration {
       AudioSessionConfiguration(

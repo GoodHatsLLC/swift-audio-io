@@ -32,7 +32,7 @@
     public convenience init(
       env: AudioEnvironment,
       errorManager: any ErrorManaging,
-      defaults: UserDefaults = .standard,
+      defaults: UserDefaults = UserDefaults(),
     ) {
       self.init(
         env: env,
@@ -59,6 +59,7 @@
       _selectedSource = nil
       _sampleRate = .dvd
       _channels = .mono
+      sessionConfiguration = .recordingConfiguration(useMeasurement: _useMeasurement)
     }
 
     private let env: AudioEnvironment
@@ -125,8 +126,11 @@
       set {
         _useMeasurement = newValue
         defaults.set(newValue, forKey: StorageKey.useMeasurement)
+        sessionConfiguration = .recordingConfiguration(useMeasurement: newValue)
       }
     }
+
+    public var recordingUsesMeasurementMode: Bool { useMeasurement }
 
     public var channels: ChannelCount {
       _channels

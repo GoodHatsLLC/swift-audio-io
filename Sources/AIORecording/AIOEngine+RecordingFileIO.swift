@@ -57,7 +57,7 @@
         switch configuration.outputDestination {
         case .temporary:
           let resolved: (url: URL, protection: OutputFileProtection?) = (
-            FileManager.default.temporaryDirectory.appendingPathComponent(
+            FileManager().temporaryDirectory.appendingPathComponent(
               filename, isDirectory: false,
             ),
             nil,
@@ -66,7 +66,7 @@
           return resolved
         case .directory(let directory, let protection):
           do {
-            try FileManager.default.createDirectory(
+            try FileManager().createDirectory(
               at: directory,
               withIntermediateDirectories: true,
             )
@@ -90,7 +90,7 @@
           }
           let parent = fileURL.deletingLastPathComponent()
           do {
-            try FileManager.default.createDirectory(
+            try FileManager().createDirectory(
               at: parent,
               withIntermediateDirectories: true,
             )
@@ -108,7 +108,7 @@
         switch configuration.outputDestination {
         case .temporary:
           let resolved: (url: URL, protection: OutputFileProtection?) = (
-            FileManager.default.temporaryDirectory.appendingPathComponent(
+            FileManager().temporaryDirectory.appendingPathComponent(
               filename, isDirectory: false,
             ),
             nil,
@@ -117,7 +117,7 @@
           return resolved
         case .directory(let directory):
           do {
-            try FileManager.default.createDirectory(
+            try FileManager().createDirectory(
               at: directory,
               withIntermediateDirectories: true,
             )
@@ -140,7 +140,7 @@
           }
           let parent = fileURL.deletingLastPathComponent()
           do {
-            try FileManager.default.createDirectory(
+            try FileManager().createDirectory(
               at: parent,
               withIntermediateDirectories: true,
             )
@@ -230,7 +230,7 @@
       #if os(iOS)
         guard let protection else { return }
         do {
-          try FileManager.default.setAttributes(
+          try FileManager().setAttributes(
             [.protectionKey: protection],
             ofItemAtPath: url.path,
           )

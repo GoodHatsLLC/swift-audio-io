@@ -22,7 +22,7 @@
     public init(
       env: AudioEnvironment,
       errorManager: any ErrorManaging,
-      defaults: UserDefaults = .standard,
+      defaults: UserDefaults = UserDefaults(),
     ) {
       _ = env
       _ = errorManager

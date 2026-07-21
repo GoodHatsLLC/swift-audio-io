@@ -55,7 +55,7 @@ public struct RecordingFilename: Sendable, Equatable, Hashable {
   ///
   /// Example: `20251216T143052_rec.aac`
   public var filename: String {
-    let timestampString = Self.formatter.string(from: timestamp)
+    let timestampString = Self.makeFormatter().string(from: timestamp)
     if fileExtension.isEmpty {
       return "\(timestampString)_\(word)"
     }
@@ -66,7 +66,7 @@ public struct RecordingFilename: Sendable, Equatable, Hashable {
   ///
   /// Example: `20251216T143052_rec`
   public var stem: String {
-    let timestampString = Self.formatter.string(from: timestamp)
+    let timestampString = Self.makeFormatter().string(from: timestamp)
     return "\(timestampString)_\(word)"
   }
 }
@@ -131,7 +131,7 @@ extension RecordingFilename {
     }
 
     // Parse timestamp
-    guard let timestamp = formatter.date(from: timestampPart) else {
+    guard let timestamp = makeFormatter().date(from: timestampPart) else {
       return nil
     }
 
@@ -179,36 +179,17 @@ extension RecordingFilename: Codable {
 // MARK: - Formatter
 
 extension RecordingFilename {
-  /// ISO 8601 basic format formatter: `YYYYMMDDTHHmmss` (UTC, no separators).
+  /// Creates an operation-local ISO 8601 basic formatter
+  /// (`YYYYMMDDTHHmmss`, UTC, no separators).
   ///
-  /// This type is `@unchecked Sendable` because `ISO8601DateFormatter` is not `Sendable`,
-  /// but access is synchronized by an internal lock.
-  // SAFETY: Every formatter access is serialized under `lock`; no unsynchronized formatter use.
-  private final class FormatterBox: @unchecked Sendable {
-    private let lock = NSLock()
-    private let formatter: ISO8601DateFormatter
-
-    init() {
-      let formatter = ISO8601DateFormatter()
-      formatter.formatOptions = [.withYear, .withMonth, .withDay, .withTime]
-      formatter.timeZone = TimeZone(identifier: "UTC")
-      self.formatter = formatter
-    }
-
-    func string(from date: Date) -> String {
-      lock.lock()
-      defer { lock.unlock() }
-      return formatter.string(from: date)
-    }
-
-    func date(from string: String) -> Date? {
-      lock.lock()
-      defer { lock.unlock() }
-      return formatter.date(from: string)
-    }
+  /// `ISO8601DateFormatter` is not `Sendable`; keeping it local avoids both a
+  /// global formatter instance and cross-task synchronization.
+  private static func makeFormatter() -> ISO8601DateFormatter {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withYear, .withMonth, .withDay, .withTime]
+    formatter.timeZone = TimeZone(identifier: "UTC")
+    return formatter
   }
-
-  private static let formatter = FormatterBox()
 }
 
 // MARK: - Phonetic Word Generation

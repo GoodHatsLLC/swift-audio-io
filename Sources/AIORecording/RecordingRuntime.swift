@@ -413,7 +413,7 @@
         throw RecordingError.notRecording
       }
       await owner.gracefulStop()
-      let fileExists = FileManager.default.fileExists(atPath: url.path)
+      let fileExists = FileManager().fileExists(atPath: url.path)
       let fileSize = owner.fileSizeValue(for: url)
       let failure = owner.consumeWriteFailure()
       if !fileExists {
@@ -496,7 +496,7 @@
         dispatchPrecondition(condition: .notOnQueue(.main))
       #endif
       writer.close()
-      try? FileManager.default.removeItem(at: url)
+      try? FileManager().removeItem(at: url)
     }
 
     @MainActor
