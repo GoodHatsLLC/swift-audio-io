@@ -28,13 +28,35 @@ public final class AsyncBroadcaster<Element: Sendable>: AsyncSequence, Sendable 
   let subscriberBuffer: AsyncBuffer
 
   public func makeAsyncIterator() -> Iterator {
+    Iterator(underlying: subscribe().events.makeAsyncIterator())
+  }
+
+  /// A synchronously registered subscriber with explicit cancellation.
+  public struct Subscription: Sendable {
+    fileprivate let controller: MulticastController<Element>
+    fileprivate let id: UUID
+    public let events: AsyncSignalStream<Element>
+
+    /// Unregisters this subscriber and finishes its event stream.
+    public func cancel() {
+      controller.handle(.unsubscribe(id: id))
+    }
+  }
+
+  /// Registers a subscriber before returning it.
+  ///
+  /// Use this when an owned consumer starts asynchronously but events emitted
+  /// immediately after setup must not be lost while that consumer is waiting
+  /// to be scheduled. The owner must call `cancel()` during teardown.
+  public func subscribe() -> Subscription {
     let underlying = AsyncSignalStream<Element>
       .makeStream(
         of: Element.self,
         bufferingPolicy: .init(subscriberBuffer),
       )
-    controller.handle(.subscribe(underlying.continuation))
-    return Iterator(underlying: underlying.stream.makeAsyncIterator())
+    let id = UUID()
+    controller.handle(.subscribe(id: id, underlying.continuation))
+    return Subscription(controller: controller, id: id, events: underlying.stream)
   }
 
   public struct Iterator: AsyncIteratorProtocol {
@@ -63,7 +85,7 @@ extension AsyncSequence where Self: Sendable, Self.Element: Sendable {
 
 final class MulticastController<Element: Sendable>: Sendable {
   enum Event {
-    case subscribe(_ continuation: AsyncSignalContinuation<Element>)
+    case subscribe(id: UUID, _ continuation: AsyncSignalContinuation<Element>)
     case unsubscribe(id: UUID)
     case publish(Element)
     case finish
@@ -107,8 +129,7 @@ final class MulticastController<Element: Sendable>: Sendable {
       case .finish:
         state.finish()
         return {}
-      case .subscribe(let continuation):
-        let id = UUID()
+      case .subscribe(let id, let continuation):
         switch state {
         case .available(var storage):
           storage.continuations[id] = continuation

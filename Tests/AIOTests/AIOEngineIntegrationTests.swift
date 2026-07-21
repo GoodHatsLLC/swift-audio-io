@@ -12,6 +12,7 @@
   @testable import AIORecording
   @testable import AIORecordingSupport
 
+  @Suite(.serialized)
   struct AIOEngineIntegrationTests {
     @Test
     func `recording writes file`() async throws {
@@ -271,7 +272,7 @@
       let configuration = makeConfiguration()
       let probe = RouteFaultProbe()
       let bridge = await probe.bridge(to: engine)
-      defer { bridge.cancel() }
+      defer { bridge.cancelNow() }
 
       let url = try await engine.startTestRecording(configuration: configuration)
       defer { try? FileManager.default.removeItem(at: url) }
@@ -312,6 +313,7 @@
           }
       }
       #expect(captured == true)
+      await bridge.cancel()
     }
 
     @Test
@@ -355,7 +357,7 @@
       let configuration = makeConfiguration()
       let probe = RouteFaultProbe()
       let bridge = await probe.bridge(to: engine)
-      defer { bridge.cancel() }
+      defer { bridge.cancelNow() }
 
       let url = try await engine.startTestRecording(configuration: configuration)
       defer { try? FileManager.default.removeItem(at: url) }
@@ -397,6 +399,7 @@
       #expect(captured == true)
 
       _ = try await engine.stopRecording()
+      await bridge.cancel()
     }
 
     @Test
@@ -426,7 +429,8 @@
       let event = AudioRouteChangeEvent(
         reason: .routeConfigurationChange,
         previousRoute: nil,
-        session: AVAudioSession.sharedInstance(),
+        currentRoute: .init(inputs: [], outputs: []),
+        session: makeSessionSnapshot(),
       )
       await engine.handleRouteChange(event: event)
 
@@ -447,7 +451,7 @@
       let probe = RouteFaultProbe()
       let reinstallCalls = LockedCounter()
       let bridge = await probe.bridge(to: engine)
-      defer { bridge.cancel() }
+      defer { bridge.cancelNow() }
 
       let url = try await engine.startTestRecording(configuration: configuration)
       defer { try? FileManager.default.removeItem(at: url) }
@@ -469,7 +473,8 @@
       let event = AudioRouteChangeEvent(
         reason: .newDeviceAvailable,
         previousRoute: nil,
-        session: AVAudioSession.sharedInstance(),
+        currentRoute: .init(inputs: [], outputs: []),
+        session: makeSessionSnapshot(),
       )
       await engine.handleRouteChange(event: event)
 
@@ -492,6 +497,7 @@
       #expect(captured == true)
 
       _ = try await engine.stopRecording()
+      await bridge.cancel()
     }
 
     @Test
@@ -501,7 +507,7 @@
       let configuration = makeConfiguration()
       let probe = RouteFaultProbe()
       let bridge = await probe.bridge(to: engine)
-      defer { bridge.cancel() }
+      defer { bridge.cancelNow() }
 
       let url = try await engine.startTestRecording(configuration: configuration)
       defer { try? FileManager.default.removeItem(at: url) }
@@ -518,7 +524,8 @@
       let event = AudioRouteChangeEvent(
         reason: .routeConfigurationChange,
         previousRoute: nil,
-        session: AVAudioSession.sharedInstance(),
+        currentRoute: .init(inputs: [], outputs: []),
+        session: makeSessionSnapshot(),
       )
       await engine.handleRouteChange(event: event)
       await MainActor.run {
@@ -538,6 +545,7 @@
           }
       }
       #expect(captured == true)
+      await bridge.cancel()
     }
 
     /// Chunk 0 regression: a route-change tap reinstall that reaches the engine
@@ -552,7 +560,7 @@
       let configuration = makeConfiguration()
       let probe = RouteFaultProbe()
       let bridge = await probe.bridge(to: engine)
-      defer { bridge.cancel() }
+      defer { bridge.cancelNow() }
 
       let url = try await engine.startTestRecording(configuration: configuration)
       defer { try? FileManager.default.removeItem(at: url) }
@@ -581,7 +589,8 @@
       let event = AudioRouteChangeEvent(
         reason: .newDeviceAvailable,
         previousRoute: nil,
-        session: AVAudioSession.sharedInstance(),
+        currentRoute: .init(inputs: [], outputs: []),
+        session: makeSessionSnapshot(),
       )
       await engine.handleRouteChange(event: event)
 
@@ -599,6 +608,7 @@
         }
       }
       #expect(sawContinuing == false)
+      await bridge.cancel()
 
       // Clearing the sentinel restores normal reinstall behaviour.
       await MainActor.run { engine.debugSetEngineTearingDownForTesting(false) }
@@ -664,6 +674,18 @@
         inputConfiguration: input,
         outputConfiguration: output,
         outputDestination: outputDestination,
+      )
+    }
+
+    private func makeSessionSnapshot() -> AudioSessionSnapshot {
+      AudioSessionSnapshot(
+        category: AVAudioSession.Category.record.rawValue,
+        mode: AVAudioSession.Mode.default.rawValue,
+        options: [],
+        sampleRate: 48_000,
+        ioBufferDuration: 0.01,
+        inputNumberOfChannels: 1,
+        isInputAvailable: true,
       )
     }
 
@@ -785,13 +807,14 @@
       return (interruptions, failureCount)
     }
 
-    /// Subscribes to `engine.events` and routes recording-lifecycle cases
-    /// to this probe for the lifetime of the returned task.
+    /// Subscribes to `engine.events` before returning and owns the subscription
+    /// behind the cancellable work handle.
     @MainActor
-    func bridge(to engine: AIOEngine) async -> Task<Void, Never> {
+    func bridge(to engine: AIOEngine) -> RouteFaultBridge {
+      let subscription = engine.events.subscribe()
       let probe = self
-      let task = Task { @MainActor in
-        for await event in engine.events {
+      let work = MainActorOwnedWork {
+        for await event in subscription.events {
           switch event {
           case .recordingInterruption(let interruption):
             probe.record(interruption)
@@ -802,10 +825,22 @@
           }
         }
       }
-      // Yield once so the subscriber registers with the broadcaster
-      // before the caller drives the engine.
-      await Task.yield()
-      return task
+      return RouteFaultBridge(subscription: subscription, work: work)
+    }
+  }
+
+  private struct RouteFaultBridge: Sendable {
+    let subscription: AsyncBroadcaster<AudioIOEvent>.Subscription
+    let work: MainActorOwnedWork
+
+    func cancelNow() {
+      subscription.cancel()
+      work.cancelNow()
+    }
+
+    func cancel() async {
+      subscription.cancel()
+      await work.cancel()
     }
   }
 

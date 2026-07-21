@@ -182,6 +182,11 @@ let package = Package(
       swiftSettings: swiftSettings(),
     ),
     .testTarget(
+      name: "AIOPlatformIntegrationTests",
+      dependencies: ["AudioIO", "Tools"],
+      swiftSettings: swiftSettings(),
+    ),
+    .testTarget(
       name: "AudioVisualizationTests",
       dependencies: ["AudioIO", "AudioSignals"],
       swiftSettings: swiftSettings(),

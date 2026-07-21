@@ -16,6 +16,22 @@
       self.session = AudioSessionSnapshot(session: session)
     }
 
+    /// Creates an event from already captured values.
+    ///
+    /// This initializer lets callers replay or test route-change behavior
+    /// without consulting the process-global `AVAudioSession` singleton.
+    public init(
+      reason: AVAudioSession.RouteChangeReason,
+      previousRoute: AudioRouteSnapshot?,
+      currentRoute: AudioRouteSnapshot,
+      session: AudioSessionSnapshot,
+    ) {
+      self.reason = reason
+      self.previousRoute = previousRoute
+      self.currentRoute = currentRoute
+      self.session = session
+    }
+
     public let reason: AVAudioSession.RouteChangeReason
     public let previousRoute: AudioRouteSnapshot?
     public let currentRoute: AudioRouteSnapshot
@@ -67,6 +83,11 @@
       outputs = route.outputs.map(AudioPortSnapshot.init(port:))
     }
 
+    public init(inputs: [AudioPortSnapshot], outputs: [AudioPortSnapshot]) {
+      self.inputs = inputs
+      self.outputs = outputs
+    }
+
     public let inputs: [AudioPortSnapshot]
     public let outputs: [AudioPortSnapshot]
 
@@ -92,6 +113,13 @@
       channelCount = port.channels?.count ?? 0
     }
 
+    public init(name: String, uid: String, type: String, channelCount: Int) {
+      self.name = name
+      self.uid = uid
+      self.type = type
+      self.channelCount = channelCount
+    }
+
     public let name: String
     public let uid: String
     public let type: String
@@ -114,6 +142,24 @@
       ioBufferDuration = session.ioBufferDuration
       inputNumberOfChannels = session.inputNumberOfChannels
       isInputAvailable = session.isInputAvailable
+    }
+
+    public init(
+      category: String,
+      mode: String,
+      options: [String],
+      sampleRate: Double,
+      ioBufferDuration: TimeInterval,
+      inputNumberOfChannels: Int,
+      isInputAvailable: Bool,
+    ) {
+      self.category = category
+      self.mode = mode
+      self.options = options
+      self.sampleRate = sampleRate
+      self.ioBufferDuration = ioBufferDuration
+      self.inputNumberOfChannels = inputNumberOfChannels
+      self.isInputAvailable = isInputAvailable
     }
 
     public let category: String

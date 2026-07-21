@@ -38,4 +38,19 @@ struct AsyncBroadcasterTests {
     #expect(await replayIterator.next() == 3)
     #expect(await replayIterator.next() == nil)
   }
+
+  @Test
+  func subscriptionRegistersBeforeIterationBeginsAndCancelsExplicitly() async {
+    let source = AsyncSignalStream<Int>.makeStream(bufferingPolicy: .unbounded)
+    let broadcaster = AsyncBroadcaster(replay: .none, sequence: source.stream)
+    let subscription = broadcaster.subscribe()
+
+    source.continuation.yield(42)
+
+    var iterator = subscription.events.makeAsyncIterator()
+    #expect(await iterator.next() == 42)
+
+    subscription.cancel()
+    #expect(await iterator.next() == nil)
+  }
 }

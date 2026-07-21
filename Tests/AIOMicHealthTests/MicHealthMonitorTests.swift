@@ -344,14 +344,22 @@ struct MicHealthMonitorTests {
     private func makeRouteEvent(
       reason: AVAudioSession.RouteChangeReason,
     ) -> AudioRouteChangeEvent {
-      // `AudioRouteChangeEvent.previousRoute` can only be constructed from a
-      // real `AVAudioSessionRouteDescription`. The route-loss code path only
-      // reads `previousRoute?.inputs.first?.name`, so passing `nil` is safe
-      // — the monitor records `deviceName: nil`.
+      // The route-loss code path only reads `previousRoute?.inputs.first?.name`,
+      // so passing `nil` records `deviceName: nil`. Use snapshots here to keep
+      // unit tests independent of the process-global audio session.
       AudioRouteChangeEvent(
         reason: reason,
         previousRoute: nil,
-        session: AVAudioSession.sharedInstance(),
+        currentRoute: .init(inputs: [], outputs: []),
+        session: AudioSessionSnapshot(
+          category: AVAudioSession.Category.record.rawValue,
+          mode: AVAudioSession.Mode.default.rawValue,
+          options: [],
+          sampleRate: 48_000,
+          ioBufferDuration: 0.01,
+          inputNumberOfChannels: 1,
+          isInputAvailable: true,
+        ),
       )
     }
 

@@ -16,8 +16,8 @@
       let engine = AIOEngine()
       let configuration = makeRecordingConfiguration(fileFormat: .caf, channelCount: 1)
       let probe = RecordingEventProbe()
-      let bridge = await probe.bridge(to: engine)
-      defer { bridge.cancel() }
+      let bridge = probe.bridge(to: engine)
+      defer { bridge.cancelNow() }
 
       let url = try engine.startTestRecording(configuration: configuration)
       defer { try? FileManager.default.removeItem(at: url) }
@@ -72,6 +72,7 @@
         #expect(engine.isRecording == false)
         #expect(reinstallCalls.snapshot() == 0)
       }
+      await bridge.cancel()
     }
 
     @Test
@@ -79,8 +80,8 @@
       let engine = AIOEngine()
       let configuration = makeRecordingConfiguration(fileFormat: .caf, channelCount: 1)
       let probe = RecordingEventProbe()
-      let bridge = await probe.bridge(to: engine)
-      defer { bridge.cancel() }
+      let bridge = probe.bridge(to: engine)
+      defer { bridge.cancelNow() }
 
       let url = try engine.startTestRecording(configuration: configuration)
       defer { try? FileManager.default.removeItem(at: url) }
@@ -104,6 +105,7 @@
         },
       )
       #expect(fileHasBytes(at: url) == true)
+      await bridge.cancel()
     }
 
     @Test
@@ -410,13 +412,14 @@
       return (interruptions, failureCount)
     }
 
-    /// Subscribes to `engine.events` and routes recording-lifecycle cases
-    /// to this probe for the lifetime of the returned task.
+    /// Subscribes to `engine.events` before returning and owns the subscription
+    /// behind the cancellable work handle.
     @MainActor
-    func bridge(to engine: AIOEngine) async -> Task<Void, Never> {
+    func bridge(to engine: AIOEngine) -> RecordingEventBridge {
+      let subscription = engine.events.subscribe()
       let probe = self
-      let task = Task { @MainActor in
-        for await event in engine.events {
+      let work = MainActorOwnedWork {
+        for await event in subscription.events {
           switch event {
           case .recordingInterruption(let interruption):
             probe.record(interruption)
@@ -427,10 +430,22 @@
           }
         }
       }
-      // Yield once so the subscriber registers with the broadcaster
-      // before the caller drives the engine.
-      await Task.yield()
-      return task
+      return RecordingEventBridge(subscription: subscription, work: work)
+    }
+  }
+
+  private struct RecordingEventBridge: Sendable {
+    let subscription: AsyncBroadcaster<AudioIOEvent>.Subscription
+    let work: MainActorOwnedWork
+
+    func cancelNow() {
+      subscription.cancel()
+      work.cancelNow()
+    }
+
+    func cancel() async {
+      subscription.cancel()
+      await work.cancel()
     }
   }
 
