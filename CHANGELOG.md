@@ -9,6 +9,26 @@ releases follow the versioning policy in `README.md` and `ROADMAP.md`.
 
 Nothing yet.
 
+## 0.9.0 - 2026-07-21
+
+### Added
+
+- `AsyncBroadcaster.subscribe()` synchronously registers an explicitly
+  cancellable subscription so lifetime-owned consumers cannot miss events while
+  their processing task is waiting to be scheduled.
+- Audio route, port, and session snapshots can be constructed from captured
+  values, allowing route-change behavior to be replayed and tested without
+  consulting the process-global audio session.
+
+### Changed
+
+- Recording measurement mode is now owned and persisted by each
+  `AudioEnvironmentManager`. `AudioSessionConfiguration` is a pure value factory,
+  and the recording engine derives the active mode through its injected audio
+  session delegate instead of reading or mutating global preferences.
+- File and output configuration helpers use owned `FileManager` and
+  `UserDefaults` instances, and shared formatter state has been removed.
+
 ## 0.8.1 - 2026-07-20
 
 ### Fixed
