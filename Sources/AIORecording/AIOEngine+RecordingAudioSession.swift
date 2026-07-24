@@ -12,21 +12,18 @@
   private let recordingSessionLog = SystemLog.make()
 
   extension AIOEngine {
-    /// Activates the audio session via the (optional) `@MainActor` delegate.
+    /// Asks the engine's immutable audio-session authority to satisfy active demand.
     ///
-    /// The delegate protocol is `@MainActor`, so activation cannot run on the
-    /// off-main warm path. Callers perform this hop on the main actor *before*
+    /// The authority method is `@MainActor`, so activation cannot run on the
+    /// off-main graph-preparation path. Callers perform this hop on the main actor *before*
     /// offloading the remaining (nonisolated) session configuration to
     /// ``configureAudioSession(for:sessionConfiguration:)``.
     @MainActor
-    package func activateAudioSessionDelegate(
-      _ sessionDelegate: (any AudioSessionDelegate)?,
-    ) async throws(SessionError) {
-      do {
-        try await sessionDelegate?.setAudioSessionActive(true)
-      } catch {
-        throw .operationFailed(operation: .setActive, error: ErrorContext(error))
-      }
+    package func activateAudioSessionAuthority() async throws(SessionError) {
+      // Engine-managed iOS activation happens only after category, mode, and
+      // preferred I/O values have been applied in `configureAudioSession`.
+      guard audioSessionAuthority != nil else { return }
+      try await setAudioSessionDemand(active: true)
     }
 
     package nonisolated func configureAudioSession(
@@ -57,10 +54,12 @@
             )
           }
 
-          do {
-            try session.setActive(true)
-          } catch {
-            throw .operationFailed(operation: .setActive, error: ErrorContext(error))
+          if audioSessionAuthority == nil {
+            do {
+              try session.setActive(true)
+            } catch {
+              throw .operationFailed(operation: .setActive, error: ErrorContext(error))
+            }
           }
 
           try applyPreferredInputIfNeeded(for: configuration, session: session)

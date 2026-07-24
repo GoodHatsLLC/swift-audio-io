@@ -20,7 +20,7 @@
   /// - Allowing the user to select the preferred input, source, and sample rate.
   @MainActor
   @Observable
-  public final class AudioEnvironmentManager: AudioSessionDelegate {
+  public final class AudioEnvironmentManager: AudioSessionAuthority {
     public enum ManagerError: AudioError {
       public enum AudioSessionOperation: String, Sendable, Equatable, CustomStringConvertible {
         case setCategory
@@ -372,22 +372,6 @@
       }
     }
 
-    /// A callback that is invoked when the audio route changes.
-    public var onRouteChange: (@Sendable @MainActor (AudioRouteChangeEvent) async -> Void)?
-
-    /// A callback that is invoked when an audio interruption occurs.
-    public var onInterruption:
-      (
-        @Sendable @MainActor (AVAudioSession.InterruptionType, AVAudioSession.InterruptionOptions?)
-          async -> Void
-      )?
-
-    /// A callback that is invoked when media services are lost.
-    public var onMediaServicesLost: (@Sendable @MainActor () async -> Void)?
-
-    /// A callback that is invoked when media services are reset.
-    public var onMediaServicesReset: (@Sendable @MainActor () async -> Void)?
-
     private let eventHub = AudioEnvironmentEventHub()
 
     /// A Boolean value that indicates whether the manager is currently running.
@@ -424,33 +408,10 @@
     }
 
     @discardableResult
-    public func addRouteChangeSubscriber(
-      _ handler: @escaping @Sendable @MainActor (AudioRouteChangeEvent) async -> Void,
+    public func addAudioSystemEventSubscriber(
+      _ handler: @escaping @Sendable @MainActor (AudioSystemEvent) async -> Void,
     ) -> UUID {
-      eventHub.addRouteChangeSubscriber(handler)
-    }
-
-    @discardableResult
-    public func addInterruptionSubscriber(
-      _ handler:
-        @escaping @Sendable @MainActor (AudioInterruptionType, AudioInterruptionOptions?)
-        async -> Void,
-    ) -> UUID {
-      eventHub.addInterruptionSubscriber(handler)
-    }
-
-    @discardableResult
-    public func addMediaServicesLostSubscriber(
-      _ handler: @escaping @Sendable @MainActor () async -> Void,
-    ) -> UUID {
-      eventHub.addMediaServicesLostSubscriber(handler)
-    }
-
-    @discardableResult
-    public func addMediaServicesResetSubscriber(
-      _ handler: @escaping @Sendable @MainActor () async -> Void,
-    ) -> UUID {
-      eventHub.addMediaServicesResetSubscriber(handler)
+      eventHub.addSubscriber(handler)
     }
 
     public func removeSubscriber(_ id: UUID) {
@@ -740,30 +701,8 @@
     }
 
     @MainActor
-    func dispatchInterruption(
-      type: AudioInterruptionType,
-      options: AudioInterruptionOptions?,
-    ) async {
-      await onInterruption?(type, options)
-      await eventHub.dispatchInterruption(type: type, options: options)
-    }
-
-    @MainActor
-    func dispatchRouteChange(_ event: AudioRouteChangeEvent) async {
-      await onRouteChange?(event)
-      await eventHub.dispatchRouteChange(event)
-    }
-
-    @MainActor
-    func dispatchMediaServicesLost() async {
-      await onMediaServicesLost?()
-      await eventHub.dispatchMediaServicesLost()
-    }
-
-    @MainActor
-    func dispatchMediaServicesReset() async {
-      await onMediaServicesReset?()
-      await eventHub.dispatchMediaServicesReset()
+    func dispatchAudioSystemEvent(_ event: AudioSystemEvent) async {
+      await eventHub.dispatch(event)
     }
   }
 

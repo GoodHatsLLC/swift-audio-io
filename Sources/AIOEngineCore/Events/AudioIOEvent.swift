@@ -25,11 +25,6 @@
   ///   cause.
   /// - ``recordingInterruption(_:)`` — route change continuation, graceful
   ///   stop, or interruption-driven stop.
-  /// - ``reconciliationFailed(desiredRecording:)`` — the engine couldn't
-  ///   reach the desired recording state within the reconciliation
-  ///   timeout. Only relevant when using the
-  ///   ``AIOEngine/setDesiredRecordingState(_:configuration:)`` entry
-  ///   point.
   /// - ``playbackStateChanged(_:)`` — play/pause/stop transitions
   ///   (excludes time ticks).
   /// - ``playbackUpdated(_:)`` — every playback observation including
@@ -62,19 +57,6 @@
     /// A recording interruption occurred — a route change continuation,
     /// a graceful stop, or an interruption-driven stop.
     case recordingInterruption(AIOEngine.RecordingInterruption)
-
-    /// The engine couldn't reach the desired recording state within the
-    /// reconciliation timeout.
-    ///
-    /// Only relevant when using the
-    /// ``AIOEngine/setDesiredRecordingState(_:configuration:)`` entry
-    /// point; the canonical
-    /// ``AIOEngine/startRecording(configuration:)`` surface returns
-    /// failures directly via typed throws.
-    ///
-    /// - Parameter desiredRecording: The recording state the engine was
-    ///   attempting to reach (`true` for "start", `false` for "stop").
-    case reconciliationFailed(desiredRecording: Bool)
 
     /// The playback item or playback state changed (play/pause/stop),
     /// excluding time ticks.

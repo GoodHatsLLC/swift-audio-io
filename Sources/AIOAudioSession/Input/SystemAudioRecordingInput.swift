@@ -10,7 +10,7 @@
   /// System-audio (Core Audio process tap) capture options.
   ///
   /// Available only on macOS. Global process taps are mono or stereo mixdowns,
-  /// so `format.channels` must be 1 or 2 (enforced at `warm()`).
+  /// so `format.channels` must be 1 or 2 (enforced during recording start).
   public struct SystemAudioRecordingInput: Hashable, Sendable {
     /// The requested processing format (sample rate + channel count). Mono or
     /// stereo only for system audio.

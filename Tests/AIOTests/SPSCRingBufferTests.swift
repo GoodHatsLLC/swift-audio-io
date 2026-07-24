@@ -77,7 +77,7 @@
       }
 
       let work = ActorOwnedWork {
-        AIOEngine.receiverLoopSync(
+        RecordingLifecycle.Receiver.runLoop(
           buffers: buffers,
           timing: timing,
           processingFormat: format,

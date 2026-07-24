@@ -228,18 +228,16 @@
       }
       defer { engine.setReinstallTapOverride(nil) }
 
-      let didStart = await engine.startRecordingWithReconciliation(configuration: configuration)
-
-      #expect(didStart == false)
-      #expect(tapInstallAttempted == false)
-
-      switch engine.consumeLastRecordingStartFailure() {
-      case .unsupportedChannelCount(let requested, let maximum):
+      do {
+        _ = try await engine.startRecording(configuration: configuration)
+        Issue.record("Expected unsupportedChannelCount")
+      } catch RecordingError.unsupportedChannelCount(let requested, let maximum) {
         #expect(requested == 33)
         #expect(maximum == 32)
-      case let other:
-        Issue.record("Expected unsupportedChannelCount, got \(String(describing: other))")
+      } catch {
+        Issue.record("Expected unsupportedChannelCount, got \(error)")
       }
+      #expect(tapInstallAttempted == false)
     }
 
     @Test
@@ -256,150 +254,13 @@
 
       engine.injectTestAudio(channels: [ramp(count: 256)])
 
-      await engine.handleInterruption(type: .began, options: nil)
+      await engine.handleAudioSystemEvent(.interruptionBegan)
 
       let isRecording = await engine.isRecording
       #expect(isRecording == false)
 
       let size = try #require(url.resourceValues(forKeys: [.fileSizeKey]).fileSize)
       #expect(size > 0)
-    }
-
-    @Test
-    func `fault injection stops recording when sample rate becomes unsupported`() async throws {
-      let engine = AIOEngine()
-      await engine.debugBypassEngineTeardownForTesting()
-      let configuration = makeConfiguration()
-      let probe = RouteFaultProbe()
-      let bridge = await probe.bridge(to: engine)
-      defer { bridge.cancelNow() }
-
-      let url = try await engine.startTestRecording(configuration: configuration)
-      defer { try? FileManager.default.removeItem(at: url) }
-
-      let oldFormat = try #require(
-        AVAudioFormat(
-          standardFormatWithSampleRate: 48000,
-          channels: 1,
-        ),
-      )
-      let unsupported = try #require(
-        AVAudioFormat(
-          standardFormatWithSampleRate: 7000,
-          channels: oldFormat.channelCount,
-        ),
-      )
-
-      let continued = await engine.simulateRouteChangeForTesting(
-        oldFormat: oldFormat,
-        newFormat: unsupported,
-        processingFormat: oldFormat,
-        isInputAvailable: true,
-        reason: .routeConfigurationChange,
-      )
-
-      #expect(continued == false)
-
-      #expect(await engine.isRecording == false)
-
-      let captured = await waitUntil(timeout: .seconds(2)) {
-        let snapshot = probe.snapshot()
-        return snapshot.failureCount == 1
-          && snapshot.interruptions.contains { interruption in
-            if case .stoppedByInterruption(let reason) = interruption {
-              return reason == "No suitable audio route available"
-            }
-            return false
-          }
-      }
-      #expect(captured == true)
-      await bridge.cancel()
-    }
-
-    @Test
-    func `fault injection stops recording when input becomes unavailable`() async throws {
-      let engine = AIOEngine()
-      await engine.debugBypassEngineTeardownForTesting()
-      let configuration = makeConfiguration()
-
-      let url = try await engine.startTestRecording(configuration: configuration)
-      defer { try? FileManager.default.removeItem(at: url) }
-
-      let oldFormat = try #require(
-        AVAudioFormat(
-          standardFormatWithSampleRate: 48000,
-          channels: 1,
-        ),
-      )
-      let validNew = try #require(
-        AVAudioFormat(
-          standardFormatWithSampleRate: 48000,
-          channels: oldFormat.channelCount,
-        ),
-      )
-
-      let continued = await engine.simulateRouteChangeForTesting(
-        oldFormat: oldFormat,
-        newFormat: validNew,
-        processingFormat: oldFormat,
-        isInputAvailable: false,
-        reason: .oldDeviceUnavailable,
-      )
-
-      #expect(continued == false)
-      #expect(await engine.isRecording == false)
-    }
-
-    @Test
-    func `fault injection continues recording and emits quality change`() async throws {
-      let engine = AIOEngine()
-      await engine.debugBypassEngineTeardownForTesting()
-      let configuration = makeConfiguration()
-      let probe = RouteFaultProbe()
-      let bridge = await probe.bridge(to: engine)
-      defer { bridge.cancelNow() }
-
-      let url = try await engine.startTestRecording(configuration: configuration)
-      defer { try? FileManager.default.removeItem(at: url) }
-
-      let oldFormat = try #require(
-        AVAudioFormat(
-          standardFormatWithSampleRate: 48000,
-          channels: 1,
-        ),
-      )
-      let changed = try #require(
-        AVAudioFormat(
-          standardFormatWithSampleRate: 16000,
-          channels: 2,
-        ),
-      )
-
-      let continued = await engine.simulateRouteChangeForTesting(
-        oldFormat: oldFormat,
-        newFormat: changed,
-        processingFormat: oldFormat,
-        isInputAvailable: true,
-        reason: .newDeviceAvailable,
-      )
-
-      #expect(continued == true)
-      #expect(await engine.isRecording == true)
-
-      let captured = await waitUntil(timeout: .seconds(2)) {
-        probe.snapshot().interruptions.contains { interruption in
-          if case .routeChangeContinuing(_, let qualityChange) = interruption {
-            guard let qualityChange else { return false }
-            return qualityChange.currentChannels == 2
-              && abs(qualityChange.currentSampleRate - 16000) < 0.5
-          }
-          return false
-        }
-      }
-      #expect(captured == true)
-
-      _ = try await engine.stopRecording()
-      await bridge.cancel()
     }
 
     @Test
@@ -426,13 +287,13 @@
         }
       }
 
-      let event = AudioRouteChangeEvent(
-        reason: .routeConfigurationChange,
+      let event = AudioRouteChange(
+        reason: .configurationChanged,
         previousRoute: nil,
         currentRoute: .init(inputs: [], outputs: []),
         session: makeSessionSnapshot(),
       )
-      await engine.handleRouteChange(event: event)
+      await engine.handleAudioSystemEvent(.routeChanged(event))
 
       #expect(await engine.isRecording == true)
       #expect(reinstallCalls.snapshot() == 1)
@@ -470,13 +331,13 @@
         }
       }
 
-      let event = AudioRouteChangeEvent(
-        reason: .newDeviceAvailable,
+      let event = AudioRouteChange(
+        reason: .deviceConnected,
         previousRoute: nil,
         currentRoute: .init(inputs: [], outputs: []),
         session: makeSessionSnapshot(),
       )
-      await engine.handleRouteChange(event: event)
+      await engine.handleAudioSystemEvent(.routeChanged(event))
 
       #expect(await engine.isRecording == true)
       #expect(reinstallCalls.snapshot() == 1)
@@ -521,13 +382,13 @@
         }
       }
 
-      let event = AudioRouteChangeEvent(
-        reason: .routeConfigurationChange,
+      let event = AudioRouteChange(
+        reason: .configurationChanged,
         previousRoute: nil,
         currentRoute: .init(inputs: [], outputs: []),
         session: makeSessionSnapshot(),
       )
-      await engine.handleRouteChange(event: event)
+      await engine.handleAudioSystemEvent(.routeChanged(event))
       await MainActor.run {
         engine.setReinstallTapOverride(nil)
       }
@@ -586,13 +447,13 @@
         }
       }
 
-      let event = AudioRouteChangeEvent(
-        reason: .newDeviceAvailable,
+      let event = AudioRouteChange(
+        reason: .deviceConnected,
         previousRoute: nil,
         currentRoute: .init(inputs: [], outputs: []),
         session: makeSessionSnapshot(),
       )
-      await engine.handleRouteChange(event: event)
+      await engine.handleAudioSystemEvent(.routeChanged(event))
 
       await MainActor.run { engine.setReinstallTapOverride(nil) }
 

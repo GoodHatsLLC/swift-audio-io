@@ -10,6 +10,28 @@
     import Tools
     import AIORecordingSupport
 
+    /// Synthetic capture source for buffer-injection tests. It deliberately
+    /// owns no platform graph, but participates in the same lifecycle contract
+    /// as production sources.
+    private final class TestingCaptureBackend: RecordingCaptureBackend, @unchecked Sendable {
+      private weak var owner: AIOEngine?
+
+      init(owner: AIOEngine) {
+        self.owner = owner
+      }
+
+      func start() throws(RecordingError) {}
+
+      @MainActor
+      func stop(mode _: RecordingCaptureStopMode) {
+        owner?.testEngineTeardownOverride?()
+        _ = owner?.state.consume(\.installedTapBus)
+      }
+
+      @MainActor
+      func cleanup() {}
+    }
+
     @_spi(TESTING)
     extension AIOEngine {
       public struct WriterDrainTestHandle: Sendable {
@@ -92,7 +114,9 @@
 
       @MainActor
       public func debugCurrentWriterWrittenSampleTime() -> Int64 {
-        writerSession?.control.writtenSampleTime.load(ordering: .relaxed) ?? 0
+        recordingLifecycleState.writerSession?.control.writtenSampleTime.load(
+          ordering: .relaxed,
+        ) ?? 0
       }
 
       @MainActor
@@ -117,7 +141,7 @@
           writer: writer,
           fileURL: fileURL,
         )
-        enqueueDrain(for: session)
+        RecordingLifecycle(owner: self).writer.enqueueDrain(for: session)
         return WriterDrainTestHandle(
           id: session.id,
           fileURL: fileURL,
@@ -129,7 +153,7 @@
 
       @MainActor
       public func debugDrainingWriterSessionIDsForTesting() -> [UUID] {
-        drainingWriterSessions.map(\.id)
+        recordingLifecycleState.drainingWriterSessions.map(\.id)
       }
 
       public nonisolated func debugDrainRecordingCallbacksForTesting() async {
@@ -193,7 +217,7 @@
 
       /// Bypasses the real `AVAudioEngine` graph teardown inside the recording stop
       /// paths (`gracefulStop()` and `hardStop()`), which crashes the iOS Simulator
-      /// audio HAL. Recording stop/cleanup and the `isRecording`/`wantsRecording`
+      /// audio HAL. Recording stop/cleanup and the `isRecording`
       /// transitions still run, so interruption, resume, and stop logic can be
       /// exercised without a real audio device.
       ///
@@ -238,13 +262,14 @@
         enableReceivers: Bool = true,
       ) throws(RecordingError) -> URL {
         guard !isRecording else { throw .alreadyRecording }
-        try validateRecordingChannelCapacity(for: configuration)
+        let lifecycle = RecordingLifecycle(owner: self)
+        try lifecycle.capture.validateRecordingChannelCapacity(for: configuration)
         guard let processingFormat = configuration.processingFormat else {
           throw .invalidConfiguration(details: "(processing format)")
         }
 
-        lastWriteFailure = nil
-        lastRecordingConfiguration = configuration
+        recordingLifecycleState.lastWriteFailure = nil
+        recordingLifecycleState.lastRecordingConfiguration = configuration
 
         let url: URL
         if let outputURL {
@@ -258,7 +283,7 @@
         let writer = try makeRecordingWriter(
           url: url,
           configuration: configuration,
-          writerBackend: writerBackend,
+          writerBackend: recordingLifecycleState.writerBackend,
         )
 
         let sampleRate = Int(processingFormat.sampleRate)
@@ -266,15 +291,18 @@
         guard sampleRate > 0, channelCount > 0 else {
           throw .invalidConfiguration(details: "Invalid processing format")
         }
-        try validateRecordingChannelCapacity(channelCount: channelCount)
+        try lifecycle.capture.validateRecordingChannelCapacity(channelCount: channelCount)
 
-        let audioBuffers = makeAudioBuffers(
+        let audioBuffers = lifecycle.capture.makeAudioBuffers(
           sampleRate: sampleRate,
           channelCount: channelCount,
         )
         let receiverBuffers =
           enableReceivers
-          ? makeAudioBuffers(sampleRate: sampleRate, channelCount: channelCount)
+          ? lifecycle.capture.makeAudioBuffers(
+            sampleRate: sampleRate,
+            channelCount: channelCount,
+          )
           : nil
         let timingCapacity = max(
           64,
@@ -295,19 +323,19 @@
           $0.receiverTiming = receiverTiming
           $0.recordingConfiguration = configuration
           $0.installedTapBus = nil
+          $0.captureBackend = TestingCaptureBackend(owner: self)
         }
 
-        startFileWriteLoop(flushing: audioBuffers, of: processingFormat, to: writer)
+        lifecycle.writer.start(flushing: audioBuffers, format: processingFormat, to: writer)
         if let receiverBuffers, let receiverTiming, enableReceivers {
-          startReceiverLoop(
+          lifecycle.receiver.start(
             buffers: receiverBuffers,
             timing: receiverTiming,
-            processingFormat: processingFormat,
+            format: processingFormat,
           )
         }
 
         isRecording = true
-        wantsRecording = true
         return url
       }
 
@@ -330,7 +358,7 @@
         let effectiveChannelCount = min(channels.count, audioBuffers.count)
         guard effectiveChannelCount > 0 else { return }
 
-        let writerAvailable = Self.minimumAvailableWriteFrames(
+        let writerAvailable = RecordingLifecycle.Writer.minimumAvailableWriteFrames(
           channelCount: effectiveChannelCount,
           audioBuffers: audioBuffers,
           limit: frameLength,
@@ -340,7 +368,7 @@
         let receiverCanWrite: Bool =
           if let receiverBuffers, let timingBuffer {
             timingBuffer.availableToWrite >= 1
-              && Self.minimumAvailableWriteFrames(
+              && RecordingLifecycle.Writer.minimumAvailableWriteFrames(
                 channelCount: effectiveChannelCount,
                 audioBuffers: receiverBuffers,
                 limit: frameLength,
@@ -394,52 +422,14 @@
         processingFormat: AVAudioFormat,
       ) -> @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void {
         { [self] buffer, time in
-          processAudio(buffer: buffer, time: time, to: processingFormat)
+          RecordingLifecycle(owner: self).capture.processAudio(
+            buffer: buffer,
+            time: time,
+            to: processingFormat,
+          )
         }
       }
 
-      /// Deterministically simulates route/input/sample-rate changes while recording.
-      ///
-      /// Bypasses `AVAudioEngine` graph mutation and only exercises the continuation vs stop
-      /// decision logic, interruption callbacks, and stop cleanup.
-      @MainActor
-      public func simulateRouteChangeForTesting(
-        oldFormat: AVAudioFormat,
-        newFormat: AVAudioFormat,
-        processingFormat: AVAudioFormat,
-        isInputAvailable: Bool,
-        reason: AVAudioSession.RouteChangeReason = .routeConfigurationChange,
-      ) async -> Bool {
-        guard isRecording || wantsRecording else { return false }
-
-        let canContinue = isFormatViable(
-          newFormat,
-          processingFormat: processingFormat,
-          isInputAvailable: isInputAvailable,
-        )
-
-        if canContinue {
-          let qualityChange = createQualityChange(
-            from: oldFormat,
-            to: newFormat,
-            reason: describeRouteChangeReason(reason),
-          )
-          let event = AudioRouteChangeEvent(
-            reason: reason,
-            previousRoute: nil,
-            session: AVAudioSession.sharedInstance(),
-          )
-          let interruption = RecordingInterruption.routeChangeContinuing(
-            event: event,
-            qualityChange: qualityChange,
-          )
-          eventSubject.send(AudioIOEvent.recordingInterruption(interruption))
-          return true
-        }
-
-        await handleUnrecoverableInterruption(reason: "No suitable audio route available")
-        return false
-      }
     }
 
     private final class TestingRecordingFileWriter: RecordingFileWriter {

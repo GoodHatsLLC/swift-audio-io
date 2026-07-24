@@ -29,13 +29,9 @@
   // back onto `@_exported import`. Migrate behind a protocol contract first.
   @_exported import AIOMicHealth
   @_exported import AIOPlayback
-  // AIORecording is re-exported so its public `AIOEngine` recording surface —
-  // the canonical `startRecording(configuration:)` plus the now-public
-  // reconciliation-mode start API (`setDesiredRecordingState` /
-  // `startRecordingWithReconciliation`) — is visible to `import AudioIO`
-  // consumers. The reconciliation API was promoted from `@_spi(Advanced)` to
-  // public because Core Audio (system-audio) startup is brittle and benefits
-  // from bounded not-ready retry without reaching for SPI.
+  // AIORecording is re-exported so the canonical awaited
+  // `AIOEngine.startRecording(configuration:)` surface is visible to plain
+  // `import AudioIO` consumers.
   @_exported import AIORecording
   @_exported import AIOVisualization
   @_exported import AudioSignals
@@ -47,16 +43,14 @@
   public typealias AudioEnvironmentManager = AIOAudioSession.AudioEnvironmentManager
   public typealias AudioInput = AIOAudioSession.AudioInput
   public typealias AudioInputSelection = AIOAudioSession.AudioInputSelection
-  public typealias AudioInterruptionOptions = AIOAudioSession.AudioInterruptionOptions
-  public typealias AudioInterruptionType = AIOAudioSession.AudioInterruptionType
-  public typealias AudioRouteChangeEvent = AIOAudioSession.AudioRouteChangeEvent
+  public typealias AudioPortSnapshot = AIOAudioSession.AudioPortSnapshot
+  public typealias AudioRouteChange = AIOAudioSession.AudioRouteChange
+  public typealias AudioRouteChangeReason = AIOAudioSession.AudioRouteChangeReason
+  public typealias AudioRouteSnapshot = AIOAudioSession.AudioRouteSnapshot
+  public typealias AudioSessionSnapshot = AIOAudioSession.AudioSessionSnapshot
+  public typealias AudioSystemEvent = AIOAudioSession.AudioSystemEvent
   public typealias AudioSessionConfiguration = AIOAudioSession.AudioSessionConfiguration
   public typealias AudioSource = AIOAudioSession.AudioSource
-  #if os(iOS)
-    public typealias AudioPortSnapshot = AIOAudioSession.AudioPortSnapshot
-    public typealias AudioRouteSnapshot = AIOAudioSession.AudioRouteSnapshot
-    public typealias AudioSessionSnapshot = AIOAudioSession.AudioSessionSnapshot
-  #endif
   public typealias AudioChannelConfigurationAvailability =
     AIOAudioSession.AudioChannelConfigurationAvailability
   public typealias AnyErrorManager = AIOAudioSession.AnyErrorManager
@@ -93,7 +87,6 @@
   public typealias RecordingConfiguration = AIOAudioSession.RecordingConfiguration
   public typealias RecordingError = AIOAudioSession.RecordingError
   public typealias RecordingFilename = AIOAudioSession.RecordingFilename
-  public typealias ReconciliationConfiguration = AIOAudioSession.ReconciliationConfiguration
   public typealias ReportedError = AIOAudioSession.ReportedError
   public typealias Reporter = AIOAudioSession.Reporter
   public typealias SampleRate = AIOAudioSession.SampleRate
@@ -103,7 +96,7 @@
 
   // MARK: - AIOContracts re-exports
 
-  public typealias AudioSessionDelegate = AIOContracts.AudioSessionDelegate
+  public typealias AudioSessionAuthority = AIOContracts.AudioSessionAuthority
   public typealias BufferEmitter = AIOContracts.BufferEmitter
   public typealias BufferReceiver = AIOContracts.BufferReceiver
   public typealias BufferReceiverToken = AIOContracts.BufferReceiverToken

@@ -16,7 +16,7 @@ public struct MicHealthInputs: Sendable {
   /// Audio-session route change events. On iOS these are produced from
   /// `AVAudioSession` notifications; on macOS the type is a degenerate
   /// value and the monitor will simply ignore it.
-  public let routeEvents: AsyncSignalStream<AudioRouteChangeEvent>
+  public let routeEvents: AsyncSignalStream<AudioRouteChange>
 
   /// Clock used for both "now" readings and interval bookkeeping.
   public let clock: any Clock<Duration>
@@ -26,7 +26,7 @@ public struct MicHealthInputs: Sendable {
 
   public init(
     rms: AsyncSignalStream<Float>,
-    routeEvents: AsyncSignalStream<AudioRouteChangeEvent>,
+    routeEvents: AsyncSignalStream<AudioRouteChange>,
     clock: any Clock<Duration>,
     thresholds: MicHealthThresholds,
   ) {

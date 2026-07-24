@@ -178,7 +178,13 @@ let package = Package(
     ),
     .testTarget(
       name: "AIOTests",
-      dependencies: ["AIOAudioSession", "AudioIO", "AIORecordingSupport", "AIOSupport"],
+      dependencies: [
+        "AIOAudioSession",
+        "AIORecording",
+        "AIORecordingSupport",
+        "AIOSupport",
+        "AudioIO",
+      ],
       swiftSettings: swiftSettings(),
     ),
     .testTarget(

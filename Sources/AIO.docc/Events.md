@@ -24,7 +24,10 @@ The stream emits ``AudioIOEvent``, an enum with cases for every lifecycle transi
 - ``AudioIOEvent/recordingCompleted`` — a user-initiated stop completed cleanly.
 - ``AudioIOEvent/recordingFailed`` — recording stopped due to an engine-side failure. Usually paired with an ``AudioIOEvent/error(_:)`` event describing the cause.
 - ``AudioIOEvent/recordingInterruption(_:)`` — a route-change continuation, a graceful stop, or an interruption-driven stop. Carries an ``AIOEngine/RecordingInterruption`` payload describing the variant.
-- ``AudioIOEvent/reconciliationFailed(desiredRecording:)`` — only fires when using the reconciliation-mode entry point ``AIOEngine/setDesiredRecordingState(_:configuration:)``. The canonical ``AIOEngine/startRecording(configuration:)`` returns failures directly via typed throws.
+
+Failures detected before ``AIOEngine/startRecording(configuration:)`` returns
+are reported only through its typed throw. `recordingFailed` is reserved for
+failures after recording has started.
 
 ### Playback lifecycle
 

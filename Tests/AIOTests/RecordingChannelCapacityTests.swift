@@ -5,18 +5,26 @@
 
   import AVFoundation
   @testable import AIOAudioSession
+  @testable import AIORecording
   @_spi(TESTING) @testable import AudioIO
   import AIORecordingSupport
 
   struct RecordingChannelCapacityTests {
     @Test
     @MainActor
-    func `warming unsupported runtime channel count emits typed error`() async throws {
+    func `starting unsupported runtime channel count emits typed error`() async throws {
       let engine = AIOEngine()
-      let configuration = makeConfiguration(fileFormat: .caf, channels: .init(platform: 33))
+      let outputURL = FileManager.default.temporaryDirectory
+        .appendingPathComponent("unsupported-start-\(UUID().uuidString).caf")
+      defer { try? FileManager.default.removeItem(at: outputURL) }
+      let configuration = makeConfiguration(
+        fileFormat: .caf,
+        channels: .init(platform: 33),
+        outputDestination: .fileURL(outputURL),
+      )
 
       do {
-        try await engine.warm(configuration: configuration)
+        _ = try await engine.startRecording(configuration: configuration)
         Issue.record("Expected unsupportedChannelCount")
       } catch RecordingError.unsupportedChannelCount(
         let requested,
@@ -29,6 +37,7 @@
       }
 
       #expect(engine.isRecording == false)
+      #expect(FileManager.default.fileExists(atPath: outputURL.path) == false)
     }
 
     @Test
@@ -37,7 +46,9 @@
       let configuration = makeConfiguration(fileFormat: .flac, channels: .init(platform: 9))
 
       do {
-        try engine.validateRecordingChannelCapacity(for: configuration)
+        try RecordingLifecycle(owner: engine).capture.validateRecordingChannelCapacity(
+          for: configuration,
+        )
         Issue.record("Expected unsupportedChannelCount")
       } catch RecordingError.unsupportedChannelCount(
         let requested,
@@ -54,7 +65,10 @@
     func `runtime allocates the requested supported channel count`() {
       let engine = AIOEngine()
 
-      let buffers = engine.makeAudioBuffers(sampleRate: 48_000, channelCount: 32)
+      let buffers = RecordingLifecycle(owner: engine).capture.makeAudioBuffers(
+        sampleRate: 48_000,
+        channelCount: 32,
+      )
 
       #expect(buffers.count == 32)
       #expect(buffers.allSatisfy { $0.capacity > 0 })
@@ -94,7 +108,9 @@
           channels: .init(platform: AVAudioChannelCount(channelCount)),
         )
 
-        try engine.validateRecordingChannelCapacity(for: configuration)
+        try RecordingLifecycle(owner: engine).capture.validateRecordingChannelCapacity(
+          for: configuration,
+        )
         #expect(
           configuration.processingFormat?.channelCount
             == AVAudioChannelCount(channelCount),
@@ -126,7 +142,10 @@
           channels: .init(platform: AVAudioChannelCount(channelCount)),
         )
         let processingFormat = try #require(configuration.processingFormat)
-        let buffers = engine.makeAudioBuffers(sampleRate: 48_000, channelCount: channelCount)
+        let buffers = RecordingLifecycle(owner: engine).capture.makeAudioBuffers(
+          sampleRate: 48_000,
+          channelCount: channelCount,
+        )
         let frameCount = 1024
         for channelIndex in 0..<channelCount {
           let samples = (0..<frameCount).map { frameIndex in
@@ -144,10 +163,10 @@
         let writer = try engine.makeRecordingWriter(
           url: outputURL,
           configuration: configuration,
-          writerBackend: engine.writerBackend,
+          writerBackend: engine.recordingLifecycleState.writerBackend,
         )
 
-        let result = AIOEngine.flushChunk(
+        let result = RecordingLifecycle.Writer.flushChunk(
           size: frameCount,
           from: buffers,
           in: processingFormat,
@@ -172,6 +191,7 @@
     private func makeConfiguration(
       fileFormat: FileFormat,
       channels: ChannelCount,
+      outputDestination: RecordingConfiguration.OutputDestination = .temporary,
     ) -> RecordingConfiguration {
       RecordingConfiguration(
         inputConfiguration: InputConfiguration(
@@ -183,6 +203,7 @@
           bitDepth: bitDepth(for: fileFormat),
           quality: .high,
         ),
+        outputDestination: outputDestination,
       )
     }
 

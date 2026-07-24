@@ -22,16 +22,14 @@ func publicAPISnapshot_AIOAudioSession() throws {
   _ = AudioEnvironmentManager.self
   _ = AudioInput.self
   _ = AudioInputSelection.self
-  _ = AudioInterruptionOptions.self
-  _ = AudioInterruptionType.self
-  _ = AudioRouteChangeEvent.self
+  _ = AudioPortSnapshot.self
+  _ = AudioRouteChange.self
+  _ = AudioRouteChangeReason.self
+  _ = AudioRouteSnapshot.self
+  _ = AudioSessionSnapshot.self
+  _ = AudioSystemEvent.self
   _ = AudioSessionConfiguration.self
   _ = AudioSource.self
-  #if os(iOS)
-    _ = AudioPortSnapshot.self
-    _ = AudioRouteSnapshot.self
-    _ = AudioSessionSnapshot.self
-  #endif
   _ = AnyErrorManager.self
   _ = AudioChannelConfigurationAvailability.self
   _ = AudioChannelConfigurationAvailability.unresolved
@@ -63,7 +61,6 @@ func publicAPISnapshot_AIOAudioSession() throws {
   _ = PolarPattern.self
   _ = RecordingConfiguration.self
   _ = RecordingFilename.self
-  _ = ReconciliationConfiguration.self
   _ = ReportedError.self
   _ = Reporter<ReportedError>.self
   _ = SampleRate.self
@@ -73,7 +70,7 @@ func publicAPISnapshot_AIOAudioSession() throws {
 
 @Test("Public API snapshot — AIOContracts re-exports compile via AudioIO")
 func publicAPISnapshot_AIOContracts() throws {
-  _ = (any AudioSessionDelegate).self
+  _ = (any AudioSessionAuthority).self
   _ = (any BufferEmitter<Float>).self
   _ = (any BufferReceiver<Float>).self
   _ = BufferReceiverToken.self
@@ -84,13 +81,18 @@ func publicAPISnapshot_AIOContracts() throws {
 @MainActor
 func publicAPISnapshotAsyncAudioSessionAPI(
   environment: AudioEnvironmentManager,
-  delegate: any AudioSessionDelegate,
+  authority: any AudioSessionAuthority,
   engine: AIOEngine,
   configuration: RecordingConfiguration,
 ) async throws {
   try await environment.setAudioSessionActive(true)
-  try await delegate.setAudioSessionActive(true)
-  try await engine.warm(configuration: configuration)
+  try await authority.setAudioSessionActive(true)
+
+  let subscriberID = environment.addAudioSystemEventSubscriber { event in
+    await engine.handleAudioSystemEvent(event)
+  }
+  environment.removeSubscriber(subscriberID)
+  await engine.handleAudioSystemEvent(.mediaServicesReset)
 }
 
 @Test("Public API snapshot — AIOEngineCore re-exports compile via AudioIO")
@@ -106,18 +108,18 @@ func publicAPISnapshot_AIOPlayback() throws {
   _ = PlaybackJogSnapshot.self
 }
 
-// Pins the reconciliation-mode start API as public (promoted from
-// `@_spi(Advanced)`). Compile-time only — never invoked; the references
-// type-check the public signatures so a future re-gating fails the build.
+// Pins the canonical awaited recording lifecycle and immutable authority
+// initializer. Compile-time only — never invoked.
 @MainActor
-func publicAPISnapshot_reconciliationStartAPI(
+func publicAPISnapshotRecordingStartAPI(
   engine: AIOEngine,
+  authority: any AudioSessionAuthority,
   configuration: RecordingConfiguration,
 ) async {
-  engine.setDesiredRecordingState(true, configuration: configuration)
-  engine.setDesiredRecordingState(true)
-  _ = await engine.startRecordingWithReconciliation(configuration: configuration)
-  _ = engine.consumeLastRecordingStartFailure()
+  _ = try? await engine.startRecording(configuration: configuration)
+  _ = try? await engine.stopRecording()
+  _ = AIOEngine(recordingStartTimeout: .seconds(2))
+  _ = AIOEngine(audioSessionAuthority: authority)
 }
 
 @Test("Public API snapshot — AIOMicHealth re-exports compile via AudioIO")

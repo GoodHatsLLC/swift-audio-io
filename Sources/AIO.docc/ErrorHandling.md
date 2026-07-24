@@ -75,12 +75,13 @@ System-audio capture (see <doc:SystemAudioCapture>) adds three terminal
   (HAL) `OSStatus` with no more specific mapping; always surfaced rather than
   swallowed.
 
-These are *terminal*: ``RecordingError/isTransient`` is `false` for them, so the
-reconciliation start API (see <doc:SystemAudioCapture>) does not retry them. Only
-a narrow set of HAL *not-ready* startup statuses is transient — those map to
-`.session(.notReady(details:))` so the existing retry gate applies. This keeps
-the OSStatus-to-`RecordingError` mapping the single source of truth for the retry
-decision.
+These are *terminal*: ``RecordingError/isTransient`` is `false` for them, so
+``AIOEngine/startRecording(configuration:)`` does not retry them. Only a narrow
+set of HAL *not-ready* startup statuses is transient — those map to
+`.session(.notReady(details:))` so the canonical start's bounded retry applies.
+If readiness does not settle before ``AIOEngine/recordingStartTimeout``, start
+throws ``RecordingError/startTimedOut(timeout:lastFailure:)`` and preserves the
+last transient session failure.
 
 ## Topics
 

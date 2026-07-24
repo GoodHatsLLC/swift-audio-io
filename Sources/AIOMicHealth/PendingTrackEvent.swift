@@ -21,7 +21,7 @@ public struct PendingTrackEvent: Sendable, Equatable {
   public let endedAt: TimeInterval?
 
   /// Human-readable device name associated with a route-lost event, if the
-  /// underlying `AudioRouteChangeEvent` carried one.
+  /// underlying `AudioRouteChange` carried one.
   public let deviceName: String?
 
   public init(

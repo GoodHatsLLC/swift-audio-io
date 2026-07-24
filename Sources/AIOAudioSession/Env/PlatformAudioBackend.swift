@@ -39,6 +39,27 @@ protocol PlatformAudioBackend: Sendable {
   // (SE-0461), the call would inherit the @MainActor caller and run the HAL IPC
   // on the main actor. Conformances must match.
   @concurrent func availableInputs() async -> [PlatformAudioInputDescriptor]
+  @concurrent func currentRoute() async -> AudioRouteSnapshot
+}
+
+extension PlatformAudioBackend {
+  @concurrent func currentRoute() async -> AudioRouteSnapshot {
+    let inputs = await availableInputs()
+      .filter(\.isDefault)
+      .map(\.portSnapshot)
+    return AudioRouteSnapshot(inputs: inputs, outputs: [])
+  }
+}
+
+extension PlatformAudioInputDescriptor {
+  var portSnapshot: AudioPortSnapshot {
+    AudioPortSnapshot(
+      name: name,
+      uid: id,
+      type: String(describing: type),
+      channelCount: channelCount,
+    )
+  }
 }
 
 enum PlatformAudioBackendFactory {
@@ -114,6 +135,12 @@ enum PlatformAudioBackendFactory {
         }
       }
     }
+
+    @concurrent func currentRoute() async -> AudioRouteSnapshot {
+      await AudioSessionAccess.async {
+        AudioRouteSnapshot(platformRoute: AVAudioSession.sharedInstance().currentRoute)
+      }
+    }
   }
 
 #elseif os(macOS)
@@ -162,6 +189,19 @@ enum PlatformAudioBackendFactory {
       }
     }
 
+    @concurrent func currentRoute() async -> AudioRouteSnapshot {
+      AudioRouteSnapshot(
+        inputs: defaultDevicePort(
+          selector: kAudioHardwarePropertyDefaultInputDevice,
+          scope: kAudioObjectPropertyScopeInput,
+        ).map { [$0] } ?? [],
+        outputs: defaultDevicePort(
+          selector: kAudioHardwarePropertyDefaultOutputDevice,
+          scope: kAudioObjectPropertyScopeOutput,
+        ).map { [$0] } ?? [],
+      )
+    }
+
     private struct CoreAudioInput {
       let uid: String
       let name: String
@@ -171,20 +211,40 @@ enum PlatformAudioBackendFactory {
 
     private struct RouteSignature: Hashable {
       let defaultInputID: String?
+      let defaultOutputID: String?
       let inputIDs: [String]
+      let outputIDs: [String]
     }
 
     private func routeSignature() -> RouteSignature {
-      let inputs = audioInputDevices().map(\.uid).sorted()
+      let devices = deviceIDs()
       return RouteSignature(
         defaultInputID: defaultInputDeviceUID(),
-        inputIDs: inputs,
+        defaultOutputID: defaultDeviceUID(
+          selector: kAudioHardwarePropertyDefaultOutputDevice,
+        ),
+        inputIDs: deviceUIDs(devices, scope: kAudioObjectPropertyScopeInput),
+        outputIDs: deviceUIDs(devices, scope: kAudioObjectPropertyScopeOutput),
       )
+    }
+
+    private func deviceUIDs(
+      _ devices: [AudioDeviceID],
+      scope: AudioObjectPropertyScope,
+    ) -> [String] {
+      devices.compactMap { deviceID in
+        guard channelCount(deviceID: deviceID, scope: scope) > 0 else { return nil }
+        return stringProperty(objectID: deviceID, selector: kAudioDevicePropertyDeviceUID)
+      }
+      .sorted()
     }
 
     private func audioInputDevices() -> [CoreAudioInput] {
       deviceIDs().compactMap { deviceID in
-        let channels = inputChannelCount(deviceID: deviceID)
+        let channels = channelCount(
+          deviceID: deviceID,
+          scope: kAudioObjectPropertyScopeInput,
+        )
         guard channels > 0 else { return nil }
         guard
           let uid = stringProperty(
@@ -227,9 +287,48 @@ enum PlatformAudioBackendFactory {
     }
 
     private func defaultInputDeviceUID() -> String? {
+      defaultDeviceUID(selector: kAudioHardwarePropertyDefaultInputDevice)
+    }
+
+    private func defaultDeviceUID(selector: AudioObjectPropertySelector) -> String? {
+      guard let deviceID = defaultDeviceID(selector: selector) else { return nil }
+      return stringProperty(objectID: deviceID, selector: kAudioDevicePropertyDeviceUID)
+    }
+
+    private func defaultDevicePort(
+      selector: AudioObjectPropertySelector,
+      scope: AudioObjectPropertyScope,
+    ) -> AudioPortSnapshot? {
+      guard let deviceID = defaultDeviceID(selector: selector) else { return nil }
+      let channels = channelCount(deviceID: deviceID, scope: scope)
+      guard channels > 0,
+        let uid = stringProperty(
+          objectID: deviceID,
+          selector: kAudioDevicePropertyDeviceUID,
+        )
+      else {
+        return nil
+      }
+      let name =
+        stringProperty(objectID: deviceID, selector: kAudioObjectPropertyName)
+        ?? "Audio Device \(uid)"
+      let type = AudioInput.InputType(
+        coreAudioTransportType: transportType(deviceID: deviceID),
+      )
+      return AudioPortSnapshot(
+        name: name,
+        uid: uid,
+        type: String(describing: type),
+        channelCount: channels,
+      )
+    }
+
+    private func defaultDeviceID(
+      selector: AudioObjectPropertySelector,
+    ) -> AudioDeviceID? {
       let systemObjectID = AudioObjectID(kAudioObjectSystemObject)
       var address = AudioObjectPropertyAddress(
-        mSelector: kAudioHardwarePropertyDefaultInputDevice,
+        mSelector: selector,
         mScope: kAudioObjectPropertyScopeGlobal,
         mElement: kAudioObjectPropertyElementMain,
       )
@@ -244,7 +343,7 @@ enum PlatformAudioBackendFactory {
         &deviceID,
       )
       guard status == noErr else { return nil }
-      return stringProperty(objectID: deviceID, selector: kAudioDevicePropertyDeviceUID)
+      return deviceID
     }
 
     private func deviceIDs() -> [AudioDeviceID] {
@@ -279,10 +378,13 @@ enum PlatformAudioBackendFactory {
       return devices
     }
 
-    private func inputChannelCount(deviceID: AudioDeviceID) -> Int {
+    private func channelCount(
+      deviceID: AudioDeviceID,
+      scope: AudioObjectPropertyScope,
+    ) -> Int {
       var address = AudioObjectPropertyAddress(
         mSelector: kAudioDevicePropertyStreamConfiguration,
-        mScope: kAudioObjectPropertyScopeInput,
+        mScope: scope,
         mElement: kAudioObjectPropertyElementMain,
       )
       var dataSize: UInt32 = 0

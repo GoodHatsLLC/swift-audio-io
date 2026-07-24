@@ -8,7 +8,7 @@
 
   @MainActor
   @Observable
-  public final class AudioEnvironmentManager: AudioSessionDelegate {
+  public final class AudioEnvironmentManager: AudioSessionAuthority {
     public enum ManagerError: AudioError {
       case alreadyRunning
       case notRunning
@@ -70,6 +70,7 @@
     private var sessionController: AudioSessionController { .init(owner: self) }
     private var routeObserver: AudioRouteObserver { .init(owner: self) }
     private var backendRouteTask: MainActorOwnedWork?
+    private var currentRoute = AudioRouteSnapshot(inputs: [], outputs: [])
 
     private enum StorageKey {
       static let useMeasurement = "aio.audio_env.use_measurement"
@@ -286,33 +287,10 @@
     private let eventHub = AudioEnvironmentEventHub()
 
     @discardableResult
-    public func addRouteChangeSubscriber(
-      _ handler: @escaping @Sendable @MainActor (AudioRouteChangeEvent) async -> Void,
+    public func addAudioSystemEventSubscriber(
+      _ handler: @escaping @Sendable @MainActor (AudioSystemEvent) async -> Void,
     ) -> UUID {
-      eventHub.addRouteChangeSubscriber(handler)
-    }
-
-    @discardableResult
-    public func addInterruptionSubscriber(
-      _ handler:
-        @escaping @Sendable @MainActor (AudioInterruptionType, AudioInterruptionOptions?)
-        async -> Void,
-    ) -> UUID {
-      eventHub.addInterruptionSubscriber(handler)
-    }
-
-    @discardableResult
-    public func addMediaServicesLostSubscriber(
-      _ handler: @escaping @Sendable @MainActor () async -> Void,
-    ) -> UUID {
-      eventHub.addMediaServicesLostSubscriber(handler)
-    }
-
-    @discardableResult
-    public func addMediaServicesResetSubscriber(
-      _ handler: @escaping @Sendable @MainActor () async -> Void,
-    ) -> UUID {
-      eventHub.addMediaServicesResetSubscriber(handler)
+      eventHub.addSubscriber(handler)
     }
 
     public func removeSubscriber(_ id: UUID) {
@@ -336,6 +314,7 @@
       }
       isRunning = true
       await refreshInputsFromPlatform()
+      currentRoute = await platformAudioBackend.currentRoute()
       isReady = true
 
       await backendRouteTask?.cancel()
@@ -388,9 +367,16 @@
       )
     }
 
-    private func notifyRouteChangeSubscribers() async {
-      let event = AudioRouteChangeEvent(userMessage: "Audio route changed")
-      await eventHub.dispatchRouteChange(event)
+    private func notifyRouteChangeSubscribers(
+      previousRoute: AudioRouteSnapshot,
+      currentRoute: AudioRouteSnapshot,
+    ) async {
+      let routeChange = AudioRouteChange(
+        reason: .configurationChanged,
+        previousRoute: previousRoute,
+        currentRoute: currentRoute,
+      )
+      await eventHub.dispatch(.routeChanged(routeChange))
     }
   }
 
@@ -416,8 +402,14 @@
         return MainActorOwnedWork { [weak owner] in
           guard let owner else { return }
           for await _ in backend.routeChanges() {
+            let previousRoute = owner.currentRoute
             await owner.refreshInputsFromPlatform()
-            await owner.notifyRouteChangeSubscribers()
+            let currentRoute = await backend.currentRoute()
+            owner.currentRoute = currentRoute
+            await owner.notifyRouteChangeSubscribers(
+              previousRoute: previousRoute,
+              currentRoute: currentRoute,
+            )
           }
         }
       }

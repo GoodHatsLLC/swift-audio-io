@@ -265,10 +265,6 @@ final class AudioIODemoViewModel {
     case .error(let error):
       lastError = error.localizedDescription
       statusLine = "Engine error"
-    case .reconciliationFailed:
-      // Only fires on the reconciliation-mode entry points, which this sample
-      // doesn't use.
-      break
     }
   }
 }

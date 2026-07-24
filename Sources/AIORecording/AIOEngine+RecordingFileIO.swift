@@ -48,6 +48,14 @@
       }
     }
 
+    @MainActor
+    func newStartOutputToRemove() -> URL? {
+      state.withLock { state in
+        guard state.recordingOutputWasCreatedByStart else { return nil }
+        return state.recordingURL
+      }
+    }
+
     package nonisolated func resolveOutputURL(
       for configuration: RecordingConfiguration,
       allowExplicitFile: Bool,

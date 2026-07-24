@@ -3,6 +3,7 @@
 #if canImport(AVFoundation)
   import AIOAudioSession
   import AIOContracts
+  import AIORecordingSupport
   import AIOSupport
   #if os(iOS)
     package import AVFoundation
@@ -17,8 +18,19 @@
   extension AIOEngine {
     @MainActor
     package func configureAudioSessionForPlayback() async throws(SessionError) {
+      try await setAudioSessionDemand(active: true)
+    }
+
+    @MainActor
+    package func setAudioSessionDemand(active: Bool) async throws(SessionError) {
       do {
-        try await audioSessionDelegate?.setAudioSessionActive(true)
+        if let audioSessionAuthority {
+          try await audioSessionAuthority.setAudioSessionActive(active)
+        } else {
+          #if os(iOS)
+            try AVAudioSession.sharedInstance().setActive(active)
+          #endif
+        }
       } catch {
         throw .operationFailed(operation: .setActive, error: ErrorContext(error))
       }
@@ -93,18 +105,15 @@
 
     @MainActor
     package func deactivateAudioSessionIfNeeded(reason: String) async {
-      guard deactivateAudioSessionOnStop else { return }
-      guard !isRecording, !isPlayback, !wantsRecording else { return }
+      guard !isRecording, !isPlayback, recordingLifecycleState.startOperationID == nil else {
+        return
+      }
 
       do {
-        try await audioSessionDelegate?.setAudioSessionActive(false)
-      } catch {
-        let wrapped = SessionError.operationFailed(
-          operation: .setActive,
-          error: ErrorContext(error),
-        )
+        try await setAudioSessionDemand(active: false)
+      } catch let wrapped {
         log.error(
-          "Failed to delegate audio session deactivation (\(reason, privacy: .public)): \(wrapped, privacy: .public)",
+          "Failed to release audio session demand (\(reason, privacy: .public)): \(wrapped, privacy: .public)",
         )
         eventSubject.send(AudioIOEvent.error(wrapped))
       }

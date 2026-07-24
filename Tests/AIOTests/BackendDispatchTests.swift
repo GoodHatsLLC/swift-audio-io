@@ -11,63 +11,59 @@
 
   // SAFETY: the test drives this entirely on the MainActor.
   private final class FakeCaptureBackend: RecordingCaptureBackend, @unchecked Sendable {
-    let sourceFormat: AVAudioFormat
     private(set) var startCalls = 0
-    private(set) var stopCalls = 0
+    private(set) var stopModes: [RecordingCaptureStopMode] = []
     private(set) var cleanupCalls = 0
 
-    init(sourceFormat: AVAudioFormat) { self.sourceFormat = sourceFormat }
-
     func start() throws(RecordingError) { startCalls += 1 }
-    func stop() throws(RecordingError) { stopCalls += 1 }
+
+    @MainActor
+    func stop(mode: RecordingCaptureStopMode) { stopModes.append(mode) }
+
+    @MainActor
     func cleanup() { cleanupCalls += 1 }
   }
 
   struct BackendDispatchTests {
-    private func format() -> AVAudioFormat {
-      AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 2)!
+    @MainActor
+    @Test
+    func `cleanUp tears down and clears the capture backend`() {
+      let engine = AIOEngine()
+      let backend = FakeCaptureBackend()
+      engine.state[locked: \.captureBackend] = backend
+
+      RecordingLifecycle(owner: engine).capture.cleanUp()
+
+      #expect(backend.cleanupCalls == 1)
+      #expect(engine.state.withLock { $0.captureBackend == nil })
     }
 
     @MainActor
     @Test
-    func `cleanUp tears down and clears the active backend`() {
+    func `hardStop immediately stops then cleans up the capture backend`() {
       let engine = AIOEngine()
-      let backend = FakeCaptureBackend(sourceFormat: format())
-      engine.state[locked: \.activeBackend] = backend
+      let backend = FakeCaptureBackend()
+      engine.state[locked: \.captureBackend] = backend
 
-      engine.cleanUp()
+      RecordingLifecycle(owner: engine).capture.hardStop()
 
+      #expect(backend.stopModes == [.immediate])
       #expect(backend.cleanupCalls == 1)
-      #expect(engine.state.withLock { $0.activeBackend == nil })
+      #expect(engine.state.withLock { $0.captureBackend == nil })
     }
 
     @MainActor
     @Test
-    func `hardStop routes teardown through the active backend`() {
+    func `gracefulStop gracefully stops then cleans up the capture backend`() async {
       let engine = AIOEngine()
-      let backend = FakeCaptureBackend(sourceFormat: format())
-      engine.state[locked: \.activeBackend] = backend
+      let backend = FakeCaptureBackend()
+      engine.state[locked: \.captureBackend] = backend
 
-      // With an active backend, hardStop must not touch the AVAudioEngine input
-      // tap; teardown flows through cleanUp() -> backend.cleanup().
-      engine.hardStop()
+      await RecordingLifecycle(owner: engine).gracefulStop()
 
+      #expect(backend.stopModes == [.graceful])
       #expect(backend.cleanupCalls == 1)
-      #expect(engine.state.withLock { $0.activeBackend == nil })
-    }
-
-    @MainActor
-    @Test
-    func `gracefulStop stops then cleans up the active backend`() async {
-      let engine = AIOEngine()
-      let backend = FakeCaptureBackend(sourceFormat: format())
-      engine.state[locked: \.activeBackend] = backend
-
-      await engine.gracefulStop()
-
-      #expect(backend.stopCalls == 1)
-      #expect(backend.cleanupCalls == 1)
-      #expect(engine.state.withLock { $0.activeBackend == nil })
+      #expect(engine.state.withLock { $0.captureBackend == nil })
       #expect(!engine.isRecording)
     }
 
@@ -75,9 +71,22 @@
     @Test
     func `cleanUp without a backend is a no-op for the backend path`() {
       let engine = AIOEngine()
-      // No backend set (microphone/legacy path).
-      engine.cleanUp()
-      #expect(engine.state.withLock { $0.activeBackend == nil })
+      RecordingLifecycle(owner: engine).capture.cleanUp()
+      #expect(engine.state.withLock { $0.captureBackend == nil })
+    }
+
+    @MainActor
+    @Test
+    func `microphone backend owns graph teardown`() {
+      let engine = AIOEngine()
+      var teardownCalls = 0
+      engine.testEngineTeardownOverride = { teardownCalls += 1 }
+      engine.state[locked: \.captureBackend] = MicrophoneCaptureBackend(owner: engine)
+
+      RecordingLifecycle(owner: engine).capture.hardStop()
+
+      #expect(teardownCalls == 1)
+      #expect(engine.state.withLock { $0.captureBackend == nil })
     }
   }
 #endif

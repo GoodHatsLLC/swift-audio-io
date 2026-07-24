@@ -114,14 +114,12 @@
 
               switch notification.type {
               case .began:
-                await owner?.dispatchInterruption(
-                  type: notification.type,
-                  options: notification.options,
-                )
+                await owner?.dispatchAudioSystemEvent(.interruptionBegan)
               case .ended:
-                await owner?.dispatchInterruption(
-                  type: notification.type,
-                  options: notification.options,
+                await owner?.dispatchAudioSystemEvent(
+                  .interruptionEnded(
+                    shouldResume: notification.options?.contains(.shouldResume) == true,
+                  ),
                 )
               @unknown default:
                 continue
@@ -198,7 +196,7 @@
           "mediaServicesLost notification: audio services unavailable",
         )
         owner.isAudioSessionActive = false
-        await owner.dispatchMediaServicesLost()
+        await owner.dispatchAudioSystemEvent(.mediaServicesLost)
       }
 
       @MainActor
@@ -217,7 +215,7 @@
         await owner.restorePreferredInputAndConfigurationIfPossible(
           reason: "mediaServicesReset notification",
         )
-        await owner.dispatchMediaServicesReset()
+        await owner.dispatchAudioSystemEvent(.mediaServicesReset)
       }
     }
   }

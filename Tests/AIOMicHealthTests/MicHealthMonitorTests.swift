@@ -62,7 +62,7 @@ private final class TestClock: Clock, @unchecked Sendable {
 private struct MonitorHarness: ~Copyable {
   let clock: TestClock
   let rmsContinuation: AsyncStream<Float>.Continuation
-  let routeContinuation: AsyncStream<AudioRouteChangeEvent>.Continuation
+  let routeContinuation: AsyncStream<AudioRouteChange>.Continuation
   let monitor: MicHealthMonitor
 
   consuming func teardown() async {
@@ -76,7 +76,7 @@ private func makeMonitor(
 ) -> MonitorHarness {
   let clock = TestClock()
   let (rmsStream, rmsCont) = AsyncStream<Float>.makeStream()
-  let (routeStream, routeCont) = AsyncStream<AudioRouteChangeEvent>.makeStream()
+  let (routeStream, routeCont) = AsyncStream<AudioRouteChange>.makeStream()
   let inputs = MicHealthInputs(
     rms: rmsStream,
     routeEvents: routeStream,
@@ -333,21 +333,15 @@ struct MicHealthMonitorTests {
   }
 
   #if canImport(AVFoundation) && os(iOS)
-    // MARK: - Route-event tests (iOS simulator only)
-    //
-    // `AudioRouteChangeEvent`, `AVAudioSession`, and
-    // `AVAudioSession.RouteChangeReason` are iOS-only types (see
-    // `AudioRouteChangeEvent.swift` — the iOS struct is `#if os(iOS)`).
-    // These tests are compiled out on macOS host SwiftPM builds and must
-    // be executed via the iOS simulator.
+    // MARK: - Route-event tests
 
     private func makeRouteEvent(
-      reason: AVAudioSession.RouteChangeReason,
-    ) -> AudioRouteChangeEvent {
+      reason: AudioRouteChangeReason,
+    ) -> AudioRouteChange {
       // The route-loss code path only reads `previousRoute?.inputs.first?.name`,
       // so passing `nil` records `deviceName: nil`. Use snapshots here to keep
       // unit tests independent of the process-global audio session.
-      AudioRouteChangeEvent(
+      AudioRouteChange(
         reason: reason,
         previousRoute: nil,
         currentRoute: .init(inputs: [], outputs: []),
@@ -371,7 +365,7 @@ struct MicHealthMonitorTests {
       await feedRMS(harness, linear: healthy, for: thresholds.healthyMinDuration * 3 / 2)
       #expect(harness.monitor.currentState == .healthy)
 
-      await harness.monitor.recordRouteForTesting(makeRouteEvent(reason: .oldDeviceUnavailable))
+      await harness.monitor.recordRouteForTesting(makeRouteEvent(reason: .deviceDisconnected))
 
       if case .degraded(.routeLost) = harness.monitor.currentState {
         // expected — route loss is instantaneous, no threshold delay.
@@ -393,7 +387,7 @@ struct MicHealthMonitorTests {
       let harness = makeMonitor()
 
       harness.clock.advance(by: .milliseconds(25))
-      await harness.monitor.recordRouteForTesting(makeRouteEvent(reason: .oldDeviceUnavailable))
+      await harness.monitor.recordRouteForTesting(makeRouteEvent(reason: .deviceDisconnected))
 
       #expect(harness.monitor.currentState == .degraded(.routeLost(deviceName: nil)))
 
@@ -416,8 +410,8 @@ struct MicHealthMonitorTests {
       let thresholds = MicHealthThresholds.testFast
       await feedRMS(harness, linear: healthy, for: thresholds.healthyMinDuration * 3 / 2)
 
-      await harness.monitor.recordRouteForTesting(makeRouteEvent(reason: .oldDeviceUnavailable))
-      await harness.monitor.recordRouteForTesting(makeRouteEvent(reason: .newDeviceAvailable))
+      await harness.monitor.recordRouteForTesting(makeRouteEvent(reason: .deviceDisconnected))
+      await harness.monitor.recordRouteForTesting(makeRouteEvent(reason: .deviceConnected))
 
       // No clock advance with healthy signal: still degraded.
       if case .degraded(.routeLost) = harness.monitor.currentState {

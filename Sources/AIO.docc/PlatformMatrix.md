@@ -15,19 +15,16 @@ Lowering either floor would require a SemVer-major release. We make no commitmen
 
 The following surfaces are `#if os(iOS)`-gated and not available on macOS:
 
-- ``AudioInterruptionType`` and ``AudioInterruptionOptions``, plus interruption-handling on ``AudioEnvironmentManager``. macOS has no equivalent of `AVAudioSession`'s interruption notifications.
-- The `AudioPortSnapshot` / `AudioRouteSnapshot` / `AudioSessionSnapshot` introspection types.
 - ``OrientationObserver``, which bridges UIKit device-orientation notifications.
 - The iOS-only `InputPicker` UI in adopter apps (not part of AudioIO itself).
 
 ## What's macOS-only
 
-- ``AIOEngine/handleRouteChange(event:)`` reaches a macOS-specific code path for engine-driven tap reinstall; the iOS path goes through `AVAudioSession` notifications subscribed via ``AudioEnvironmentManager``.
 - **System-audio capture** — the `RecordingInput.systemAudio` case and the `SystemAudioRecordingInput` / `SystemAudioProcessSelection` / `SystemAudioProcessObjectID` / `SystemAudioProcess` / `SystemAudioProcessCatalog` types are `#if os(macOS)` (Core Audio process taps have no iOS equivalent). A configuration that compiles on iOS can only select the microphone. See <doc:SystemAudioCapture>.
 
 ## What's symmetric
 
-Everything else: ``AIOEngine`` recording and playback, ``AudioVisualizationEngine``, the events stream, and the entire ``AudioIOError`` family.
+Everything else: ``AIOEngine`` recording and playback, ``AudioVisualizationEngine``, the events stream, the entire ``AudioIOError`` family, and the platform-neutral ``AudioSystemEvent`` / route snapshot values. Native notification adapters differ, but consumers use the same ``AudioEnvironmentManager/addAudioSystemEventSubscriber(_:)`` and ``AIOEngine/handleAudioSystemEvent(_:)`` interface.
 
 If you write generic code over `AudioEnvironmentConfiguring` and the input-picking-specific `AudioInputPickingEnvironment`, your callers will compile on both platforms — on macOS the picking-environment alias falls back to the base configuring protocol.
 

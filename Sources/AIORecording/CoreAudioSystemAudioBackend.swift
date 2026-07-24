@@ -163,7 +163,9 @@
 
     // MARK: - HAL helpers
 
-    private static func readSourceFormat(tapID: AudioObjectID) throws(RecordingError) -> AVAudioFormat {
+    private static func readSourceFormat(tapID: AudioObjectID) throws(RecordingError)
+      -> AVAudioFormat
+    {
       var address = AudioObjectPropertyAddress(
         mSelector: kAudioTapPropertyFormat,
         mScope: kAudioObjectPropertyScopeGlobal,
@@ -285,8 +287,6 @@
   // SAFETY: pump state is an atomic; the reusable buffer is only touched on the
   // pump queue; the session is touched on start/stop/cleanup.
   @safe final class CoreAudioSystemAudioBackend: RecordingCaptureBackend, @unchecked Sendable {
-    var sourceFormat: AVAudioFormat { session.sourceFormat }
-
     private let session: CoreAudioProcessTapSession
     private let sink: @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void
     private let reusableBuffer: AVAudioPCMBuffer
@@ -335,11 +335,22 @@
       }
     }
 
-    func stop() throws(RecordingError) {
+    @MainActor
+    func stop(mode: RecordingCaptureStopMode) {
       pumpRunning.store(false, ordering: .relaxed)
-      try session.stop()
+      switch mode {
+      case .graceful:
+        do {
+          try session.stop()
+        } catch {
+          log.error("system-audio stop failed: \(error, privacy: .public)")
+        }
+      case .immediate:
+        session.cleanup()
+      }
     }
 
+    @MainActor
     func cleanup() {
       pumpRunning.store(false, ordering: .relaxed)
       session.cleanup()

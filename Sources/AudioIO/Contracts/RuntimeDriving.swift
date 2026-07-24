@@ -18,25 +18,8 @@
   @MainActor
   public protocol AudioEnvironmentEventSubscribing: AnyObject, Sendable {
     @discardableResult
-    func addRouteChangeSubscriber(
-      _ handler: @escaping @Sendable @MainActor (AudioRouteChangeEvent) async -> Void,
-    ) -> UUID
-
-    @discardableResult
-    func addInterruptionSubscriber(
-      _ handler:
-        @escaping @Sendable @MainActor (AudioInterruptionType, AudioInterruptionOptions?)
-        async -> Void,
-    ) -> UUID
-
-    @discardableResult
-    func addMediaServicesLostSubscriber(
-      _ handler: @escaping @Sendable @MainActor () async -> Void,
-    ) -> UUID
-
-    @discardableResult
-    func addMediaServicesResetSubscriber(
-      _ handler: @escaping @Sendable @MainActor () async -> Void,
+    func addAudioSystemEventSubscriber(
+      _ handler: @escaping @Sendable @MainActor (AudioSystemEvent) async -> Void,
     ) -> UUID
 
     func removeSubscriber(_ id: UUID)
@@ -103,33 +86,15 @@
   }
 
   public protocol RecordingDriving: Sendable {
-    @MainActor var wantsRecording: Bool { get }
     @MainActor var isRecording: Bool { get }
     var events: AsyncBroadcaster<AudioIOEvent> { get }
 
-    /// Reconciliation-mode start primitive. See
-    /// ``AIOEngine/setDesiredRecordingState(_:configuration:)`` for semantics.
-    /// This fire-and-forget, retry-until-warm entry point complements the
-    /// canonical ``AIOEngine/startRecording(configuration:)``; it is useful for
-    /// brittle bring-up paths (notably system audio), so it is public.
+    /// Canonical awaited recording start. Transient readiness is reconciled by
+    /// the engine and every failure is returned as a typed throw.
     @MainActor
-    func setDesiredRecordingState(
-      _ desiredState: Bool,
-      configuration: RecordingConfiguration?,
-    )
-
-    /// Awaitable form of ``setDesiredRecordingState(_:configuration:)``. See
-    /// ``AIOEngine/startRecordingWithReconciliation(configuration:)``.
-    @MainActor
-    func startRecordingWithReconciliation(
+    func startRecording(
       configuration: RecordingConfiguration,
-    ) async -> Bool
-
-    /// The most recent failure observed by the reconciliation task while
-    /// trying to start recording. Cleared on read. Surfaces failures that
-    /// the fire-and-forget ``setDesiredRecordingState(_:configuration:)``
-    /// can't return directly.
-    @MainActor func consumeLastRecordingStartFailure() -> RecordingError?
+    ) async throws(RecordingError) -> URL
 
     @MainActor func stopRecording() async throws(RecordingError) -> URL
     @MainActor func rotateRecordingFile() async throws(RecordingError) -> URL
@@ -150,16 +115,6 @@
   }
 
   extension RecordingDriving {
-    @MainActor
-    public func setDesiredRecordingState(_ desiredState: Bool) {
-      setDesiredRecordingState(desiredState, configuration: nil)
-    }
-
-    @MainActor
-    public func consumeLastRecordingStartFailure() -> RecordingError? {
-      nil
-    }
-
     @MainActor
     public func recordingTimingSnapshot() -> RecordingTimingSnapshot? {
       nil

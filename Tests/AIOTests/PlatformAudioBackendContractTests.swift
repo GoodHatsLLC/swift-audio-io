@@ -147,9 +147,11 @@
       #expect(manager.isReady)
       #expect(manager.channelConfigurationAvailability == .fixed(.mono))
 
-      let refreshed = AsyncContinuation<Void>()
-      let subscriberID = manager.addRouteChangeSubscriber { _ in
-        try? refreshed.yield()
+      let refreshed = AsyncContinuation<AudioRouteChange>()
+      let subscriberID = manager.addAudioSystemEventSubscriber { event in
+        if case .routeChanged(let change) = event {
+          try? refreshed.yield(change)
+        }
       }
 
       state.updateInputs(
@@ -164,10 +166,12 @@
         ],
       )
       state.emitRouteChange()
-      await refreshed()
+      let change = await refreshed()
       manager.removeSubscriber(subscriberID)
 
       #expect(manager.availableInputs.count == 1)
+      #expect(change.previousRoute?.inputs.map(\.uid) == ["mic-a"])
+      #expect(change.currentRoute.inputs.map(\.uid) == ["mic-b"])
       // Still no explicit selection after the refresh: the manager keeps
       // following the system default instead of pinning the new device.
       #expect(manager.selectedInput == nil)
@@ -279,8 +283,10 @@
       manager: AudioEnvironmentManager,
     ) async {
       let refreshed = AsyncContinuation<Void>()
-      let subscriberID = manager.addRouteChangeSubscriber { _ in
-        try? refreshed.yield()
+      let subscriberID = manager.addAudioSystemEventSubscriber { event in
+        if case .routeChanged = event {
+          try? refreshed.yield()
+        }
       }
       state.emitRouteChange()
       await refreshed()

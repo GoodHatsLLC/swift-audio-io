@@ -103,13 +103,12 @@ chooses the IO buffer size.
 ## Startup retry
 
 Core Audio bring-up is more brittle than the microphone path, so the
-reconciliation start API is public and useful here. Use
-``AIOEngine/startRecordingWithReconciliation(configuration:)`` (awaitable) or
-``AIOEngine/setDesiredRecordingState(_:configuration:)`` (fire-and-forget) to
-retry transient *not-ready* startup failures until the engine warms or a
-non-transient error surfaces. Only a narrow set of HAL statuses is treated as
-transient; permission, unsupported-format, stale-object, and unknown failures
-are terminal. See <doc:ErrorHandling> for the error model.
+canonical ``AIOEngine/startRecording(configuration:)`` applies the same bounded
+readiness policy to system audio and microphone capture. It retries transient
+*not-ready* startup failures until capture begins or the engine's
+``AIOEngine/recordingStartTimeout`` expires. Only a narrow set of HAL statuses
+is treated as transient; permission, unsupported-format, stale-object, and
+unknown failures are terminal. See <doc:ErrorHandling> for the error model.
 
 ## Lifecycle and threading
 
@@ -138,11 +137,9 @@ thread, matching the guarantees described in <doc:ThreadingModel>.
 - ``SystemAudioProcess``
 - ``SystemAudioProcessObjectID``
 
-### Retry-capable start
+### Starting capture
 
-- ``AIOEngine/startRecordingWithReconciliation(configuration:)``
-- ``AIOEngine/setDesiredRecordingState(_:configuration:)``
-- ``AIOEngine/consumeLastRecordingStartFailure()``
+- ``AIOEngine/startRecording(configuration:)``
 
 ### Related
 

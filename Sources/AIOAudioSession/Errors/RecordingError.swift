@@ -24,6 +24,18 @@
     /// recording.
     case alreadyRecording
 
+    /// Another awaited recording start already owns this engine's startup seam.
+    case startInProgress
+
+    /// Recording readiness did not settle before the configured startup deadline.
+    ///
+    /// The last transient session failure is retained so callers can explain
+    /// what was still unsettled when the deadline expired.
+    case startTimedOut(timeout: Duration, lastFailure: SessionError?)
+
+    /// The caller cancelled the awaited recording start.
+    case cancelled
+
     /// A generic recording-engine failure — typically a "shouldn't happen"
     /// guard such as a weak-self deinit during reconfiguration.
     case engineError
@@ -78,6 +90,13 @@
         return "Not currently recording"
       case .alreadyRecording:
         return "Already recording"
+      case .startInProgress:
+        return "A recording start is already in progress"
+      case .startTimedOut(let timeout, let lastFailure):
+        let detail = lastFailure?.localizedDescription ?? "Recording readiness did not settle"
+        return "Recording start timed out after \(timeout.seconds) seconds. \(detail)"
+      case .cancelled:
+        return "Recording start was cancelled"
       case .engineError:
         return "Recording engine error"
       case .formatConversionFailed:

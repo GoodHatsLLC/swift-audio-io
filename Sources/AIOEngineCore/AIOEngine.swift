@@ -36,7 +36,6 @@
   ///
   /// - ``startRecording(configuration:)``
   /// - ``stopRecording()``
-  /// - ``warm(configuration:)``
   /// - ``isRecording``
   ///
   /// ### Playing Audio
@@ -60,20 +59,10 @@
   ///
   /// ### Managing Audio system events
   ///
-  /// - ``handleRouteChange(event:)``
-  /// - ``handleInterruption(type:options:)``
-  /// - ``handleMediaServicesLost()``
-  /// - ``handleMediaServicesReset()``
+  /// - ``handleAudioSystemEvent(_:)``
   ///
   @Observable
   public final class AIOEngine: Sendable {
-    public enum AudioSessionPolicy: Sendable {
-      /// `AIOEngine` configures and activates/deactivates `AVAudioSession` directly.
-      case engineManaged
-      /// A higher-level owner (e.g. `AudioEnvironmentManager`) handles activation state.
-      case delegated(setActive: @MainActor @Sendable (Bool) throws -> Void)
-    }
-
     /// An event representing a change in audio quality.
     public struct AudioQualityChange: Sendable {
       public init(
@@ -109,7 +98,7 @@
     /// An event representing a recording interruption.
     public enum RecordingInterruption: Sendable {
       /// The audio route changed, but recording is continuing.
-      case routeChangeContinuing(event: AudioRouteChangeEvent, qualityChange: AudioQualityChange?)
+      case routeChangeContinuing(event: AudioRouteChange, qualityChange: AudioQualityChange?)
       /// The recording was stopped gracefully.
       case stoppedGracefully(reason: String)
       /// The recording was stopped by an interruption (e.g., a phone call).
@@ -170,7 +159,7 @@
     //
     // ┌─────────────────────────────────────────────────────────────────┐
     // │                   MainActor (UI / State)                       │
-    // │  isRecording, playback, reconciliation, callbacks,             │
+    // │  isRecording, playback, lifecycle state, event publication,    │
     // │  AVAudioSession configuration, lifecycle coordination          │
     // └──────────────────┬──────────────────────┬──────────────────────┘
     //                    │                      │
@@ -229,7 +218,8 @@
     @ObservationIgnored package nonisolated(unsafe) var jogTimePitchNode: AVAudioUnitTimePitch?
     package let engineControlQueue = DispatchQueue(label: "AIOEngine.engine-control", qos: .default)
     package let recordingInfrastructure = RecordingInfrastructure()
-    @MainActor package var recordingRuntimeContext = RecordingRuntimeState()
+    @MainActor package let recordingLifecycleState: RecordingLifecycleState
+    @MainActor package let audioRecoveryState: AudioRecoveryState
     @MainActor package var playbackRuntimeContext = PlaybackRuntimeContext()
 
     package let playbackState: Synchronized<PlaybackRuntimeState> = .init(.init())
@@ -374,125 +364,29 @@
       recordingInfrastructure.state
     }
 
-    /// A Boolean value that indicates whether the engine is currently recording.
-    @MainActor public package(set) var isRecording: Bool = false
-
-    /// Indicates a recording bring-up is in flight: it is `true` from the
-    /// `startRecording` PREP hop until the PUBLISH hop (or a failure) completes.
-    ///
-    /// Bring-up was made non-atomic when recording-start moved off the main
-    /// actor: the start path now yields the main actor at each `await` while
-    /// `wantsRecording == true` and `isRecording == false`. During that window a
-    /// `@MainActor` teardown handler (`handleInterruption(.began)`,
-    /// `handleRouteChange`, `handleMediaServicesLost`,
-    /// `handleUnrecoverableInterruption`) or a stop path
-    /// (`setDesiredRecordingState(false)`/`stopRecording`) could interleave and
-    /// either tear down the half-built engine concurrently with `performWarm`
-    /// (orphaning a running engine / IOProc, or double-teardown) or be silently
-    /// dropped (a stop issued mid-bring-up is a no-op because `isRecording` is
-    /// still `false`).
-    ///
-    /// Semantics of the guard:
-    /// - Teardown handlers and stop paths that observe `isStartingRecording ==
-    ///   true` MUST NOT tear down inline. They record the abort by setting
-    ///   `startAbortRequested = true` (and still emit any required user-facing
-    ///   interruption event), then return early — deferring the actual
-    ///   `gracefulStop()`.
-    /// - At the end of the PUBLISH hop (after `isRecording = true`), the start
-    ///   path reconciles: if `startAbortRequested == true`, it immediately
-    ///   `gracefulStop()`s the freshly-started engine so it never stays running
-    ///   behind the framework's back, emitting `recordingFailed` only when the
-    ///   abort came from an interruption (not a user stop).
-    @MainActor package var isStartingRecording: Bool = false
-
-    /// Set by a teardown handler or stop path that aborts an in-flight bring-up
-    /// while `isStartingRecording == true`. The PUBLISH-hop reconcile honours an
-    /// abort only when this is `true` — deliberately NOT when
-    /// `wantsRecording == false`, because the direct `startRecording(configuration:)`
-    /// API legitimately runs with `wantsRecording == false` and must not be
-    /// mistaken for an abort. Reset at the start of each bring-up (PREP hop).
-    @MainActor package var startAbortRequested: Bool = false
-
-    /// Set by a teardown handler (interruption / route-change / media-services
-    /// loss) that aborts an in-flight bring-up via `isStartingRecording`. Tells
-    /// the PUBLISH-hop reconcile to emit `recordingFailed` after the deferred
-    /// `gracefulStop()`. A plain user stop leaves this `false`, so no failure
-    /// event is emitted for a user-requested stop. Reset at the start of each
-    /// bring-up (PREP hop).
-    @MainActor package var startAbortRequiresFailureEvent: Bool = false
-
-    /// The user's desired recording state.
-    @MainActor public package(set) var wantsRecording: Bool = false
-
-    /// Configuration for state reconciliation attempts.
-    @MainActor public var reconciliationConfiguration: ReconciliationConfiguration {
-      get { recordingRuntimeContext.reconciliationConfiguration }
-      set { recordingRuntimeContext.reconciliationConfiguration = newValue }
+    /// A Boolean value that indicates whether the recording lifecycle has
+    /// published an active capture.
+    @MainActor public package(set) var isRecording: Bool {
+      get { recordingLifecycleState.isRecording }
+      set { recordingLifecycleState.isRecording = newValue }
     }
+
+    /// The immutable authority for shared platform audio-session activation.
+    ///
+    /// When `nil`, the engine manages the platform session directly.
+    public let audioSessionAuthority: (any AudioSessionAuthority)?
+
+    /// Maximum wall-clock time allowed for transient recording readiness to settle.
+    public let recordingStartTimeout: Duration
 
     /// Preferred audio session category/mode/options for this engine.
     @MainActor public var recordingSessionConfiguration: AudioSessionConfiguration {
-      get { recordingRuntimeContext.recordingSessionConfiguration }
-      set { recordingRuntimeContext.recordingSessionConfiguration = newValue }
+      get { recordingLifecycleState.recordingSessionConfiguration }
+      set { recordingLifecycleState.recordingSessionConfiguration = newValue }
     }
-    /// Policy controlling whether the engine mutates `AVAudioSession` directly
-    /// or delegates activation to a higher-level session authority.
-    @MainActor public var audioSessionDelegate: (any AudioSessionDelegate)?
     @MainActor public var sessionConfiguration: AudioSessionConfiguration {
       get { recordingSessionConfiguration }
       set { recordingSessionConfiguration = newValue }
-    }
-
-    /// Backend used for audio file writing.
-    @MainActor package var writerBackend: WriterBackend {
-      get { recordingRuntimeContext.writerBackend }
-      set { recordingRuntimeContext.writerBackend = newValue }
-    }
-    /// Whether the engine should deactivate the audio session when it becomes idle.
-    ///
-    /// Leave this `false` when a higher-level manager owns session lifecycle.
-    @MainActor public var deactivateAudioSessionOnStop: Bool {
-      get { recordingRuntimeContext.deactivateAudioSessionOnStop }
-      set { recordingRuntimeContext.deactivateAudioSessionOnStop = newValue }
-    }
-
-    @MainActor package var lastRecordingConfiguration: RecordingConfiguration? {
-      get { recordingRuntimeContext.lastRecordingConfiguration }
-      set { recordingRuntimeContext.lastRecordingConfiguration = newValue }
-    }
-
-    @MainActor package var pendingRecordingRestart: RecordingConfiguration? {
-      get { recordingRuntimeContext.pendingRecordingRestart }
-      set { recordingRuntimeContext.pendingRecordingRestart = newValue }
-    }
-
-    @MainActor package var pendingPlaybackResume: PlaybackResume? {
-      get { playbackRuntimeContext.pendingPlaybackResume }
-      set { playbackRuntimeContext.pendingPlaybackResume = newValue }
-    }
-
-    @MainActor package var receiverSession: ReceiverSession? {
-      get { recordingRuntimeContext.receiverSession }
-      set { recordingRuntimeContext.receiverSession = newValue }
-    }
-
-    @MainActor package var reconciliationTask: MainActorOwnedWork? {
-      get { recordingRuntimeContext.reconciliationTask }
-      set {
-        recordingRuntimeContext.reconciliationTask?.cancelNow()
-        recordingRuntimeContext.reconciliationTask = newValue
-      }
-    }
-
-    /// In-flight async tap-interval reconfigure scheduled by the (sync)
-    /// `updateRecordingTapInterval`. Setting a new value (or `nil`) cancels the
-    /// previous one, so a stop/teardown cancels a pending reinstall.
-    @MainActor package var tapIntervalReconfigureTask: MainActorOwnedWork? {
-      get { recordingRuntimeContext.tapIntervalReconfigureTask }
-      set {
-        recordingRuntimeContext.tapIntervalReconfigureTask?.cancelNow()
-        recordingRuntimeContext.tapIntervalReconfigureTask = newValue
-      }
     }
 
     /// The current playback state, or `nil` if no audio is playing.
@@ -527,26 +421,6 @@
       playback?.isPlaying == true
     }
 
-    @MainActor package var writerSession: WriterSession? {
-      get { recordingRuntimeContext.writerSession }
-      set { recordingRuntimeContext.writerSession = newValue }
-    }
-
-    @MainActor package var drainingWriterSessions: [WriterSession] {
-      get { recordingRuntimeContext.drainingWriterSessions }
-      set { recordingRuntimeContext.drainingWriterSessions = newValue }
-    }
-
-    @MainActor package var lastWriteFailure: WriteFailure? {
-      get { recordingRuntimeContext.lastWriteFailure }
-      set { recordingRuntimeContext.lastWriteFailure = newValue }
-    }
-
-    @MainActor package var lastRecordingStartFailure: RecordingError? {
-      get { recordingRuntimeContext.lastRecordingStartFailure as? RecordingError }
-      set { recordingRuntimeContext.lastRecordingStartFailure = newValue }
-    }
-
     #if DEBUG
       /// Test hook: when set, `reinstallTap()` calls this instead of touching AVAudioEngine.
       @MainActor package var testReinstallTapOverride:
@@ -559,11 +433,10 @@
       /// and `hardStop()`) invoke this in place of the real `AVAudioEngine` graph
       /// teardown (tap removal + `engine.stop()`/`reset()`), which crashes the iOS
       /// Simulator audio HAL (`AURemoteIO -10851`). Everything else — writer drain,
-      /// cleanup, and the `isRecording`/`wantsRecording` transitions — still runs, so
+      /// cleanup and the `isRecording` transition still run, so
       /// interruption, resume, and stop logic stays under test without a real audio
       /// device.
-      @MainActor package var testEngineTeardownOverride:
-        (@MainActor () -> Void)?
+      @MainActor package var testEngineTeardownOverride: (@MainActor () -> Void)?
     #endif
 
     @MainActor package var playbackTask: MainActorOwnedWork? {
@@ -611,34 +484,30 @@
     /// Subscribe via `for await event in engine.events { ... }` and
     /// pattern-match on the case. The stream is the canonical surface for
     /// engine notifications — engine-level errors, recording lifecycle
-    /// (started / completed / failed / interrupted /
-    /// reconciliation-failed), and playback lifecycle (state changes and
-    /// per-tick updates). See ``AudioIOEvent`` for the full case list.
+    /// (started / completed / failed / interrupted), and playback lifecycle
+    /// (state changes and per-tick updates). See ``AudioIOEvent`` for the full
+    /// case list.
     public var events: AsyncBroadcaster<AudioIOEvent> {
       eventSubject.broadcaster
     }
 
-    /// Returns the most recent failure encountered while starting recording and clears it.
-    @MainActor
-    public func consumeLastRecordingStartFailure() -> RecordingError? {
-      defer { lastRecordingStartFailure = nil }
-      return lastRecordingStartFailure
-    }
-
     // MARK: - Initialization
 
-    /// Creates a new instance of the audio engine.
-    public init() {
-      runOnEngineControlQueue { [engine = unsafe engine, player = unsafe player] in
-        engine.attach(player)
-      }
-    }
-
-    /// Creates a new instance of the audio engine with custom reconciliation configuration.
+    /// Creates a new audio engine.
     ///
-    /// - Parameter reconciliationConfiguration: Configuration for state reconciliation.
-    @MainActor public init(reconciliationConfiguration: ReconciliationConfiguration) {
-      self.reconciliationConfiguration = reconciliationConfiguration
+    /// - Parameters:
+    ///   - audioSessionAuthority: An immutable owner for shared platform
+    ///     audio-session activation. Pass `nil` for engine-managed lifecycle.
+    ///   - recordingStartTimeout: Maximum time transient recording readiness may
+    ///     take to settle. Defaults to two seconds.
+    public init(
+      audioSessionAuthority: (any AudioSessionAuthority)? = nil,
+      recordingStartTimeout: Duration = .seconds(2),
+    ) {
+      self.audioSessionAuthority = audioSessionAuthority
+      self.recordingStartTimeout = max(.zero, recordingStartTimeout)
+      recordingLifecycleState = RecordingLifecycleState()
+      audioRecoveryState = AudioRecoveryState()
       runOnEngineControlQueue { [engine = unsafe engine, player = unsafe player] in
         engine.attach(player)
       }

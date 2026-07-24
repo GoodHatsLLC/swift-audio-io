@@ -163,7 +163,7 @@
     /// The actual event handlers run on `@MainActor` because
     /// `AudioEnvironmentManager.subscribe()` consumes these streams via `for await` inside
     /// tasks that inherit MainActor isolation. Handlers passed to `AIOEngine`
-    /// (`handleRouteChange`, `handleInterruption`, etc.) are also `@MainActor`.
+    /// (`handleAudioSystemEvent(_:)`) are also `@MainActor`.
     public struct Notifications: Sendable {
       /// Creates a new `Notifications` instance.
       ///

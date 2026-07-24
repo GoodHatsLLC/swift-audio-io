@@ -73,24 +73,16 @@ private enum RouteClassification: Sendable, Equatable {
   case other
 }
 
-extension AudioRouteChangeEvent {
+extension AudioRouteChange {
   fileprivate var micHealthClassification: RouteClassification {
-    #if os(iOS)
-      switch reason {
-      case .oldDeviceUnavailable:
-        return .lost(deviceName: previousRoute?.inputs.first?.name)
-      case .newDeviceAvailable:
-        return .gained
-      default:
-        return .other
-      }
-    #else
-      // macOS's `AudioRouteChangeEvent` has no reason discriminator; we
-      // classify every event as "other" and let the feature effectively
-      // no-op on macOS. Tests still validate the iOS code path because
-      // the iOS route event type is imported unconditionally on iOS.
-      return .other
-    #endif
+    switch reason {
+    case .deviceDisconnected:
+      .lost(deviceName: previousRoute?.inputs.first?.name)
+    case .deviceConnected:
+      .gained
+    default:
+      .other
+    }
   }
 }
 
@@ -111,7 +103,7 @@ public actor MicHealthMonitor {
   // Constructor-injected.
   private let thresholds: MicHealthThresholds
   private let rms: AsyncSignalStream<Float>
-  private let routeEvents: AsyncSignalStream<AudioRouteChangeEvent>
+  private let routeEvents: AsyncSignalStream<AudioRouteChange>
   private let clockAdapter: MicHealthClockAdapter
   /// Absolute seconds at monitor construction time. All event timestamps are
   /// relative to this anchor so route-loss events that arrive before the first
@@ -174,7 +166,7 @@ public actor MicHealthMonitor {
     handleRMS(linearRMS)
   }
 
-  internal func recordRouteForTesting(_ event: AudioRouteChangeEvent) {
+  internal func recordRouteForTesting(_ event: AudioRouteChange) {
     handleRoute(event)
   }
 
@@ -303,7 +295,7 @@ public actor MicHealthMonitor {
 
   // MARK: - Route path
 
-  private func handleRoute(_ event: AudioRouteChangeEvent) {
+  private func handleRoute(_ event: AudioRouteChange) {
     switch event.micHealthClassification {
     case .lost(let deviceName):
       handleRouteLost(deviceName: deviceName)

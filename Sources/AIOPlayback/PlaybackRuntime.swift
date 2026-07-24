@@ -67,8 +67,10 @@
         let decodeFrameCount = min(Int(requestedFrames), maximumFrames)
         let centerFrame = AVAudioFramePosition(request.cursorFrame.rounded())
         var baseFrame = centerFrame - AVAudioFramePosition(decodeFrameCount / 2)
-        baseFrame = max(requestedLower, min(baseFrame, requestedUpper - AVAudioFramePosition(decodeFrameCount)))
-        let framesToRead = AVAudioFrameCount(max(1, min(decodeFrameCount, Int(requestedUpper - baseFrame))))
+        baseFrame = max(
+          requestedLower, min(baseFrame, requestedUpper - AVAudioFramePosition(decodeFrameCount)))
+        let framesToRead = AVAudioFrameCount(
+          max(1, min(decodeFrameCount, Int(requestedUpper - baseFrame))))
 
         guard
           let buffer = AVAudioPCMBuffer(
@@ -463,12 +465,14 @@
         while !Task.isCancelled {
           try? await pollingPolicy.waitForNextPoll()
           if Task.isCancelled { return }
-          guard let snapshot = owner.playbackState.withLock({ state -> PlaybackJogSnapshot? in
-            guard let jogInstance = state.playbackJogInstance, jogInstance.id == instanceID else {
-              return nil
-            }
-            return jogInstance.snapshot()
-          }) else {
+          guard
+            let snapshot = owner.playbackState.withLock({ state -> PlaybackJogSnapshot? in
+              guard let jogInstance = state.playbackJogInstance, jogInstance.id == instanceID else {
+                return nil
+              }
+              return jogInstance.snapshot()
+            })
+          else {
             return
           }
           owner.setPlaybackJog(snapshot)
@@ -478,21 +482,25 @@
 
     @MainActor
     func preparePlaybackJog(instanceID: UUID) async {
-      guard let request = owner.playbackState.withLock({ state -> PlaybackJogDecodeRequest? in
-        guard let jogInstance = state.playbackJogInstance, jogInstance.id == instanceID else {
-          return nil
-        }
-        return jogInstance.decodeRequest
-      }) else {
+      guard
+        let request = owner.playbackState.withLock({ state -> PlaybackJogDecodeRequest? in
+          guard let jogInstance = state.playbackJogInstance, jogInstance.id == instanceID else {
+            return nil
+          }
+          return jogInstance.decodeRequest
+        })
+      else {
         return
       }
 
       do {
         let prepared = try await decodePlaybackJogPCM(request: request)
-        guard let format = AVAudioFormat(
-          standardFormatWithSampleRate: prepared.sampleRate,
-          channels: AVAudioChannelCount(prepared.channelCount),
-        ) else {
+        guard
+          let format = AVAudioFormat(
+            standardFormatWithSampleRate: prepared.sampleRate,
+            channels: AVAudioChannelCount(prepared.channelCount),
+          )
+        else {
           throw PlaybackError.fileReadFailed(
             url: request.fileURL,
             error: ErrorContext(MissingAudioFileError(url: request.fileURL)),
@@ -525,7 +533,8 @@
         let startResult = await owner.withEngineControlQueueResult { [weak owner] in
           guard let owner else { return }
           PlaybackRuntime(owner: owner).detachPlaybackJogNode()
-          let sourceNode = unsafe AVAudioSourceNode(format: format) { _, _, frameCount, outputData in
+          let sourceNode = unsafe AVAudioSourceNode(format: format) {
+            _, _, frameCount, outputData in
             unsafe renderState.render(frameCount: frameCount, outputData: outputData)
           }
           let timePitchNode = AVAudioUnitTimePitch()
@@ -551,7 +560,8 @@
         }
         if case .failure(let error) = startResult {
           owner.eventSubject.send(
-            AudioIOEvent.error(PlaybackError.session(.engineStartFailed(error: ErrorContext(error)))),
+            AudioIOEvent.error(
+              PlaybackError.session(.engineStartFailed(error: ErrorContext(error)))),
           )
         }
 
@@ -567,7 +577,8 @@
         owner.eventSubject.send(AudioIOEvent.error(error))
       } catch {
         owner.eventSubject.send(
-          AudioIOEvent.error(PlaybackError.fileReadFailed(url: request.fileURL, error: ErrorContext(error))),
+          AudioIOEvent.error(
+            PlaybackError.fileReadFailed(url: request.fileURL, error: ErrorContext(error))),
         )
       }
     }
@@ -882,8 +893,9 @@
         }
       } catch {
         log.error(
-          "Failed to resume playback after media services reset: \(error, privacy: .public)",
+          "Failed to resume playback after audio-system recovery: \(error, privacy: .public)",
         )
+        owner.eventSubject.send(.error(error))
       }
     }
   }

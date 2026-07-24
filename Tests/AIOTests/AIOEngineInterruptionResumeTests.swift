@@ -13,7 +13,7 @@
   /// Exercises the audio-session interruption **resume decision** for recording in
   /// isolation from the real audio engine.
   ///
-  /// `handleInterruption(.began)` routes through `gracefulStop()`, whose real
+  /// `.interruptionBegan` routes through graceful stop, whose real
   /// `AVAudioEngine` teardown crashes the iOS Simulator audio HAL. The
   /// `debugBypassEngineTeardownForTesting()` seam replaces only that teardown, so
   /// the staging/`.shouldResume`-gating logic runs end-to-end headlessly. These
@@ -25,40 +25,39 @@
     func `interruption resumes recording when shouldResume is set`() async throws {
       let engine = AIOEngine()
       engine.debugBypassEngineTeardownForTesting()
+      let readiness = CountingRecordingStartReadiness()
+      engine.setRecordingStartReadinessForTesting(readiness)
 
-      let url = try await engine.startTestRecording(configuration: makeConfiguration())
+      let url = try engine.startTestRecording(configuration: makeConfiguration())
       defer { try? FileManager.default.removeItem(at: url) }
 
       // `.began` tears down recording but stages the configuration for resume.
-      await engine.handleInterruption(type: .began, options: nil)
+      await engine.handleAudioSystemEvent(.interruptionBegan)
       #expect(engine.isRecording == false)
-      #expect(engine.wantsRecording == false)
 
-      // `.ended` with `.shouldResume` re-arms the desired-recording state via the
-      // same reconciliation path media-services recovery uses.
-      await engine.handleInterruption(type: .ended, options: [.shouldResume])
-      #expect(engine.wantsRecording == true)
-
-      // Halt the resume reconciliation so it does not drive the real engine.
-      engine.setDesiredRecordingState(false, configuration: nil)
+      // `.ended` with `.shouldResume` re-enters the canonical awaited start path.
+      await engine.handleAudioSystemEvent(.interruptionEnded(shouldResume: true))
+      #expect(await readiness.attemptCount() == 1)
     }
 
     @Test
     func `interruption does not resume recording without shouldResume`() async throws {
       let engine = AIOEngine()
       engine.debugBypassEngineTeardownForTesting()
+      let readiness = CountingRecordingStartReadiness()
+      engine.setRecordingStartReadinessForTesting(readiness)
 
-      let url = try await engine.startTestRecording(configuration: makeConfiguration())
+      let url = try engine.startTestRecording(configuration: makeConfiguration())
       defer { try? FileManager.default.removeItem(at: url) }
 
-      await engine.handleInterruption(type: .began, options: nil)
+      await engine.handleAudioSystemEvent(.interruptionBegan)
       #expect(engine.isRecording == false)
 
       // `.ended` without `.shouldResume` (cases the system deems unsafe to resume,
       // e.g. some Siri/route-loss endings) must leave recording stopped.
-      await engine.handleInterruption(type: .ended, options: [])
-      #expect(engine.wantsRecording == false)
+      await engine.handleAudioSystemEvent(.interruptionEnded(shouldResume: false))
       #expect(engine.isRecording == false)
+      #expect(await readiness.attemptCount() == 0)
     }
 
     private func makeConfiguration() -> RecordingConfiguration {
@@ -76,6 +75,22 @@
         outputConfiguration: output,
         outputDestination: .temporary,
       )
+    }
+  }
+
+  private actor CountingRecordingStartReadiness: RecordingStartReadiness {
+    private var count = 0
+
+    func attempt(
+      configuration _: RecordingConfiguration,
+    ) async throws(RecordingError) -> URL {
+      count += 1
+      return FileManager.default.temporaryDirectory
+        .appendingPathComponent("interruption-resume-\(UUID().uuidString).caf")
+    }
+
+    func attemptCount() -> Int {
+      count
     }
   }
 #endif

@@ -6,7 +6,7 @@
   @testable import AIOAudioSession
   @_spi(TESTING) @testable import AudioIO
 
-  struct SystemAudioWarmTests {
+  struct SystemAudioStartTests {
     // The mono/stereo constraint is enforced before any HAL object is created, so
     // this is deterministic without system-audio permission. (The happy-path tap
     // lifecycle requires NSAudioCaptureUsageDescription + TCC and is validated
@@ -29,7 +29,7 @@
       )
 
       do {
-        try await engine.warm(configuration: configuration)
+        _ = try await engine.startRecording(configuration: configuration)
         Issue.record("expected unsupportedChannelCount")
       } catch RecordingError.unsupportedChannelCount(let requested, let maximum) {
         #expect(requested == 6)

@@ -46,12 +46,12 @@
 
     /// Reinstalls the audio input tap on the engine.
     ///
-    /// This is the single method used by `warm()`, route change handling,
+    /// This is the single method used by recording bring-up, route change handling,
     /// and tap interval updates. All engine graph mutations happen on the
     /// engine control queue in a single dispatch.
     #if DEBUG
       /// Resolves the `@MainActor` test tap-install override (if any) on the main
-      /// actor, returning its transferable result so the nonisolated warm path can
+      /// actor, returning its transferable result so off-main graph preparation can
       /// honour the seam without invoking a `@MainActor` closure off-main.
       @MainActor
       func resolveReinstallTapOverrideResult(
@@ -72,7 +72,7 @@
     /// Builds the `overrideResult` argument for ``reinstallTap`` from the
     /// `@MainActor` test seam. Returns `nil` in release builds (the seam only
     /// exists under `#if DEBUG`). Every `@MainActor` caller of ``reinstallTap``
-    /// (warm path, both route-change handlers, and tap-interval changes) routes
+    /// (startup, both route-change handlers, and tap-interval changes) routes
     /// through this single helper so none of them bypass the seam.
     @MainActor
     package func reinstallTapOverrideResult(
@@ -91,8 +91,8 @@
 
     /// Reinstalls the input tap **synchronously** on the engine-control queue.
     ///
-    /// Used by the off-main `performWarm` (and the public, intentionally-sync
-    /// `warm()`), where the caller is already off the main thread or has opted
+    /// Used by the off-main `prepareRecordingGraph`, where the caller is already off the
+    /// main thread and has opted
     /// into a blocking call. `@MainActor` lifecycle handlers must use the async
     /// ``reinstallTapAsync(configuration:processingFormat:stopEngine:overrideResult:)``
     /// instead so they never block the main thread.
@@ -275,7 +275,7 @@
         bufferSize: tapConfig.bufferSize,
         format: inputFormat,
         block: { @Sendable [self] buffer, time in
-          self.processAudio(
+          RecordingLifecycle(owner: self).capture.processAudio(
             buffer: buffer,
             time: time,
             to: processingFormat,
@@ -328,7 +328,7 @@
     /// Applies tap install results to engine state.
     ///
     /// Thread Domain: engineControl (called from `reinstallTap` on the engine
-    /// control queue, or from `warm()` on MainActor after the queue dispatch).
+    /// control queue, or from recording bring-up after the queue dispatch).
     package func applyTapInstallResult(_ result: TapInstallResult, processingFormat: AVAudioFormat)
     {
       let wrapped = state { state -> Transferring<TapSnapshot> in

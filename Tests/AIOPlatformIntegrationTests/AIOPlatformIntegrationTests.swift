@@ -34,13 +34,39 @@
       defer { engine.debugClearTapReinstallOverrideForTesting() }
 
       let session = AVAudioSession.sharedInstance()
-      let event = AudioRouteChangeEvent(
-        reason: .routeConfigurationChange,
+      let event = AudioRouteChange(
+        reason: .configurationChanged,
         previousRoute: nil,
-        session: session,
+        currentRoute: AudioRouteSnapshot(
+          inputs: session.currentRoute.inputs.map {
+            AudioPortSnapshot(
+              name: $0.portName,
+              uid: $0.uid,
+              type: $0.portType.rawValue,
+              channelCount: $0.channels?.count ?? 0,
+            )
+          },
+          outputs: session.currentRoute.outputs.map {
+            AudioPortSnapshot(
+              name: $0.portName,
+              uid: $0.uid,
+              type: $0.portType.rawValue,
+              channelCount: $0.channels?.count ?? 0,
+            )
+          },
+        ),
+        session: AudioSessionSnapshot(
+          category: session.category.rawValue,
+          mode: session.mode.rawValue,
+          options: [],
+          sampleRate: session.sampleRate,
+          ioBufferDuration: session.ioBufferDuration,
+          inputNumberOfChannels: session.inputNumberOfChannels,
+          isInputAvailable: session.isInputAvailable,
+        ),
       )
 
-      await engine.handleRouteChange(event: event)
+      await engine.handleAudioSystemEvent(.routeChanged(event))
 
       if session.isInputAvailable {
         let captured = await waitUntil(timeout: .seconds(2)) {
@@ -87,7 +113,7 @@
       defer { try? FileManager.default.removeItem(at: url) }
 
       engine.injectTestAudio(channels: [samples(channelCount: 1, frames: 1_024)[0]])
-      await engine.handleInterruption(type: .began, options: nil)
+      await engine.handleAudioSystemEvent(.interruptionBegan)
 
       let stopped = await waitUntil(timeout: .seconds(2)) {
         engine.isRecording == false && probe.snapshot().failureCount == 1
@@ -131,6 +157,28 @@
       let expectedUpperBound = Double(fixture.frames(seconds: 1) - 1) / fixture.sampleRate
       #expect(abs((nearEnd.time ?? -1) - expectedUpperBound) < 0.001)
       #expect(abs(nearEnd.duration - 1) < 0.001)
+
+      await engine.stopPlayback()
+    }
+
+    @Test
+    func audioSystemInterruptionResumesPlaybackThroughPublicHandler() async throws {
+      let fixture = try AudioFixture(duration: 3, sampleRate: 48_000)
+      defer { fixture.cleanup() }
+      let engine = AIOEngine()
+
+      _ = try await engine.play(
+        url: fixture.url,
+        playbackPollingInterval: .seconds(60),
+      )
+      #expect(engine.isPlayback)
+
+      await engine.handleAudioSystemEvent(.interruptionBegan)
+      #expect(engine.isPlayback == false)
+
+      await engine.handleAudioSystemEvent(.interruptionEnded(shouldResume: true))
+      #expect(engine.isPlayback)
+      #expect(engine.playback?.file == fixture.url)
 
       await engine.stopPlayback()
     }

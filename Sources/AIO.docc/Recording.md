@@ -50,19 +50,19 @@ let url = try await engine.startRecording(configuration: configuration)
 let savedURL = try await engine.stopRecording()
 ```
 
-``AIOEngine/startRecording(configuration:)`` returns the destination URL as soon as the engine produces output. ``AIOEngine/stopRecording()`` returns the final saved URL.
-
-### Fire-and-forget reconciliation
-
-For fire-and-forget semantics with background retry on transient startup failures (notably Core Audio system-audio bring-up), use the reconciliation entry points:
+``AIOEngine/startRecording(configuration:)`` returns the destination URL once
+the engine is producing output. It performs bounded retry for transient
+audio-session and capture-source readiness failures. The deadline defaults to
+two seconds and can be configured when creating the engine:
 
 ```swift
-import AudioIO
-
-engine.setDesiredRecordingState(true, configuration: configuration)
+let engine = AIOEngine(recordingStartTimeout: .seconds(5))
 ```
 
-These complement the canonical ``AIOEngine/startRecording(configuration:)``: they keep retrying while the desired state stays `true` until the engine warms, the timeout elapses, or a non-transient ``RecordingError`` surfaces. Read ``AIOEngine/consumeLastRecordingStartFailure()`` to recover the failure behind a fire-and-forget start. See ``AIOEngine/setDesiredRecordingState(_:configuration:)`` and ``AIOEngine/startRecordingWithReconciliation(configuration:)``.
+Cancel the task awaiting `startRecording` to withdraw startup intent. A second
+start while one is pending throws ``RecordingError/startInProgress``; a start
+while capture is active throws ``RecordingError/alreadyRecording``.
+``AIOEngine/stopRecording()`` returns the final saved URL.
 
 ## Segmented recording
 
@@ -111,9 +111,6 @@ See <doc:Events> for the full subscription pattern.
 - ``AIOEngine/startRecording(configuration:)``
 - ``AIOEngine/stopRecording()``
 - ``AIOEngine/rotateRecordingFile()``
-- ``AIOEngine/startRecordingWithReconciliation(configuration:)``
-- ``AIOEngine/setDesiredRecordingState(_:configuration:)``
-- ``AIOEngine/consumeLastRecordingStartFailure()``
 - ``AIOEngine/isRecording``
 
 ### Errors

@@ -48,12 +48,12 @@
               )
             }
 
-            let event = AudioRouteChangeEvent(
-              reason: notification.reason,
+            let event = AudioRouteChange(
+              platformReason: notification.reason,
               previousRoute: notification.previous,
               session: env.session,
             )
-            await owner.dispatchRouteChange(event)
+            await owner.dispatchAudioSystemEvent(.routeChanged(event))
           }
         }
       }

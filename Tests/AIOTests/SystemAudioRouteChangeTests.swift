@@ -29,7 +29,7 @@
       engine.state.withLock { $0.recordingConfiguration = configuration }
       engine.isRecording = true
 
-      // `handleRouteChange` resolves this seam before dispatching a reinstall,
+      // Audio-system recovery resolves this seam before dispatching a reinstall,
       // so an invocation means the system-audio guard was bypassed.
       var reinstallRequested = false
       engine.testReinstallTapOverride = { (_, _) throws(RecordingError) in
@@ -37,7 +37,12 @@
         throw RecordingError.engineError
       }
 
-      await engine.handleRouteChange(event: AudioRouteChangeEvent(userMessage: "test"))
+      let change = AudioRouteChange(
+        reason: .configurationChanged,
+        previousRoute: nil,
+        currentRoute: AudioRouteSnapshot(inputs: [], outputs: []),
+      )
+      await engine.handleAudioSystemEvent(.routeChanged(change))
 
       #expect(reinstallRequested == false)
       #expect(engine.isRecording == true)

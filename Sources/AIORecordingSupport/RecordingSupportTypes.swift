@@ -7,6 +7,7 @@
   package import AVFoundation
   package import Dispatch
   package import Foundation
+  import Observation
   package import Tools
 
   package enum WriterBackend: Equatable {
@@ -238,36 +239,39 @@
     package let sourceSampleRate: Double?
   }
 
-  /// Internal capture-source boundary. The common recording machinery (output
-  /// URL/writer, ring buffers, receiver timing, event emission, state) is shared;
-  /// each backend owns only how samples are produced and torn down. The
-  /// microphone path is the legacy `AVAudioEngine` tap and runs without a backend
-  /// object (`RecordingState.activeBackend == nil`); system audio sets an
-  /// `activeBackend` that the lifecycle methods dispatch to.
-  package protocol RecordingCaptureBackend: Sendable {
-    /// The native capture format of this source. Common code builds the
-    /// `sourceFormat -> processingFormat` converter from this.
-    var sourceFormat: AVAudioFormat { get }
+  /// How an active capture source should stop producing samples.
+  package enum RecordingCaptureStopMode: Sendable {
+    /// Stop delivery while allowing the shared writer pipeline to drain.
+    case graceful
+    /// Abort delivery and release source resources immediately.
+    case immediate
+  }
 
+  /// Internal capture-source lifecycle boundary. The common recording machinery
+  /// (output URL/writer, ring buffers, receiver timing, event emission, state)
+  /// is shared; every prepared source owns start/stop/cleanup behind this
+  /// contract.
+  package protocol RecordingCaptureBackend: Sendable {
     /// Begin delivering buffers into the shared pipeline.
     func start() throws(RecordingError)
 
-    /// Stop delivering buffers (halt delivery; long-lived teardown happens in
-    /// `cleanup()`).
-    func stop() throws(RecordingError)
+    /// Stop delivering buffers according to the caller's lifecycle intent.
+    @MainActor func stop(mode: RecordingCaptureStopMode)
 
-    /// Best-effort, non-throwing, idempotent teardown of all owned resources,
-    /// safe after a partial `start()`.
-    func cleanup()
+    /// Finalize resources that remain after `stop(mode:)`. The operation is
+    /// best-effort, non-throwing, and idempotent.
+    @MainActor func cleanup()
   }
 
   package struct RecordingState {
     package var recordingWriter: (any RecordingFileWriter)?
-    /// The active non-microphone capture backend, or `nil` for the microphone
-    /// (legacy `AVAudioEngine` tap) path. Set after a successful warm/start and
-    /// cleared by `cleanUp()`.
-    package var activeBackend: (any RecordingCaptureBackend)?
+    /// The prepared capture source, or `nil` while no source is staged. Both
+    /// microphone and system-audio capture use this lifecycle boundary.
+    package var captureBackend: (any RecordingCaptureBackend)?
     package var recordingURL: URL?
+    /// Whether the current output path did not exist before this start attempt
+    /// opened it. Failed/cancelled startup removes only such newly-created files.
+    package var recordingOutputWasCreatedByStart = false
     package var recordingConfiguration: RecordingConfiguration?
     package var installedTapBus: Int?
     package var audioBuffers: [SPSCRingBuffer<Float>]?
@@ -401,27 +405,40 @@
     package typealias OutputFileProtection = Never
   #endif
 
-  package struct RecordingRuntimeState {
-    package var reconciliationConfiguration: ReconciliationConfiguration = .default
+  /// Main-actor state owned by the recording lifecycle.
+  ///
+  /// `isRecording` is observable through `AIOEngine.isRecording`; the remaining
+  /// fields are lifecycle implementation state shared by its concrete helpers.
+  @Observable
+  @MainActor
+  package final class RecordingLifecycleState {
+    package var isRecording = false
+    package var isStartingRecording = false
+    package var startAbortRequested = false
+    package var startOperationID: UUID?
     package var recordingSessionConfiguration: AudioSessionConfiguration = .recordingConfiguration
     package var writerBackend: WriterBackend = .extAudioFile
-    package var deactivateAudioSessionOnStop = false
     package var lastRecordingConfiguration: RecordingConfiguration?
-    package var pendingRecordingRestart: RecordingConfiguration?
     package var receiverSession: ReceiverSession?
-    package var reconciliationTask: MainActorOwnedWork?
     /// In-flight async tap-interval reconfigure scheduled by
     /// `updateRecordingTapInterval` (kept sync). Stored so a stop/teardown can
     /// cancel a pending reinstall rather than letting it run against a torn-down
     /// graph; the on-queue teardown guard + post-await re-check are the
     /// authoritative safety net, this is best-effort early cancellation.
-    package var tapIntervalReconfigureTask: MainActorOwnedWork?
+    package var tapIntervalReconfigureTask: MainActorOwnedWork? {
+      didSet {
+        oldValue?.cancelNow()
+      }
+    }
     package var writerSession: WriterSession?
     package var drainingWriterSessions: [WriterSession] = []
     package var lastWriteFailure: WriteFailure?
-    package var lastRecordingStartFailure: (any Error)?
+    #if DEBUG
+      package var recordingStartReadinessOverride:
+        (@Sendable (RecordingConfiguration) async throws(RecordingError) -> URL)?
+    #endif
 
-    package init() {}
+    package nonisolated init() {}
   }
 
   // SAFETY: This groups the existing recording-only synchronized primitives, queues, and atomics.
@@ -432,7 +449,7 @@
     package let recordingSampleTimeAtomic = ManagedAtomic<Int64>(0)
     /// Mach host time (`mach_absolute_time` domain) of the first captured frame of the current
     /// recording segment that carried a valid host time. `0` means "not captured yet". Written once
-    /// per segment from the real-time tap thread and reset to `0` on each `warm`/start. Used to
+    /// per segment from the real-time tap thread and reset to `0` on each start. Used to
     /// anchor a recording for cross-device alignment (see `RecordingTimingSnapshot`).
     package let recordingFirstHostTimeAtomic = ManagedAtomic<UInt64>(0)
     /// Source (hardware) sample index paired with `recordingFirstHostTimeAtomic`. `Int64.min` means
@@ -458,7 +475,7 @@
     ///
     /// Set to `true` by a teardown (`gracefulStop()` / `hardStop()`) **before**
     /// it enqueues its `engineControlQueue` teardown work, and cleared back to
-    /// `false` by a fresh bring-up (`performWarm` / `performWarmSystemAudio`)
+    /// `false` by a fresh bring-up (`prepareRecordingGraph` / `prepareSystemAudioGraph`)
     /// from **on** the engine-control queue. A tap reinstall checks this flag at
     /// the top of its on-queue body and bails before mutating the graph when a
     /// teardown has superseded it — the engine-control queue being the only

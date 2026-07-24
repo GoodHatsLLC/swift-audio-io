@@ -9,6 +9,40 @@ releases follow the versioning policy in `README.md` and `ROADMAP.md`.
 
 Nothing yet.
 
+## 0.10.0 - 2026-07-24
+
+### Added
+
+- `AIOEngine.startRecording(configuration:)` now performs bounded readiness
+  retry for every capture source and reports timeout, cancellation, and
+  competing starts as typed `RecordingError` cases.
+- `AIOEngine` accepts an immutable `AudioSessionAuthority` and recording-start
+  timeout at initialization.
+- Added the platform-neutral `AudioSystemEvent`, `AudioRouteChange`, and route
+  snapshot values.
+
+### Changed
+
+- Recording intent belongs to the caller: retaining or cancelling the task
+  awaiting `startRecording` is the complete startup lifecycle.
+- Startup failures throw from `startRecording`; `recordingFailed` is reserved
+  for failures after capture has begun.
+- Microphone and system-audio capture now share one internal source-lifecycle
+  seam for start, graceful or immediate stop, and cleanup.
+- Recording state and operations now have one internal `RecordingLifecycle`
+  owner with focused capture, writer, receiver, and rotation helpers; the
+  consumer-facing `AIOEngine` recording API is unchanged.
+- `AudioEnvironmentManager` now emits one audio-system event surface, and
+  `AIOEngine.handleAudioSystemEvent(_:)` applies shared recording and playback
+  recovery policy on both platforms.
+
+### Removed
+
+- Removed the desired-state/reconciliation APIs, public partial `warm` surface,
+  mutable audio-session delegate wiring, and `reconciliationFailed` event.
+- Removed the platform-specific engine interruption handlers, AVFoundation
+  interruption aliases, and four separate environment event subscriptions.
+
 ## 0.9.0 - 2026-07-21
 
 ### Added
