@@ -7,6 +7,18 @@ releases follow the versioning policy in `README.md` and `ROADMAP.md`.
 
 ## Unreleased
 
+### Fixed
+
+- The DocC catalogue is now actually built. It lived at `Sources/AIO.docc`,
+  outside any target, so SwiftPM never associated it with a module and nothing
+  ever compiled it; its landing page also declared `# ``AIO``` for a module of
+  that name that does not exist. It now sits at
+  `Sources/AudioIO/AudioIO.docc` and documents the `AudioIO` module, and CI
+  builds it. Three latent defects the first real build surfaced are fixed: a
+  broken ``OrientationObserver`` link (iOS-only, so absent from the macOS
+  documentation build), a `Recording` ↔ `SystemAudioCapture` curation cycle,
+  and a malformed task-group item in `ErrorHandling`.
+
 ### Removed
 
 - **Source-breaking.** `AIOEngine.RecordingInterruption.stoppedGracefully`. No

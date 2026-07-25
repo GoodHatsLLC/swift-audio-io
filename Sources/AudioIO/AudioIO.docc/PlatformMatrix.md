@@ -15,7 +15,7 @@ Lowering either floor would require a SemVer-major release. We make no commitmen
 
 The following surfaces are `#if os(iOS)`-gated and not available on macOS:
 
-- ``OrientationObserver``, which bridges UIKit device-orientation notifications.
+- `OrientationObserver`, which bridges UIKit device-orientation notifications.
 - The iOS-only `InputPicker` UI in adopter apps (not part of AudioIO itself).
 
 ## What's macOS-only

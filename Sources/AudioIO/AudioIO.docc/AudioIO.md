@@ -1,8 +1,4 @@
-# ``AIO``
-
-@Metadata {
-  @TechnologyRoot
-}
+# ``AudioIO``
 
 A Swift audio I/O package for recording, playback, audio-session coordination, and real-time visualization on iOS and macOS.
 

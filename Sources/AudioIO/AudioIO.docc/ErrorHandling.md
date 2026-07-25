@@ -94,4 +94,4 @@ last transient session failure.
 
 ### Adjacent surfaces
 
-- <doc:Events> — the stream that carries ``AudioIOEvent/error(_:)``.
+- <doc:Events>

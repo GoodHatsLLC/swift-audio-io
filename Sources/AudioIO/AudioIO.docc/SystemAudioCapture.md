@@ -143,5 +143,4 @@ thread, matching the guarantees described in <doc:ThreadingModel>.
 
 ### Related
 
-- <doc:Recording>
 - <doc:ErrorHandling>

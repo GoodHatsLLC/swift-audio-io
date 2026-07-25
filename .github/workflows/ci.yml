@@ -1,12 +1,16 @@
 name: CI
 
+# Prose-only changes skip CI, but the DocC catalogue under
+# Sources/**/*.docc is compiled, not prose — a broken symbol link or a
+# malformed directive there is a build failure. So ignore only the
+# top-level narrative files rather than every `.md` in the tree.
 on:
   push:
     branches: [main]
-    paths-ignore: ['**.md']
+    paths-ignore: ['*.md', 'docs/**']
   pull_request:
     branches: [main]
-    paths-ignore: ['**.md']
+    paths-ignore: ['*.md', 'docs/**']
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -49,3 +53,19 @@ jobs:
             -scheme swift-audio-io-Package \
             -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' \
             -skipPackagePluginValidation
+
+      # Compiles Sources/AudioIO/AudioIO.docc. Catches malformed directives
+      # and a dropped catalogue, which is how the articles silently rotted
+      # before: nothing built them.
+      #
+      # `--warnings-as-errors` is NOT on yet. The build currently emits ~126
+      # "X is ambiguous at '/AudioIO'" warnings, because every symbol
+      # re-exported through Exports.swift is visible twice — once as the
+      # original and once as the curated `public typealias`. That is a
+      # packaging problem, not a docs problem; turn this flag on once the
+      # umbrella target stops mirroring symbols.
+      - name: DocC build
+        run: |
+          xcrun swift package --allow-writing-to-directory "$RUNNER_TEMP/docs" \
+            generate-documentation --target AudioIO \
+            --output-path "$RUNNER_TEMP/docs"
