@@ -99,9 +99,9 @@
     public enum RecordingInterruption: Sendable {
       /// The audio route changed, but recording is continuing.
       case routeChangeContinuing(event: AudioRouteChange, qualityChange: AudioQualityChange?)
-      /// The recording was stopped gracefully.
-      case stoppedGracefully(reason: String)
-      /// The recording was stopped by an interruption (e.g., a phone call).
+      /// The recording was stopped by an interruption (e.g., a phone call,
+      /// a lost input, or a media-services reset). A user-initiated stop is
+      /// reported by ``AudioIOEvent/recordingCompleted`` instead.
       case stoppedByInterruption(reason: String)
 
       public var description: String {
@@ -112,8 +112,6 @@
           } else {
             "\(event.userMessage), continuing with same quality"
           }
-        case .stoppedGracefully(let reason):
-          "Recording stopped gracefully: \(reason)"
         case .stoppedByInterruption(let reason):
           "Recording interrupted: \(reason)"
         }

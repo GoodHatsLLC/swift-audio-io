@@ -23,8 +23,8 @@
   /// - ``recordingFailed`` — recording stopped due to an engine-side
   ///   failure; usually pairs with an ``error(_:)`` event describing the
   ///   cause.
-  /// - ``recordingInterruption(_:)`` — route change continuation, graceful
-  ///   stop, or interruption-driven stop.
+  /// - ``recordingInterruption(_:)`` — route change continuation, or an
+  ///   interruption-driven stop.
   /// - ``playbackStateChanged(_:)`` — play/pause/stop transitions
   ///   (excludes time ticks).
   /// - ``playbackUpdated(_:)`` — every playback observation including
@@ -54,8 +54,8 @@
     /// with an ``error(_:)`` event describing the cause.
     case recordingFailed
 
-    /// A recording interruption occurred — a route change continuation,
-    /// a graceful stop, or an interruption-driven stop.
+    /// A recording interruption occurred — a route change continuation, or
+    /// an interruption-driven stop.
     case recordingInterruption(AIOEngine.RecordingInterruption)
 
     /// The playback item or playback state changed (play/pause/stop),

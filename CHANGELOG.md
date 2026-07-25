@@ -9,6 +9,15 @@ releases follow the versioning policy in `README.md` and `ROADMAP.md`.
 
 ### Removed
 
+- **Source-breaking.** `AIOEngine.RecordingInterruption.stoppedGracefully`. No
+  code path ever constructed it: every caller of the interruption stop reports
+  a genuine failure (lost input, failed tap reinstall after a route change, an
+  audio-session interruption, or a media-services reset), and all four emit
+  `.stoppedByInterruption`. A user-initiated stop is — and always was —
+  reported by `recordingCompleted`. Consumers switching exhaustively over
+  `RecordingInterruption` should delete the `.stoppedGracefully` branch; it was
+  unreachable.
+
 - **Source-breaking.** `VerboseError`. It was never constructed anywhere in the
   package, and mapped `AVAudioSession`, AudioFile, AudioCodec, AUGraph,
   AudioUnit — and MIDI — status codes into a description string that nothing

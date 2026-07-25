@@ -77,7 +77,7 @@ Subscribe to ``AIOEngine/events`` for every recording lifecycle transition:
 | ``AudioIOEvent/recordingStarted(url:format:)`` | Initial start or segment rotation. |
 | ``AudioIOEvent/recordingCompleted`` | User-initiated stop completed cleanly. |
 | ``AudioIOEvent/recordingFailed`` | Engine-side failure stopped recording. |
-| ``AudioIOEvent/recordingInterruption(_:)`` | Route change, graceful stop, or interruption. |
+| ``AudioIOEvent/recordingInterruption(_:)`` | Route change continuation, or an interruption-driven stop. |
 | ``AudioIOEvent/error(_:)`` | Tap-thread or drain failure surfaced asynchronously. |
 
 See <doc:Events> for the full subscription pattern.

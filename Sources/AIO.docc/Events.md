@@ -23,7 +23,7 @@ The stream emits ``AudioIOEvent``, an enum with cases for every lifecycle transi
 - ``AudioIOEvent/recordingStarted(url:format:)`` — initial recording start, or a segment rotation (the rotated segment fires `recordingStarted` for the new URL).
 - ``AudioIOEvent/recordingCompleted`` — a user-initiated stop completed cleanly.
 - ``AudioIOEvent/recordingFailed`` — recording stopped due to an engine-side failure. Usually paired with an ``AudioIOEvent/error(_:)`` event describing the cause.
-- ``AudioIOEvent/recordingInterruption(_:)`` — a route-change continuation, a graceful stop, or an interruption-driven stop. Carries an ``AIOEngine/RecordingInterruption`` payload describing the variant.
+- ``AudioIOEvent/recordingInterruption(_:)`` — a route-change continuation, or an interruption-driven stop. Carries an ``AIOEngine/RecordingInterruption`` payload describing the variant. A user-initiated stop is reported by ``AudioIOEvent/recordingCompleted`` instead.
 
 Failures detected before ``AIOEngine/startRecording(configuration:)`` returns
 are reported only through its typed throw. `recordingFailed` is reserved for
