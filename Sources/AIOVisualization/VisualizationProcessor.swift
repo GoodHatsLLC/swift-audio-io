@@ -438,7 +438,7 @@
       let desiredSamples = pipeline.maxVisualizationSamples
       var readCount = 0
 
-      unsafe pipeline.readScratchBuffer.withUnsafeMutableBufferPointer { bufferPointer in
+      pipeline.readScratchBuffer.withUnsafeMutableBufferPointer { bufferPointer in
         guard let base = bufferPointer.baseAddress else { return }
         let limitedBuffer = unsafe UnsafeMutableBufferPointer(start: base, count: desiredSamples)
         readCount = unsafe pipeline.ringBuffer.read(into: limitedBuffer)

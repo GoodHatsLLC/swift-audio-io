@@ -215,11 +215,11 @@
       )
       switch channel {
       case .min:
-        return unsafe slot.bands[band].minBuffer.withUnsafeBufferPointer(body)
+        return slot.bands[band].minBuffer.withUnsafeBufferPointer(body)
       case .max:
-        return unsafe slot.bands[band].maxBuffer.withUnsafeBufferPointer(body)
+        return slot.bands[band].maxBuffer.withUnsafeBufferPointer(body)
       case .rms:
-        return unsafe slot.bands[band].rmsBuffer.withUnsafeBufferPointer(body)
+        return slot.bands[band].rmsBuffer.withUnsafeBufferPointer(body)
       }
     }
 
@@ -541,7 +541,7 @@
     ///
     /// - Parameter samples: Raw audio samples.
     public func process(_ samples: [Float]) {
-      unsafe samples.withUnsafeBufferPointer { buffer in
+      samples.withUnsafeBufferPointer { buffer in
         unsafe process(buffer)
       }
     }

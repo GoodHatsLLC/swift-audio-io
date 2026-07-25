@@ -29,7 +29,7 @@
       }
       let result = owner.runOnEngineControlQueueResult {
         try AudioSessionAccess.throwing {
-          try unsafe owner.engine.start()
+          try owner.engine.start()
         }
       }
       if case .failure(let error) = result {
@@ -55,16 +55,16 @@
         guard let owner else { return }
         dispatchPrecondition(condition: .onQueue(owner.engineControlQueue))
         for bus in busesToRemove {
-          unsafe owner.engine.inputNode.removeTap(onBus: bus)
+          owner.engine.inputNode.removeTap(onBus: bus)
         }
-        if unsafe owner.engine.isRunning {
-          unsafe owner.engine.stop()
+        if owner.engine.isRunning {
+          owner.engine.stop()
         }
         guard mode == .immediate else { return }
-        if unsafe owner.player.isPlaying {
-          unsafe owner.player.stop()
+        if owner.player.isPlaying {
+          owner.player.stop()
         }
-        unsafe owner.engine.reset()
+        owner.engine.reset()
       }
     }
 

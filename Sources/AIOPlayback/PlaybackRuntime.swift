@@ -167,24 +167,24 @@
 
       let startResult = await owner.withEngineControlQueueResult { [weak owner] in
         guard let owner else { return }
-        unsafe owner.player.stop()
-        unsafe owner.engine.stop()
-        unsafe owner.engine.reset()
-        if unsafe !owner.engine.attachedNodes.contains(owner.player) {
-          unsafe owner.engine.attach(owner.player)
+        owner.player.stop()
+        owner.engine.stop()
+        owner.engine.reset()
+        if !owner.engine.attachedNodes.contains(owner.player) {
+          owner.engine.attach(owner.player)
         }
-        unsafe owner.engine.connect(
+        owner.engine.connect(
           owner.player,
           to: owner.engine.mainMixerNode,
           format: file.processingFormat,
         )
-        unsafe owner.player.scheduleFile(file, at: nil, completionCallbackType: .dataPlayedBack) {
+        owner.player.scheduleFile(file, at: nil, completionCallbackType: .dataPlayedBack) {
           [weak owner, playbackInstance] _ in
           guard let owner else { return }
           PlaybackRuntime(owner: owner).cleanupPlaybackInstance(playbackInstance)
         }
-        try unsafe owner.engine.start()
-        unsafe owner.player.play()
+        try owner.engine.start()
+        owner.player.play()
       }
       if case .failure(let error) = startResult {
         throw PlaybackError.session(.engineStartFailed(error: ErrorContext(error)))
@@ -266,18 +266,18 @@
 
       let startResult = await owner.withEngineControlQueueResult { [weak owner] in
         guard let owner else { return }
-        unsafe owner.player.stop()
-        unsafe owner.engine.stop()
-        unsafe owner.engine.reset()
-        if unsafe !owner.engine.attachedNodes.contains(owner.player) {
-          unsafe owner.engine.attach(owner.player)
+        owner.player.stop()
+        owner.engine.stop()
+        owner.engine.reset()
+        if !owner.engine.attachedNodes.contains(owner.player) {
+          owner.engine.attach(owner.player)
         }
-        unsafe owner.engine.connect(
+        owner.engine.connect(
           owner.player,
           to: owner.engine.mainMixerNode,
           format: file.processingFormat,
         )
-        unsafe owner.player.scheduleSegment(
+        owner.player.scheduleSegment(
           file,
           startingFrame: startFrame,
           frameCount: frameCount,
@@ -292,8 +292,8 @@
             }
           }
         }
-        try unsafe owner.engine.start()
-        unsafe owner.player.play()
+        try owner.engine.start()
+        owner.player.play()
       }
       if case .failure(let error) = startResult {
         throw PlaybackError.session(.engineStartFailed(error: ErrorContext(error)))
@@ -373,7 +373,7 @@
       }
       resetPlaybackJogPolling(to: jogInstance.id)
       owner.engineControlQueue.async { [weak owner] in
-        unsafe owner?.player.pause()
+        owner?.player.pause()
       }
 
       let snapshot = jogInstance.snapshot()
@@ -542,20 +542,20 @@
           timePitchNode.rate = Float(timePitchRate)
           unsafe owner.jogSourceNode = sourceNode
           unsafe owner.jogTimePitchNode = timePitchNode
-          unsafe owner.engine.attach(sourceNode)
-          unsafe owner.engine.attach(timePitchNode)
-          unsafe owner.engine.connect(
+          owner.engine.attach(sourceNode)
+          owner.engine.attach(timePitchNode)
+          owner.engine.connect(
             sourceNode,
             to: timePitchNode,
             format: format,
           )
-          unsafe owner.engine.connect(
+          owner.engine.connect(
             timePitchNode,
             to: owner.engine.mainMixerNode,
             format: format,
           )
-          if unsafe !owner.engine.isRunning {
-            try unsafe owner.engine.start()
+          if !owner.engine.isRunning {
+            try owner.engine.start()
           }
         }
         if case .failure(let error) = startResult {
@@ -647,9 +647,9 @@
       if Task.isCancelled { return }
       await owner.withEngineControlQueue { [weak owner] in
         guard let owner else { return }
-        unsafe owner.player.stop()
+        owner.player.stop()
         file.framePosition = framePosition
-        unsafe owner.player.scheduleSegment(
+        owner.player.scheduleSegment(
           file,
           startingFrame: framePosition,
           frameCount: newInstance.scheduledFrameCount,
@@ -666,7 +666,7 @@
           },
         )
         if play {
-          unsafe owner.player.play()
+          owner.player.play()
         }
       }
     }
@@ -752,11 +752,11 @@
       }
       await owner.withEngineControlQueue { [weak owner, finishedFile] in
         guard let owner else { return }
-        unsafe owner.player.stop()
-        unsafe owner.engine.stop()
-        unsafe owner.engine.reset()
-        if unsafe !owner.engine.attachedNodes.contains(owner.player) {
-          unsafe owner.engine.attach(owner.player)
+        owner.player.stop()
+        owner.engine.stop()
+        owner.engine.reset()
+        if !owner.engine.attachedNodes.contains(owner.player) {
+          owner.engine.attach(owner.player)
         }
         finishedFile?.close()
       }
@@ -772,7 +772,7 @@
       guard owner.isPlayback else { return }
       clearPlaybackJog(scheduleGraphTeardown: true)
       owner.engineControlQueue.async { [weak owner] in
-        unsafe owner?.player.pause()
+        owner?.player.pause()
       }
       owner.scrubTask = nil
       if let instance = owner.playbackState[locked: \.playbackInstance] {
@@ -782,9 +782,9 @@
 
     @MainActor
     func resumePlayback() {
-      guard owner.isPlayback, unsafe !owner.player.isPlaying else { return }
+      guard owner.isPlayback, !owner.player.isPlaying else { return }
       owner.engineControlQueue.async { [weak owner] in
-        unsafe owner?.player.play()
+        owner?.player.play()
       }
       if let instance = owner.playbackState[locked: \.playbackInstance] {
         owner.setPlayback(owner.getPlayback(for: instance))
@@ -806,11 +806,11 @@
         runtimeOwner.engineControlQueue.async { [weak runtimeOwner] in
           guard let runtimeOwner else { return }
           guard runtimeOwner.playbackState[locked: \.playbackInstance] == nil else { return }
-          unsafe runtimeOwner.player.stop()
-          unsafe runtimeOwner.engine.stop()
-          unsafe runtimeOwner.engine.reset()
-          if unsafe !runtimeOwner.engine.attachedNodes.contains(runtimeOwner.player) {
-            unsafe runtimeOwner.engine.attach(runtimeOwner.player)
+          runtimeOwner.player.stop()
+          runtimeOwner.engine.stop()
+          runtimeOwner.engine.reset()
+          if !runtimeOwner.engine.attachedNodes.contains(runtimeOwner.player) {
+            runtimeOwner.engine.attach(runtimeOwner.player)
           }
         }
         callbackTasks.run { [weak runtimeOwner] in
@@ -830,8 +830,8 @@
 
     nonisolated func stopPlayerIfNeeded() async {
       await owner.withEngineControlQueue { [weak owner] in
-        guard let owner, unsafe owner.player.isPlaying else { return }
-        unsafe owner.player.stop()
+        guard let owner, owner.player.isPlaying else { return }
+        owner.player.stop()
       }
     }
 
@@ -839,7 +839,7 @@
     func setPlaybackMixerAmplitude(_ amplitude: Float) {
       // Write directly to the mixer's output volume. Safe to call at any
       // cadence; AVAudioMixerNode.outputVolume is thread-safe for writes.
-      unsafe owner.engine.mainMixerNode.outputVolume = amplitude
+      owner.engine.mainMixerNode.outputVolume = amplitude
     }
 
     @MainActor

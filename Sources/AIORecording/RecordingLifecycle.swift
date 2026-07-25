@@ -177,12 +177,12 @@
         // (a) Stop any active player on the engine-control queue (unchanged).
         let shouldStopPlayer = await owner.withEngineControlQueue { [weak owner] in
           guard let owner else { return false }
-          return unsafe owner.player.isPlaying
+          return owner.player.isPlaying
         }
         if shouldStopPlayer {
           await owner.withEngineControlQueue { [weak owner] in
-            guard let owner, unsafe owner.player.isPlaying else { return }
-            unsafe owner.player.stop()
+            guard let owner, owner.player.isPlaying else { return }
+            owner.player.stop()
           }
         }
 

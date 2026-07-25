@@ -205,11 +205,11 @@
     // the full thread topology. Swift's type system cannot model dispatch
     // queue serialization, so the `nonisolated(unsafe)` annotation tells it
     // "trust me, this is covered by the queue invariant."
-    package nonisolated(unsafe) let engine = AVAudioEngine()
+    package let engine = AVAudioEngine()
     // SAFETY: Same queue invariant as `engine` above — player is an
     // AVAudioPlayerNode attached to the engine graph and mutated only from
     // engineControlQueue.
-    package nonisolated(unsafe) let player = AVAudioPlayerNode()
+    package let player = AVAudioPlayerNode()
     // SAFETY: Same queue invariant as `engine` above. The jog source/time-pitch
     // nodes are attached, connected, disconnected, and detached only on
     // engineControlQueue; the source render block communicates with control
@@ -508,7 +508,7 @@
       self.recordingStartTimeout = max(.zero, recordingStartTimeout)
       recordingLifecycleState = RecordingLifecycleState()
       audioRecoveryState = AudioRecoveryState()
-      runOnEngineControlQueue { [engine = unsafe engine, player = unsafe player] in
+      runOnEngineControlQueue { [engine, player] in
         engine.attach(player)
       }
     }
@@ -686,14 +686,14 @@
 
     package nonisolated func detachPlaybackJogGraph() {
       if let sourceNode = unsafe jogSourceNode {
-        unsafe engine.disconnectNodeOutput(sourceNode)
-        unsafe engine.detach(sourceNode)
+        engine.disconnectNodeOutput(sourceNode)
+        engine.detach(sourceNode)
         unsafe jogSourceNode = nil
       }
       if let timePitchNode = unsafe jogTimePitchNode {
-        unsafe engine.disconnectNodeInput(timePitchNode)
-        unsafe engine.disconnectNodeOutput(timePitchNode)
-        unsafe engine.detach(timePitchNode)
+        engine.disconnectNodeInput(timePitchNode)
+        engine.disconnectNodeOutput(timePitchNode)
+        engine.detach(timePitchNode)
         unsafe jogTimePitchNode = nil
       }
     }
@@ -704,8 +704,8 @@
     }
 
     package func getPlayback(for instance: PlaybackInstance) -> Playback {
-      guard let nodeTime = unsafe player.lastRenderTime,
-        let playerTime = unsafe player.playerTime(forNodeTime: nodeTime)
+      guard let nodeTime = player.lastRenderTime,
+        let playerTime = player.playerTime(forNodeTime: nodeTime)
       else {
         // The node can't report a live position (paused, or not yet
         // rendering). The node still holds the real position and resumes from
@@ -716,7 +716,7 @@
         let fallbackTime =
           (memo?.instanceID == instance.id ? memo?.time : nil)
           ?? instance.playbackTime(forAbsoluteFrame: instance.startFrame)
-        return unsafe Playback(
+        return Playback(
           id: instance.id,
           file: instance.file.url,
           isPlaying: player.isPlaying,
@@ -736,7 +736,7 @@
         time: liveTime,
       )
 
-      return unsafe Playback(
+      return Playback(
         id: instance.id,
         file: instance.file.url,
         isPlaying: player.isPlaying,

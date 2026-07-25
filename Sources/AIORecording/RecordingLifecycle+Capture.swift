@@ -326,11 +326,11 @@
           // clearing here cannot resurrect a stale reinstall onto this fresh
           // bring-up (the ABA window a main-actor clear would reopen).
           owner.engineTearingDown.store(false, ordering: .sequentiallyConsistent)
-          unsafe owner.player.stop()
-          unsafe owner.engine.stop()
-          unsafe owner.engine.reset()
-          if unsafe !owner.engine.attachedNodes.contains(owner.player) {
-            unsafe owner.engine.attach(owner.player)
+          owner.player.stop()
+          owner.engine.stop()
+          owner.engine.reset()
+          if !owner.engine.attachedNodes.contains(owner.player) {
+            owner.engine.attach(owner.player)
           }
         }
 
@@ -806,7 +806,7 @@
             sourceSampleTime: sourceSampleTime,
             sourceSampleRate: sourceSampleRate,
           )
-          _ = unsafe withUnsafePointer(to: &packet) { pointer in
+          _ = withUnsafePointer(to: &packet) { pointer in
             unsafe receiverTimingBuffer.write(UnsafeBufferPointer(start: pointer, count: 1))
           }
         }

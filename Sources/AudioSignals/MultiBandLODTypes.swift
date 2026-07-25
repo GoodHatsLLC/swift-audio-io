@@ -471,7 +471,7 @@
         let base = band * lodBufferLength
         unsafe withContiguousLODChannel(band: band, channel: channel) { src in
           guard let srcBase = src.baseAddress else { return }
-          unsafe flat.withUnsafeMutableBufferPointer { dst in
+          flat.withUnsafeMutableBufferPointer { dst in
             guard let dstBase = dst.baseAddress else { return }
             unsafe (dstBase + base).update(
               from: srcBase,
@@ -594,11 +594,11 @@
       )
       switch channel {
       case .min:
-        return unsafe bands[band].minBuffer.withUnsafeBufferPointer(body)
+        return bands[band].minBuffer.withUnsafeBufferPointer(body)
       case .max:
-        return unsafe bands[band].maxBuffer.withUnsafeBufferPointer(body)
+        return bands[band].maxBuffer.withUnsafeBufferPointer(body)
       case .rms:
-        return unsafe bands[band].rmsBuffer.withUnsafeBufferPointer(body)
+        return bands[band].rmsBuffer.withUnsafeBufferPointer(body)
       }
     }
 
@@ -609,7 +609,7 @@
         "LODSnapshot band index out of range: \(band), valid range: 0..<\(bands.count)",
       )
       if let raw = bands[band].rawBuffer {
-        return unsafe raw.withUnsafeBufferPointer(body)
+        return raw.withUnsafeBufferPointer(body)
       } else {
         return unsafe body(UnsafeBufferPointer(start: nil, count: 0))
       }

@@ -383,7 +383,7 @@
         }
       }
 
-      unsafe monoScratch.withUnsafeBufferPointer { mono in
+      monoScratch.withUnsafeBufferPointer { mono in
         let monoSlice = unsafe UnsafeBufferPointer(start: mono.baseAddress, count: frameCount)
         unsafe processor.process(monoSlice)
       }

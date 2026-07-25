@@ -79,7 +79,7 @@
           cachedFormat
         } else {
           await owner.withEngineControlQueue { [owner] in
-            unsafe owner.engine.inputNode.inputFormat(forBus: 0)
+            owner.engine.inputNode.inputFormat(forBus: 0)
           }
         }
 
@@ -127,7 +127,7 @@
       let (engineIsRunning, playerIsPlaying) = await owner.withEngineControlQueue {
         [weak owner] in
         guard let owner else { return (false, false) }
-        return unsafe (owner.engine.isRunning, owner.player.isPlaying)
+        return (owner.engine.isRunning, owner.player.isPlaying)
       }
 
       if resume.wasPlaying {
@@ -275,11 +275,11 @@
     private func resetEngineForMediaServices() async {
       await owner.withEngineControlQueue {
         owner.detachPlaybackJogGraph()
-        unsafe owner.player.stop()
-        unsafe owner.engine.stop()
-        unsafe owner.engine.reset()
-        if unsafe !owner.engine.attachedNodes.contains(owner.player) {
-          unsafe owner.engine.attach(owner.player)
+        owner.player.stop()
+        owner.engine.stop()
+        owner.engine.reset()
+        if !owner.engine.attachedNodes.contains(owner.player) {
+          owner.engine.attach(owner.player)
         }
       }
     }

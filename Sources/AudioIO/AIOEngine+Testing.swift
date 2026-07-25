@@ -378,7 +378,7 @@
           }
 
         for i in 0..<effectiveChannelCount {
-          unsafe channels[i].withUnsafeBufferPointer { buffer in
+          channels[i].withUnsafeBufferPointer { buffer in
             if writerCanWrite {
               unsafe audioBuffers[i].write(buffer)
             }
@@ -405,7 +405,7 @@
             sourceSampleTime: sourceSampleTime,
             sourceSampleRate: sourceSampleRate,
           )
-          _ = unsafe withUnsafePointer(to: &packet) { pointer in
+          _ = withUnsafePointer(to: &packet) { pointer in
             unsafe timingBuffer.write(UnsafeBufferPointer(start: pointer, count: 1))
           }
         }

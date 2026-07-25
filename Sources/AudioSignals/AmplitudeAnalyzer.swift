@@ -101,9 +101,9 @@
 
       let stride = Float(inputSize) / Float(outputSize)
 
-      unsafe data.withUnsafeBufferPointer { dataPtr in
+      data.withUnsafeBufferPointer { dataPtr in
         if let source = dataPtr.baseAddress {
-          unsafe decimatedData.withUnsafeMutableBufferPointer { decimatedPtr in
+          decimatedData.withUnsafeMutableBufferPointer { decimatedPtr in
             if let destination = decimatedPtr.baseAddress {
               for i in 0..<outputSize {
                 let startIndex = Int(Float(i) * stride)

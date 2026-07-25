@@ -31,6 +31,7 @@ public struct Reporter<E: Error> {
 
   private let receivers: [(E, SourceLocation) -> Void]
 
+  @_disfavoredOverload
   @discardableResult
   public func callAsFunction<V: Sendable>(
     isolation: isolated (any Actor)? = #isolation,
@@ -77,6 +78,7 @@ public struct Reporter<E: Error> {
     }
   }
 
+  @_disfavoredOverload
   @discardableResult
   public func callAsFunction<V: Sendable>(
     isolation: isolated (any Actor)? = #isolation,
@@ -147,6 +149,7 @@ public enum ReportedError: Error, LocalizedError, Sendable, Equatable, CustomStr
 }
 
 extension Reporter where E == any Error {
+  @_disfavoredOverload
   @discardableResult
   public func callAsFunction<V: Sendable>(
     isolation: isolated (any Actor)? = #isolation,

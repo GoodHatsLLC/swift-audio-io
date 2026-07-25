@@ -101,7 +101,7 @@ public import Foundation
       (mode == .writer)
       ? (O_RDWR | O_CREAT | O_NOFOLLOW)
       : (O_RDONLY | O_NOFOLLOW)
-    let fd = unsafe path.withCString { cstr in
+    let fd = path.withCString { cstr in
       unsafe Darwin.open(cstr, openFlags, mode_t(0o600))
     }
     guard fd >= 0 else {
@@ -212,7 +212,7 @@ public import Foundation
       return SnapshotInfo(samplesRead: 0, writeIndex: cur)
     }
     let firstSampleIndex = cur &- UInt64(toRead)
-    unsafe destination.withUnsafeMutableBufferPointer { dest in
+    destination.withUnsafeMutableBufferPointer { dest in
       for i in 0..<toRead {
         let srcIndex = Int((firstSampleIndex &+ UInt64(i)) & UInt64(capacityMask))
         unsafe dest[i] = unsafe dataPointer[srcIndex]

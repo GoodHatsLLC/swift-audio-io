@@ -227,17 +227,17 @@
 
       // 1. Remove existing tap
       let previousBus = state[locked: \.installedTapBus] ?? 0
-      unsafe engine.inputNode.removeTap(onBus: previousBus)
+      engine.inputNode.removeTap(onBus: previousBus)
       state[locked: \.installedTapBus] = nil
 
       // 2. Stop and reset engine if requested — reset() clears cached node
       //    formats so that prepare() queries the current hardware (critical
       //    after a route change where the sample rate may differ).
       if stopEngine {
-        unsafe engine.stop()
-        unsafe engine.reset()
-        if unsafe !engine.attachedNodes.contains(player) {
-          unsafe engine.attach(player)
+        engine.stop()
+        engine.reset()
+        if !engine.attachedNodes.contains(player) {
+          engine.attach(player)
         }
       }
 
@@ -246,10 +246,10 @@
       #endif
 
       // 3. Prepare — updates input node for current hardware
-      unsafe engine.prepare()
+      engine.prepare()
 
       // 4. Read format — one read, one validation
-      let inputFormat = unsafe engine.inputNode.inputFormat(forBus: 0)
+      let inputFormat = engine.inputNode.inputFormat(forBus: 0)
       guard inputFormat.channelCount > 0 else {
         throw RecordingError.session(
           .notReady(details: "Input node has no channels (channelCount: 0)"),
@@ -270,7 +270,7 @@
       }
 
       // 6. Install tap with format: nil to match the node's current format
-      unsafe engine.inputNode.installTap(
+      engine.inputNode.installTap(
         onBus: tapConfig.bus,
         bufferSize: tapConfig.bufferSize,
         format: inputFormat,
@@ -284,8 +284,8 @@
       )
 
       // 7. Prepare post-install, read actual format
-      unsafe engine.prepare()
-      let postInstallFormat = unsafe engine.inputNode.inputFormat(forBus: 0)
+      engine.prepare()
+      let postInstallFormat = engine.inputNode.inputFormat(forBus: 0)
       guard postInstallFormat.channelCount > 0, postInstallFormat.sampleRate > 0 else {
         throw RecordingError.invalidConfiguration(
           details:
@@ -319,7 +319,7 @@
 
       // 10. Restart engine if we stopped it
       if stopEngine {
-        try unsafe engine.start()
+        try engine.start()
       }
 
       return result

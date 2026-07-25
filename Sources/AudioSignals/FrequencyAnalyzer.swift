@@ -178,12 +178,12 @@
       let dataCount = audioData.count
       let fftSize = configuration.fftSize
 
-      unsafe inputBuffer.withUnsafeMutableBufferPointer { destinationPtr in
+      inputBuffer.withUnsafeMutableBufferPointer { destinationPtr in
         guard let destinationBase = destinationPtr.baseAddress else { return }
 
         if dataCount >= fftSize {
           // If new data is larger than or equal to buffer, just take the latest samples
-          unsafe audioData.withUnsafeBufferPointer { sourcePtr in
+          audioData.withUnsafeBufferPointer { sourcePtr in
             guard let sourceBase = sourcePtr.baseAddress else { return }
             let start = unsafe sourceBase.advanced(by: dataCount - fftSize)
             unsafe memcpy(destinationBase, start, fftSize * MemoryLayout<Float>.size)
@@ -194,7 +194,7 @@
           let bytesToMove = shiftCount * MemoryLayout<Float>.size
           unsafe memmove(destinationBase, destinationBase.advanced(by: dataCount), bytesToMove)
 
-          unsafe audioData.withUnsafeBufferPointer { sourcePtr in
+          audioData.withUnsafeBufferPointer { sourcePtr in
             guard let sourceBase = sourcePtr.baseAddress else { return }
             unsafe memcpy(
               destinationBase.advanced(by: shiftCount),
@@ -215,7 +215,7 @@
     private func performFFT() {
       let halfSize = configuration.fftSize / 2
       // Pack real windowed buffer into complex format for FFT
-      unsafe windowedBuffer.withUnsafeBufferPointer { bufferPtr in
+      windowedBuffer.withUnsafeBufferPointer { bufferPtr in
         guard let baseAddress = bufferPtr.baseAddress else { return }
         for index in 0..<halfSize {
           let evenSample = unsafe baseAddress.advanced(by: index * 2)
@@ -230,7 +230,7 @@
 
       // Calculate magnitudes from the complex FFT output
       let magCount = magnitudes.count
-      unsafe magnitudes.withUnsafeMutableBufferPointer { magnitudesPtr in
+      magnitudes.withUnsafeMutableBufferPointer { magnitudesPtr in
         guard let magnitudesBase = magnitudesPtr.baseAddress else { return }
         unsafe vDSP_zvabs(&complexBuffer, 1, magnitudesBase, 1, vDSP_Length(magCount))
 
@@ -254,7 +254,7 @@
 
       if isSilent {
         // Decay spectrum towards zero when no audio is present
-        unsafe smoothedSpectrum.withUnsafeMutableBufferPointer { smoothedPtr in
+        smoothedSpectrum.withUnsafeMutableBufferPointer { smoothedPtr in
           guard let smoothedBase = smoothedPtr.baseAddress else { return }
           var decayFactor = 1.0 - configuration.smoothingFactor
           unsafe vDSP_vsmul(smoothedBase, 1, &decayFactor, smoothedBase, 1, spectrumSize)
@@ -270,7 +270,7 @@
       }
 
       // Convert to dB, with a floor to prevent -inf
-      unsafe tempSpectrum.withUnsafeMutableBufferPointer { tempPtr in
+      tempSpectrum.withUnsafeMutableBufferPointer { tempPtr in
         guard let tempBase = tempPtr.baseAddress else { return }
 
         // Convert to dB, with a floor to prevent -inf
@@ -290,9 +290,9 @@
         unsafe vDSP_vclip(tempBase, 1, &low, &high, tempBase, 1, spectrumSize)
 
         // Apply exponential smoothing
-        unsafe smoothedSpectrum.withUnsafeMutableBufferPointer { smoothedPtr in
+        smoothedSpectrum.withUnsafeMutableBufferPointer { smoothedPtr in
           guard let smoothedBase = smoothedPtr.baseAddress else { return }
-          unsafe workBuffer.withUnsafeMutableBufferPointer { workPtr in
+          workBuffer.withUnsafeMutableBufferPointer { workPtr in
             guard let workBase = workPtr.baseAddress else { return }
             var smoothingFactor = configuration.smoothingFactor
             var invSmoothingFactor: Float = 1.0 - smoothingFactor
@@ -350,7 +350,7 @@
     /// Create window function
     private static func createWindow(type: WindowType, size: Int) -> [Float] {
       var window = [Float](repeating: 0, count: size)
-      unsafe window.withUnsafeMutableBufferPointer { ptr in
+      window.withUnsafeMutableBufferPointer { ptr in
         guard let windowPtr = ptr.baseAddress else { return }
 
         switch type {
@@ -396,15 +396,15 @@
 
     /// Reset all internal state
     public func reset() {
-      unsafe smoothedSpectrum.withUnsafeMutableBufferPointer { ptr in
+      smoothedSpectrum.withUnsafeMutableBufferPointer { ptr in
         guard let base = ptr.baseAddress else { return }
         unsafe vDSP_vclr(base, 1, vDSP_Length(configuration.spectrumSize))
       }
-      unsafe magnitudes.withUnsafeMutableBufferPointer { ptr in
+      magnitudes.withUnsafeMutableBufferPointer { ptr in
         guard let base = ptr.baseAddress else { return }
         unsafe vDSP_vclr(base, 1, vDSP_Length(configuration.fftSize / 2))
       }
-      unsafe inputBuffer.withUnsafeMutableBufferPointer { ptr in
+      inputBuffer.withUnsafeMutableBufferPointer { ptr in
         guard let base = ptr.baseAddress else { return }
         unsafe vDSP_vclr(base, 1, vDSP_Length(configuration.fftSize))
       }
