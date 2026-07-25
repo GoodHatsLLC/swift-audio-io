@@ -95,7 +95,6 @@ Output arrives as ``FrequencyDomainData`` with smoothed magnitudes plus peak-hol
 - ``VisualizationRequest``
 - ``VisualizationEvent``
 - ``VisualizationEventMask``
-- ``VisualizationSink``
 - ``VisualizationSubscription``
 
 ### Work types

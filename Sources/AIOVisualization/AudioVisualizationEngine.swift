@@ -332,28 +332,6 @@
       }
     }
 
-    /// Subscribes to visualization events via a sink object.
-    @MainActor
-    public func subscribe(
-      request: VisualizationRequest,
-      sink: any VisualizationSink,
-    ) -> VisualizationSubscription {
-      let eventTasks = AsyncTaskRunner()
-      let subscription = subscribe(request: request) { [eventTasks, weak sink] event in
-        guard let sink else { return }
-        eventTasks.run { [weak sink] in
-          await MainActor.run {
-            sink?.receive(event)
-          }
-        }
-      }
-
-      return VisualizationSubscription {
-        subscription.cancel()
-        eventTasks.cancelAllNow()
-      }
-    }
-
     /// Pauses visualization processing without clearing buffers or resetting history.
     ///
     /// This is intended for app lifecycle transitions (e.g. backgrounding) where we

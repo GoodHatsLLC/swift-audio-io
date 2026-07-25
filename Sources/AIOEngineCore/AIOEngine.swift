@@ -384,11 +384,6 @@
       get { recordingLifecycleState.recordingSessionConfiguration }
       set { recordingLifecycleState.recordingSessionConfiguration = newValue }
     }
-    @MainActor public var sessionConfiguration: AudioSessionConfiguration {
-      get { recordingSessionConfiguration }
-      set { recordingSessionConfiguration = newValue }
-    }
-
     /// The current playback state, or `nil` if no audio is playing.
     @MainActor public internal(set) var playback: Playback?
     /// The current gesture-scoped jog preview state, or `nil` when no jog is active.

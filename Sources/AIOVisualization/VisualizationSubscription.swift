@@ -20,12 +20,6 @@
     }
   }
 
-  /// Event sink protocol for the subscription API.
-  @MainActor
-  public protocol VisualizationSink: AnyObject, Sendable {
-    func receive(_ event: VisualizationEvent)
-  }
-
   /// A cancellable visualization subscription.
   @MainActor
   public final class VisualizationSubscription {

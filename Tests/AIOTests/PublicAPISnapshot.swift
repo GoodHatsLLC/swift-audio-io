@@ -101,7 +101,6 @@ func publicAPISnapshotAsyncAudioSessionAPI(
 @Test("Public API snapshot — AIOEngineCore re-exports compile via AudioIO")
 func publicAPISnapshot_AIOEngineCore() throws {
   _ = AIOEngine.self
-  _ = VerboseError.self
 }
 
 @Test("Public API snapshot — AIOPlayback re-exports compile via AudioIO")
@@ -144,7 +143,6 @@ func publicAPISnapshot_AIOVisualization() throws {
   _ = VisualizationEvent.self
   _ = VisualizationEventMask.self
   _ = VisualizationRequest.self
-  _ = (any VisualizationSink).self
   _ = VisualizationSubscription.self
 }
 

@@ -63,10 +63,12 @@ extension PlatformAudioInputDescriptor {
 }
 
 enum PlatformAudioBackendFactory {
+  /// On iOS the audio environment talks to `AVAudioSession` directly rather
+  /// than through this seam: route handling needs the change reason and the
+  /// previous route, which `PlatformAudioRouteEvent` does not carry. See
+  /// `AudioEnvironment.notifications` and `AudioRouteObserver`.
   static func makeDefault() -> any PlatformAudioBackend {
-    #if os(iOS)
-      return IOSPlatformAudioBackend()
-    #elseif os(macOS)
+    #if os(macOS)
       return MacOSPlatformAudioBackend()
     #else
       return UnsupportedPlatformAudioBackend()
@@ -74,76 +76,7 @@ enum PlatformAudioBackendFactory {
   }
 }
 
-#if os(iOS)
-  import AIOSupport
-  import AVFoundation
-
-  struct IOSPlatformAudioBackend: PlatformAudioBackend {
-    let platformName: String = "iOS"
-
-    func routeChanges() -> AsyncSignalStream<PlatformAudioRouteEvent> {
-      let routeRunner = AsyncTaskRunner()
-      let availableInputsRunner: AsyncTaskRunner? =
-        if #available(iOS 26.0, *) {
-          AsyncTaskRunner()
-        } else {
-          nil
-        }
-      let signal = AsyncSignal<PlatformAudioRouteEvent>(
-        bufferingPolicy: .unbounded,
-        terminationHandler: { _ in
-          routeRunner.cancelAllNow()
-          availableInputsRunner?.cancelAllNow()
-        },
-      )
-      routeRunner.run {
-        let routeNotifications = NotificationCenter.default.notifications(
-          named: AVAudioSession.routeChangeNotification,
-        )
-        for await _ in routeNotifications {
-          signal.yield(.changed)
-        }
-      }
-      if let availableInputsRunner {
-        availableInputsRunner.run {
-          let inputNotifications = NotificationCenter.default.notifications(
-            named: AVAudioSession.availableInputsChangeNotification,
-          )
-          for await _ in inputNotifications {
-            signal.yield(.changed)
-          }
-        }
-      }
-      return signal.events()
-    }
-
-    @concurrent func availableInputs() async -> [PlatformAudioInputDescriptor] {
-      await AudioSessionAccess.async {
-        let session = AVAudioSession.sharedInstance()
-        let defaultInputID = session.currentRoute.inputs.first?.uid
-        return (session.availableInputs ?? []).map { input in
-          PlatformAudioInputDescriptor(
-            id: input.uid,
-            name: input.portName,
-            type: AudioInput.InputType(input.portType),
-            channelCount: max(input.channels?.count ?? 0, 1),
-            isDefault: input.uid == defaultInputID,
-          )
-        }
-        .sorted { lhs, rhs in
-          lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
-        }
-      }
-    }
-
-    @concurrent func currentRoute() async -> AudioRouteSnapshot {
-      await AudioSessionAccess.async {
-        AudioRouteSnapshot(platformRoute: AVAudioSession.sharedInstance().currentRoute)
-      }
-    }
-  }
-
-#elseif os(macOS)
+#if os(macOS)
   import CoreAudio
 
   struct MacOSPlatformAudioBackend: PlatformAudioBackend {

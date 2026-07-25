@@ -203,17 +203,6 @@
       var inputOrientation: AVAudioSession.StereoOrientation?
     }
 
-    /// Error wrapper that preserves the origin of failures inside
-    /// ``executeInputConfiguration(_:session:)`` so they can be mapped back
-    /// to the correct ``ManagerError`` case.
-    private enum _InputConfigError: Error {
-      case channelCount(ErrorContext)
-      case polarPattern(AudioSource.PreferenceError)
-      case preferredSource(AudioInput.PreferenceError)
-      case inputOrientation(ErrorContext)
-      case unexpected(ErrorContext)
-    }
-
     /// Executes XPC-blocking AVAudioSession preference calls off the main actor.
     ///
     /// These calls (`setPreferredPolarPattern`, `setPreferredDataSource`, etc.) make

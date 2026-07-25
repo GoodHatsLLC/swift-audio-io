@@ -7,7 +7,25 @@ releases follow the versioning policy in `README.md` and `ROADMAP.md`.
 
 ## Unreleased
 
-Nothing yet.
+### Removed
+
+- **Source-breaking.** `VerboseError`. It was never constructed anywhere in the
+  package, and mapped `AVAudioSession`, AudioFile, AudioCodec, AUGraph,
+  AudioUnit — and MIDI — status codes into a description string that nothing
+  read.
+- **Source-breaking.** `VisualizationSink` and
+  `AudioVisualizationEngine.subscribe(request:sink:)`. The protocol had no
+  conformers and the sink-based overload had no callers; it was a thin wrapper
+  over `subscribe(request:handler:)`, which remains.
+- `AIOEngine.sessionConfiguration`, a public forward to
+  `recordingSessionConfiguration` with no callers. Use
+  `recordingSessionConfiguration` directly.
+- `IOSPlatformAudioBackend`. It was unreachable — the only call to
+  `PlatformAudioBackendFactory.makeDefault()` is inside `#if os(macOS)`. Its
+  capabilities are already covered by `AudioEnvironment.notifications` and
+  `AudioRouteObserver`, which carry the route-change reason and previous route
+  that `PlatformAudioRouteEvent` cannot express.
+- `AudioEnvironmentManager._InputConfigError`, which was unreferenced.
 
 ## 0.10.3 - 2026-07-24
 

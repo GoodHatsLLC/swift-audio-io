@@ -108,7 +108,6 @@
   public typealias AudioIOEvent = AIOEngineCore.AudioIOEvent
   public typealias PlaybackJogRate = AIOEngineCore.PlaybackJogRate
   public typealias PlaybackJogSnapshot = AIOEngineCore.PlaybackJogSnapshot
-  public typealias VerboseError = AIOEngineCore.VerboseError
 
   // MARK: - AIOMicHealth re-exports
 
@@ -131,7 +130,6 @@
   public typealias VisualizationEvent = AIOVisualization.VisualizationEvent
   public typealias VisualizationEventMask = AIOVisualization.VisualizationEventMask
   public typealias VisualizationRequest = AIOVisualization.VisualizationRequest
-  public typealias VisualizationSink = AIOVisualization.VisualizationSink
   public typealias VisualizationSubscription = AIOVisualization.VisualizationSubscription
   public typealias VisualizationWork = AIOVisualization.VisualizationWork
 
