@@ -9,6 +9,31 @@ releases follow the versioning policy in `README.md` and `ROADMAP.md`.
 
 Nothing yet.
 
+## 0.10.3 - 2026-07-24
+
+### Removed
+
+- **Source-breaking.** The `extension Reporter where E == any Error` overloads of
+  `callAsFunction`. With `E == any Error`, `throws(E)` is spelled `throws`, so
+  after substituting the constraint those overloads had signatures identical to
+  the generic ones and could only be ranked against them by
+  `@_disfavoredOverload`, which both sides carried. Swift 6.4 (Xcode 27 beta 4)
+  no longer breaks that tie via constrained-extension specialization, so every
+  call through `ErrorManaging.reporter(...)` — which always vends
+  `Reporter<any Error>` — failed with `ambiguous use of 'callAsFunction'`. The
+  generic overloads already cover `E == any Error`.
+
+### Changed
+
+- `Reporter<any Error>` rethrows the original error rather than flattening it
+  into `ReportedError.error(description:)`, and propagates `CancellationError`
+  as itself rather than as `ReportedError.cancelled`. Error reporting to
+  receivers is unchanged, as is the `Reporter<E>` behaviour for every other `E`.
+  Callers that only test for failure (`try?`) are unaffected; callers that
+  matched on `ReportedError` must match the underlying error instead.
+  `ReportedError` is otherwise unchanged and still usable as
+  `Reporter<ReportedError>`.
+
 ## 0.10.1 - 2026-07-24
 
 ### Fixed
