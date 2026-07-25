@@ -227,7 +227,16 @@
 
         // (e) MainActor PUBLISH hop: read staged state, validate, emit events,
         // start the writer/receiver loops, and flip `isRecording`.
-        let url = try await MainActor.run { () throws(RecordingError) -> URL in
+        //
+        // This hop returns a `Result` rather than throwing out of the closure.
+        // `MainActor.run` is `rethrows`, and handing it a typed-throws
+        // (`throws(RecordingError)`) closure crashes the Swift 6.4 frontend
+        // (swiftlang-6.4.0.27.1) in IRGen: "constructing SILType with type that
+        // should have been eliminated by SIL lowering". A non-throwing closure plus
+        // `Result.get()` is behaviour-identical — `get()` is itself
+        // `throws(Failure)`, so the error stays exactly `RecordingError` with no
+        // widening — and it compiles.
+        let publishOutcome: Result<URL, RecordingError> = await MainActor.run {
           // Close the bring-up window: from here on, teardown/stop paths act
           // inline again (the engine is being published this turn).
           owner.recordingLifecycleState.isStartingRecording = false
@@ -238,7 +247,7 @@
             if let outputToRemove {
               try? FileManager().removeItem(at: outputToRemove)
             }
-            throw RecordingError.cancelled
+            return .failure(.cancelled)
           }
 
           let (buffers, recordingWriter, url, receiverBuffers, receiverTiming) = owner.state {
@@ -257,8 +266,10 @@
             if let outputToRemove {
               try? FileManager().removeItem(at: outputToRemove)
             }
-            throw RecordingError.invalidConfiguration(
-              details: "state after recording graph preparation was invalid",
+            return .failure(
+              .invalidConfiguration(
+                details: "state after recording graph preparation was invalid",
+              )
             )
           }
           let fileFormat = configuration.outputConfiguration.fileFormat.rawValue
@@ -277,8 +288,9 @@
             )
           }
           owner.isRecording = true
-          return url
+          return .success(url)
         }
+        let url = try publishOutcome.get()
 
         // Reconcile an interruption that arrived mid-bring-up. The handler
         // could not tear down the half-built graph, so this attempt owns cleanup

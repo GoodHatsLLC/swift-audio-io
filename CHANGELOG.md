@@ -9,6 +9,21 @@ releases follow the versioning policy in `README.md` and `ROADMAP.md`.
 
 Nothing yet.
 
+## 0.10.1 - 2026-07-24
+
+### Fixed
+
+- `AIORecording` compiles under Swift 6.4 (Xcode 27 beta 4). The recording
+  publish hop passed a typed-throws closure to `MainActor.run`, which crashed the
+  frontend during IR emission (`constructing SILType with type that should have
+  been eliminated by SIL lowering`) and made the whole package unbuildable. The
+  hop now returns `Result<URL, RecordingError>` and the caller unwraps it with
+  `Result.get()`, which is itself `throws(Failure)` — the thrown error type is
+  unchanged and no behaviour changed.
+- `AIOTests/PublicAPISnapshot` no longer fails to compile on ambiguity between
+  `AudioIO.SourceLocation` and swift-testing's `SourceLocation`; the snapshot now
+  names the `AudioIO` type explicitly.
+
 ## 0.10.0 - 2026-07-24
 
 ### Added

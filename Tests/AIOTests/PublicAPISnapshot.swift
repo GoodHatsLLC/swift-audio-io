@@ -64,7 +64,10 @@ func publicAPISnapshot_AIOAudioSession() throws {
   _ = ReportedError.self
   _ = Reporter<ReportedError>.self
   _ = SampleRate.self
-  _ = SourceLocation.self
+  // Module-qualified: swift-testing also exports a `SourceLocation`, so the bare
+  // name is ambiguous here. The point of this snapshot is that `AudioIO` re-exports
+  // its own type, so name it explicitly.
+  _ = AudioIO.SourceLocation.self
   _ = (any TypeDescribable).self
 }
 
