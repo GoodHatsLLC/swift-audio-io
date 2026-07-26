@@ -174,10 +174,10 @@
         let sessionConfiguration: AudioSessionConfiguration
         let writerBackend: WriterBackend
         let alreadyActive: Bool
-        /// The result of the `@MainActor` `testReinstallTapOverride`, pre-resolved
-        /// on the main actor so nonisolated graph preparation can honour the seam
-        /// without invoking a `@MainActor` closure off-main. Always `nil` in
-        /// release builds (the seam only exists under `#if DEBUG`).
+        /// The result of an injected ``TapInstalling``, pre-resolved on the main
+        /// actor so nonisolated graph preparation can honour the seam without
+        /// invoking a `@MainActor` method off-main. `nil` whenever the engine
+        /// uses the real `AVAudioEngine` graph, which is every production path.
         let reinstallTapOverrideResult: Transferring<Result<TapInstallResult, RecordingError>>?
 
         init(
@@ -193,8 +193,8 @@
         }
       }
 
-      /// Captures the main-actor-isolated ``PreparationInputs`` (including the pre-resolved
-      /// `@MainActor` tap-install test override) for the given configuration.
+      /// Captures the main-actor-isolated ``PreparationInputs`` (including any
+      /// pre-resolved injected tap install) for the given configuration.
       @MainActor
       func makePreparationInputs(
         configuration: RecordingConfiguration,

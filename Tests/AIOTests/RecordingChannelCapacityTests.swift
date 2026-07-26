@@ -6,7 +6,7 @@
   import AVFoundation
   @testable import AIOAudioSession
   @testable import AIORecording
-  @_spi(TESTING) @testable import AudioIO
+  @testable import AudioIO
   import AIORecordingSupport
 
   struct RecordingChannelCapacityTests {

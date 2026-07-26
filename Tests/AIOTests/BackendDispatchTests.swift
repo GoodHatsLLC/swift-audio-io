@@ -5,9 +5,16 @@
   import Testing
 
   import AIORecordingSupport
+  import AIOTestSupport
   @testable import AIOAudioSession
   @testable import AIORecording
-  @_spi(TESTING) @testable import AudioIO
+  @testable import AudioIO
+
+  /// SAFETY: only touched from the MainActor by the teardown test.
+  private final class TeardownCounter: @unchecked Sendable {
+    private(set) var value = 0
+    func increment() { value += 1 }
+  }
 
   // SAFETY: the test drives this entirely on the MainActor.
   private final class FakeCaptureBackend: RecordingCaptureBackend, @unchecked Sendable {
@@ -78,14 +85,13 @@
     @MainActor
     @Test
     func `microphone backend owns graph teardown`() {
-      let engine = AIOEngine()
-      var teardownCalls = 0
-      engine.testEngineTeardownOverride = { teardownCalls += 1 }
+      let teardownCalls = TeardownCounter()
+      let (engine, _, _) = AIOEngine.fakeRecording(onTeardown: { teardownCalls.increment() })
       engine.state[locked: \.captureBackend] = MicrophoneCaptureBackend(owner: engine)
 
       RecordingLifecycle(owner: engine).capture.hardStop()
 
-      #expect(teardownCalls == 1)
+      #expect(teardownCalls.value == 1)
       #expect(engine.state.withLock { $0.captureBackend == nil })
     }
   }

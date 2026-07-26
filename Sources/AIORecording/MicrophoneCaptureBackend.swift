@@ -47,14 +47,6 @@
         return
       }
 
-      #if DEBUG
-        if let override = owner.testEngineTeardownOverride {
-          override()
-          _ = owner.state.consume(\.installedTapBus)
-          return
-        }
-      #endif
-
       let tapBus = owner.state.consume(\.installedTapBus)
       let busesToRemove = Array(Set([tapBus, 0].compactMap(\.self)))
       owner.engineControlQueue.async { [weak owner] in

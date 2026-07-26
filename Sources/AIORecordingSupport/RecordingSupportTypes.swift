@@ -448,10 +448,6 @@
     package var writerSession: WriterSession?
     package var drainingWriterSessions: [WriterSession] = []
     package var lastWriteFailure: WriteFailure?
-    #if DEBUG
-      package var recordingStartReadinessOverride:
-        (@Sendable (RecordingConfiguration) async throws(RecordingError) -> URL)?
-    #endif
 
     package nonisolated init() {}
   }

@@ -49,26 +49,6 @@
     /// This is the single method used by recording bring-up, route change handling,
     /// and tap interval updates. All engine graph mutations happen on the
     /// engine control queue in a single dispatch.
-    #if DEBUG
-      /// Resolves the `@MainActor` test tap-install override (if any) on the main
-      /// actor, returning its transferable result so off-main graph preparation can
-      /// honour the seam without invoking a `@MainActor` closure off-main.
-      @MainActor
-      func resolveReinstallTapOverrideResult(
-        configuration: RecordingConfiguration,
-        processingFormat: AVAudioFormat,
-      ) -> Transferring<Result<TapInstallResult, RecordingError>>? {
-        guard let override = testReinstallTapOverride else { return nil }
-        let result: Result<TapInstallResult, RecordingError>
-        do {
-          result = .success(try override(configuration, processingFormat))
-        } catch {
-          result = .failure(error)
-        }
-        return Transferring(result)
-      }
-    #endif
-
     /// Builds the `overrideResult` argument for ``reinstallTap`` from the
     /// `@MainActor` test seam. Returns `nil` in release builds (the seam only
     /// exists under `#if DEBUG`). Every `@MainActor` caller of ``reinstallTap``
@@ -79,30 +59,21 @@
       configuration: RecordingConfiguration,
       processingFormat: AVAudioFormat,
     ) -> Transferring<Result<TapInstallResult, RecordingError>>? {
-      if let installer = recordingEnvironment.tapInstaller {
-        let result: Result<TapInstallResult, RecordingError>
-        do {
-          result = .success(
-            try installer.installTap(
-              configuration: configuration,
-              processingFormat: processingFormat,
-            ),
-          )
-        } catch let error as RecordingError {
-          result = .failure(error)
-        } catch {
-          result = .failure(.engineError)
-        }
-        return Transferring(result)
-      }
-      #if DEBUG
-        return resolveReinstallTapOverrideResult(
-          configuration: configuration,
-          processingFormat: processingFormat,
+      guard let installer = recordingEnvironment.tapInstaller else { return nil }
+      let result: Result<TapInstallResult, RecordingError>
+      do {
+        result = .success(
+          try installer.installTap(
+            configuration: configuration,
+            processingFormat: processingFormat,
+          ),
         )
-      #else
-        return nil
-      #endif
+      } catch let error as RecordingError {
+        result = .failure(error)
+      } catch {
+        result = .failure(.engineError)
+      }
+      return Transferring(result)
     }
 
     /// Reinstalls the input tap **synchronously** on the engine-control queue.

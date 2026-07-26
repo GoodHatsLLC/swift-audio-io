@@ -43,24 +43,12 @@
       let operationID = UUID()
       try await claimStartOperation(operationID)
 
-      let readiness: any RecordingStartReadiness
-      if let injected = owner.recordingEnvironment.attemptRecordingStart {
-        readiness = ClosureRecordingStartReadiness(operation: injected)
-      } else {
-        #if DEBUG
-          let override = await MainActor.run {
-            owner.recordingLifecycleState.recordingStartReadinessOverride
-          }
-          readiness =
-            if let override {
-              ClosureRecordingStartReadiness(operation: override)
-            } else {
-              PlatformRecordingStartReadiness(owner: owner)
-            }
-        #else
-          readiness = PlatformRecordingStartReadiness(owner: owner)
-        #endif
-      }
+      let readiness: any RecordingStartReadiness =
+        if let injected = owner.recordingEnvironment.attemptRecordingStart {
+          ClosureRecordingStartReadiness(operation: injected)
+        } else {
+          PlatformRecordingStartReadiness(owner: owner)
+        }
 
       let startedAt = owner.clock.now
       let timeout = owner.recordingStartTimeout

@@ -4,7 +4,7 @@
   import Testing
 
   @testable import AIOAudioSession
-  @_spi(TESTING) @testable import AudioIO
+  @testable import AudioIO
 
   struct SystemAudioStartTests {
     // The mono/stereo constraint is enforced before any HAL object is created, so

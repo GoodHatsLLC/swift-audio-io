@@ -31,37 +31,18 @@
     }
   }
 
-  #if DEBUG
-    struct ClosureRecordingStartReadiness: RecordingStartReadiness {
-      let operation: @Sendable (RecordingConfiguration) async throws(RecordingError) -> URL
+  /// Adapts an injected ``RecordingEnvironment/attemptRecordingStart`` closure
+  /// to this port. The environment stores a closure rather than an
+  /// `any RecordingStartReadiness` because the port is declared here, in
+  /// `AIORecording`, which depends on `AIOEngineCore` where the environment
+  /// lives.
+  struct ClosureRecordingStartReadiness: RecordingStartReadiness {
+    let operation: @Sendable (RecordingConfiguration) async throws(RecordingError) -> URL
 
-      func attempt(
-        configuration: RecordingConfiguration,
-      ) async throws(RecordingError) -> URL {
-        try await operation(configuration)
-      }
+    func attempt(
+      configuration: RecordingConfiguration,
+    ) async throws(RecordingError) -> URL {
+      try await operation(configuration)
     }
-
-    extension AIOEngine {
-      @MainActor
-      func setRecordingStartReadinessForTesting(
-        _ readiness: (any RecordingStartReadiness)?,
-      ) {
-        guard let readiness else {
-          recordingLifecycleState.recordingStartReadinessOverride = nil
-          return
-        }
-        recordingLifecycleState.recordingStartReadinessOverride = {
-          @Sendable configuration throws(RecordingError) in
-          do {
-            return try await readiness.attempt(configuration: configuration)
-          } catch let error as RecordingError {
-            throw error
-          } catch {
-            throw RecordingError.engineError
-          }
-        }
-      }
-    }
-  #endif
+  }
 #endif

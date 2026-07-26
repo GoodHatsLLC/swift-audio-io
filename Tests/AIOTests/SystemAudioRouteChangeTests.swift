@@ -1,13 +1,14 @@
 // © GoodHatsLLC
 
 #if os(macOS)
+  import AIOTestSupport
   import AVFoundation
   import Testing
 
   @testable import AIOAudioSession
   @testable import AIORecording
   @testable import AIORecordingSupport
-  @_spi(TESTING) @testable import AudioIO
+  @testable import AudioIO
 
   /// A route change during a system-audio recording must not touch the
   /// AVAudioEngine input tap: the recording is fed by the Core Audio process
@@ -20,7 +21,10 @@
     func `route change during system-audio recording does not reinstall the input tap`()
       async throws
     {
-      let engine = AIOEngine()
+      // Audio-system recovery resolves this seam before dispatching a reinstall,
+      // so an install means the system-audio guard was bypassed.
+      let tapInstaller = FakeTapInstaller(failure: .engineError)
+      let (engine, _, _) = AIOEngine.fakeRecording(tapInstaller: tapInstaller)
       let configuration = makeSystemAudioConfiguration()
 
       // Fabricate an established system-audio recording: staged configuration
@@ -29,14 +33,6 @@
       engine.state.withLock { $0.recordingConfiguration = configuration }
       engine.isRecording = true
 
-      // Audio-system recovery resolves this seam before dispatching a reinstall,
-      // so an invocation means the system-audio guard was bypassed.
-      var reinstallRequested = false
-      engine.testReinstallTapOverride = { (_, _) throws(RecordingError) in
-        reinstallRequested = true
-        throw RecordingError.engineError
-      }
-
       let change = AudioRouteChange(
         reason: .configurationChanged,
         previousRoute: nil,
@@ -44,7 +40,7 @@
       )
       await engine.handleAudioSystemEvent(.routeChanged(change))
 
-      #expect(reinstallRequested == false)
+      #expect(tapInstaller.installCount() == 0)
       #expect(engine.isRecording == true)
     }
 

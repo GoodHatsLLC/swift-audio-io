@@ -419,24 +419,6 @@
       playback?.isPlaying == true
     }
 
-    #if DEBUG
-      /// Test hook: when set, `reinstallTap()` calls this instead of touching AVAudioEngine.
-      @MainActor package var testReinstallTapOverride:
-        (
-          @MainActor (RecordingConfiguration, AVAudioFormat) throws(RecordingError) ->
-            TapInstallResult
-        )?
-
-      /// Test hook: when set, the recording-engine teardown paths (`gracefulStop()`
-      /// and `hardStop()`) invoke this in place of the real `AVAudioEngine` graph
-      /// teardown (tap removal + `engine.stop()`/`reset()`), which crashes the iOS
-      /// Simulator audio HAL (`AURemoteIO -10851`). Everything else — writer drain,
-      /// cleanup and the `isRecording` transition still run, so
-      /// interruption, resume, and stop logic stays under test without a real audio
-      /// device.
-      @MainActor package var testEngineTeardownOverride: (@MainActor () -> Void)?
-    #endif
-
     @MainActor package var playbackTask: MainActorOwnedWork? {
       get { playbackRuntimeContext.playbackTask }
       set {

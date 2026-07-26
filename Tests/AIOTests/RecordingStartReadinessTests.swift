@@ -1,6 +1,7 @@
 // © GoodHatsLLC
 
 #if canImport(AVFoundation)
+  import AIOTestSupport
   import Foundation
   import Testing
   import Tools
@@ -21,8 +22,9 @@
           .success(expectedURL),
         ],
       )
-      let engine = AIOEngine(recordingStartTimeout: .seconds(1))
-      engine.setRecordingStartReadinessForTesting(readiness)
+      let engine = AIOEngine.scriptedStart(recordingStartTimeout: .seconds(1)) { configuration throws(RecordingError) in
+        try await readiness.attempt(configuration: configuration)
+      }
 
       let actualURL = try await engine.startRecording(configuration: makeConfiguration())
 
@@ -36,8 +38,9 @@
       let readiness = ScriptedRecordingStartReadiness(
         steps: [.failure(.invalidConfiguration(details: "bad test configuration"))],
       )
-      let engine = AIOEngine(recordingStartTimeout: .seconds(1))
-      engine.setRecordingStartReadinessForTesting(readiness)
+      let engine = AIOEngine.scriptedStart(recordingStartTimeout: .seconds(1)) { configuration throws(RecordingError) in
+        try await readiness.attempt(configuration: configuration)
+      }
       let subscription = engine.events.subscribe()
 
       do {
@@ -69,8 +72,9 @@
       let readiness = ScriptedRecordingStartReadiness(
         steps: [.failure(.session(lastFailure))],
       )
-      let engine = AIOEngine(recordingStartTimeout: .zero)
-      engine.setRecordingStartReadinessForTesting(readiness)
+      let engine = AIOEngine.scriptedStart(recordingStartTimeout: .zero) { configuration throws(RecordingError) in
+        try await readiness.attempt(configuration: configuration)
+      }
 
       do {
         _ = try await engine.startRecording(configuration: makeConfiguration())
@@ -87,8 +91,9 @@
     @Test
     func `second concurrent start is rejected immediately`() async throws {
       let readiness = BlockingRecordingStartReadiness()
-      let engine = AIOEngine(recordingStartTimeout: .seconds(1))
-      engine.setRecordingStartReadinessForTesting(readiness)
+      let engine = AIOEngine.scriptedStart(recordingStartTimeout: .seconds(1)) { configuration throws(RecordingError) in
+        try await readiness.attempt(configuration: configuration)
+      }
       let configuration = makeConfiguration()
 
       let firstStart = Task {
@@ -116,8 +121,9 @@
     @Test
     func `cancelling start task surfaces typed cancellation`() async throws {
       let readiness = BlockingRecordingStartReadiness()
-      let engine = AIOEngine(recordingStartTimeout: .seconds(1))
-      engine.setRecordingStartReadinessForTesting(readiness)
+      let engine = AIOEngine.scriptedStart(recordingStartTimeout: .seconds(1)) { configuration throws(RecordingError) in
+        try await readiness.attempt(configuration: configuration)
+      }
 
       let start = Task {
         try await engine.startRecording(configuration: makeConfiguration())

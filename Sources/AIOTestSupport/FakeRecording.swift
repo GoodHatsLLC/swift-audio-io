@@ -178,5 +178,21 @@
       backend.bind(owner: engine)
       return (engine, backend, tapInstaller)
     }
+
+    /// Creates an engine whose readiness attempts are scripted, for exercising
+    /// the start deadline loop and retry classification without a bring-up.
+    ///
+    /// This replaces one attempt inside the loop, so everything the loop itself
+    /// owns — the deadline, transient-vs-terminal classification, cancellation,
+    /// competing-start rejection — is still the production implementation.
+    package static func scriptedStart(
+      recordingStartTimeout: Duration = .seconds(2),
+      attempt: @escaping @Sendable (RecordingConfiguration) async throws(RecordingError) -> URL,
+    ) -> AIOEngine {
+      AIOEngine(
+        recordingStartTimeout: recordingStartTimeout,
+        recordingEnvironment: RecordingEnvironment(attemptRecordingStart: attempt),
+      )
+    }
   }
 #endif
