@@ -12,8 +12,29 @@
   private let log = SystemLog.make()
   private let playbackJogDecodeCapBytes = 64 * 1024 * 1024
 
-  struct PlaybackRuntime {
-    let owner: AIOEngine
+  /// File and segment playback: transport, scrubbing, the gesture-scoped jog,
+  /// and the polling that publishes playback observations.
+  ///
+  /// This is the sole owner of playback state. Callers observe and control it
+  /// through ``AIOEngine``, which holds exactly one of these for its lifetime.
+  ///
+  // SAFETY: the individual stores carry their own synchronization — `state` is
+  // lock-guarded and `context` is `@MainActor`. This type adds no
+  // unsynchronized state of its own beyond the immutable `owner` reference.
+  package final class PlaybackRuntime: @unchecked Sendable {
+    /// The engine that owns this runtime. `unowned` is safe because the engine
+    /// holds it as a stored `let`, so it always outlives it. Implicitly
+    /// unwrapped because the engine must finish initializing its own stored
+    /// properties before it can hand `self` over.
+    package unowned var owner: AIOEngine!
+
+    /// Lock-guarded playback state, read from polling and scrub paths.
+    package let state: Synchronized<PlaybackRuntimeState> = .init(.init())
+
+    /// Main-actor-isolated task slots and polling configuration.
+    @MainActor package var context = AIOEngine.PlaybackRuntimeContext()
+
+    package init() {}
 
     /// Opens an audio file for reading **off the main actor**.
     ///
@@ -180,7 +201,7 @@
         owner.player.scheduleFile(file, at: nil, completionCallbackType: .dataPlayedBack) {
           [weak owner, playbackInstance] _ in
           guard let owner else { return }
-          PlaybackRuntime(owner: owner).cleanupPlaybackInstance(playbackInstance)
+          owner.playbackRuntime.cleanupPlaybackInstance(playbackInstance)
         }
         try owner.engine.start()
         owner.player.play()
@@ -284,7 +305,7 @@
           completionCallbackType: .dataPlayedBack,
         ) { [weak owner, playbackInstance] _ in
           guard let owner else { return }
-          PlaybackRuntime(owner: owner).cleanupPlaybackInstance(playbackInstance)
+          owner.playbackRuntime.cleanupPlaybackInstance(playbackInstance)
           if let onComplete = playbackInstance.onComplete {
             callbackTasks.run { [onComplete] in
               await onComplete()
@@ -307,7 +328,7 @@
 
     @MainActor
     func resetPlaybackPolling(to instance: PlaybackInstance) {
-      owner.playbackTask = MainActorOwnedWork { [owner] in
+      owner.playbackTask = MainActorOwnedWork { [owner = owner!] in
         let pollingPolicy = PollingPolicy(interval: instance.pollingInterval)
         while !Task.isCancelled {
           try? await pollingPolicy.waitForNextPoll()
@@ -368,7 +389,7 @@
       owner.scrubTask = nil
       owner.jogPreparationTask = MainActorOwnedWork(priority: .utility) { [weak owner] in
         guard let owner else { return }
-        await PlaybackRuntime(owner: owner).preparePlaybackJog(instanceID: jogInstance.id)
+        await owner.playbackRuntime.preparePlaybackJog(instanceID: jogInstance.id)
       }
       resetPlaybackJogPolling(to: jogInstance.id)
       owner.engineControlQueue.async { [weak owner] in
@@ -453,13 +474,13 @@
       clearPlaybackJog(scheduleGraphTeardown: false)
       await owner.withEngineControlQueue { [weak owner] in
         guard let owner else { return }
-        PlaybackRuntime(owner: owner).detachPlaybackJogNode()
+        owner.playbackRuntime.detachPlaybackJogNode()
       }
     }
 
     @MainActor
     func resetPlaybackJogPolling(to instanceID: UUID) {
-      owner.jogPollingTask = MainActorOwnedWork { [owner] in
+      owner.jogPollingTask = MainActorOwnedWork { [owner = owner!] in
         let pollingPolicy = PollingPolicy(interval: .milliseconds(33))
         while !Task.isCancelled {
           try? await pollingPolicy.waitForNextPoll()
@@ -531,7 +552,7 @@
 
         let startResult = await owner.withEngineControlQueueResult { [weak owner] in
           guard let owner else { return }
-          PlaybackRuntime(owner: owner).detachPlaybackJogNode()
+          owner.playbackRuntime.detachPlaybackJogNode()
           let sourceNode = unsafe AVAudioSourceNode(format: format) {
             _, _, frameCount, outputData in
             unsafe renderState.render(frameCount: frameCount, outputData: outputData)
@@ -596,7 +617,7 @@
       guard scheduleGraphTeardown else { return }
       owner.engineControlQueue.async { [weak owner] in
         guard let owner else { return }
-        PlaybackRuntime(owner: owner).detachPlaybackJogNode()
+        owner.playbackRuntime.detachPlaybackJogNode()
       }
     }
 
@@ -656,7 +677,7 @@
           completionCallbackType: .dataPlayedBack,
           completionHandler: { [weak owner, newInstance] _ in
             guard let owner else { return }
-            PlaybackRuntime(owner: owner).cleanupPlaybackInstance(newInstance)
+            owner.playbackRuntime.cleanupPlaybackInstance(newInstance)
             if let onComplete = newInstance.onComplete {
               callbackTasks.run { [onComplete] in
                 await onComplete()
@@ -706,7 +727,7 @@
         owner.playbackState[locked: \.playbackInstance] = newInstance
         owner.scrubTask = MainActorOwnedWork(priority: .utility) { [weak owner] in
           guard let owner else { return }
-          await PlaybackRuntime(owner: owner).scrub(
+          await owner.playbackRuntime.scrub(
             framePosition: framePosition,
             file: file,
             newInstance: newInstance,
@@ -791,7 +812,7 @@
     }
 
     nonisolated func cleanupPlaybackInstance(_ instance: PlaybackInstance) {
-      let runtimeOwner = owner
+      let runtimeOwner: AIOEngine = owner
       let finishedFile: AVAudioFile? = runtimeOwner.playbackState.withLock { state in
         if let foundInstance = state.playbackInstance, foundInstance.id == instance.id {
           state.playbackInstance = nil

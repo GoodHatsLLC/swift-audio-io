@@ -6,10 +6,6 @@
   import Foundation
 
   extension AIOEngine {
-    private var playbackRuntime: PlaybackRuntime {
-      PlaybackRuntime(owner: self)
-    }
-
     @MainActor
     public func play(url: URL) async throws(PlaybackError) -> Playback {
       try await playbackRuntime.play(url: url)

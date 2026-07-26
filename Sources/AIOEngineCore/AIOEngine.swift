@@ -227,9 +227,16 @@
       recording.lifecycleState
     }
     @MainActor package let audioRecoveryState: AudioRecoveryState
-    @MainActor package var playbackRuntimeContext = PlaybackRuntimeContext()
+    /// The playback runtime, which owns all playback state. Held once for the
+    /// engine's lifetime, like ``recording``.
+    package let playbackRuntime = PlaybackRuntime()
 
-    package let playbackState: Synchronized<PlaybackRuntimeState> = .init(.init())
+    @MainActor package var playbackRuntimeContext: AIOEngine.PlaybackRuntimeContext {
+      get { playbackRuntime.context }
+      set { playbackRuntime.context = newValue }
+    }
+
+    package var playbackState: Synchronized<PlaybackRuntimeState> { playbackRuntime.state }
 
     // MARK: - Tap Snapshot Lock
 
@@ -515,6 +522,7 @@
       audioRecoveryState = AudioRecoveryState()
       // Every stored property is initialized, so `self` can be handed over.
       recording.owner = self
+      playbackRuntime.owner = self
       runOnEngineControlQueue { [engine, player] in
         engine.attach(player)
       }
