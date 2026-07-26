@@ -7,6 +7,30 @@ releases follow the versioning policy in `README.md` and `ROADMAP.md`.
 
 ## Unreleased
 
+### Changed
+
+- Recording tests now drive the real `startRecording(configuration:)` path.
+  Previously the two most-used test entry points reimplemented recording start
+  and capture, so the production `RecordingLifecycle.attemptRecordingStart` —
+  the deadline loop, retry classification, validation, ring-buffer and writer
+  construction, event emission, and abort reconciliation — had no test
+  exercising it. A new `RecordingEnvironment`, supplied immutably at
+  initialization, replaces only the three collaborators that need real audio
+  hardware: the tap installer, the capture backend, and engine teardown.
+  Because that removes the `AVAudioEngine` dependency, 31 tests that were
+  compiled-but-never-run on iOS now execute on macOS in CI.
+
+### Removed
+
+- `Sources/AudioIO/AIOEngine+Testing.swift` and its 16 `@_spi(TESTING)`
+  methods on `AIOEngine`, along with the `#if DEBUG` override properties
+  (`testReinstallTapOverride`, `testEngineTeardownOverride`,
+  `recordingStartReadinessOverride`). Test-support code is no longer compiled
+  into the shipping `AudioIO` library, which drops from 1091 to 632 lines.
+  `@_spi(TESTING)` no longer appears anywhere in the package. Symbols behind
+  `@_spi` are explicitly outside the stability promise (see CONTRIBUTING);
+  equivalents live in the new, unvended `AIOTestSupport` target.
+
 ### Fixed
 
 - The DocC catalogue is now actually built. It lived at `Sources/AIO.docc`,
