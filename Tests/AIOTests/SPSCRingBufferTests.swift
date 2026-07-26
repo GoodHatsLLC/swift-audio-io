@@ -1,6 +1,6 @@
 // © GoodHatsLLC
 
-#if canImport(UIKit)
+#if canImport(AVFoundation)
   import Atomics
   import AVFoundation
   import Testing

@@ -1,11 +1,11 @@
 // © GoodHatsLLC
 
-#if canImport(UIKit)
+#if canImport(AVFoundation)
+  import AIOTestSupport
   import Foundation
   import Testing
-
   @testable import AIOAudioSession
-  @_spi(TESTING) import AudioIO
+  import AudioIO
   import Tools
 
   /// Coverage for the first-buffer host-time anchor surfaced via
@@ -13,8 +13,8 @@
   struct RecordingTimingSnapshotTests {
     @Test
     func `snapshot is nil before any host-timed buffer is captured`() async throws {
-      let engine = AIOEngine()
-      let url = try await engine.startTestRecording(configuration: makeConfiguration())
+      let (engine, _, _) = AIOEngine.fakeRecording()
+      let url = try await engine.startRecording(configuration: makeConfiguration())
       defer { try? FileManager.default.removeItem(at: url) }
 
       #expect(await engine.recordingTimingSnapshot() == nil)
@@ -24,11 +24,11 @@
 
     @Test
     func `snapshot anchors the first host-timed buffer`() async throws {
-      let engine = AIOEngine()
-      let url = try await engine.startTestRecording(configuration: makeConfiguration())
+      let (engine, backend, _) = AIOEngine.fakeRecording()
+      let url = try await engine.startRecording(configuration: makeConfiguration())
       defer { try? FileManager.default.removeItem(at: url) }
 
-      engine.injectTestAudio(
+      backend.inject(
         channels: [ramp(count: 64)],
         hostTime: 12_345_678,
         sourceSampleTime: 9_000,
@@ -46,12 +46,12 @@
 
     @Test
     func `snapshot keeps the FIRST host time when later buffers arrive`() async throws {
-      let engine = AIOEngine()
-      let url = try await engine.startTestRecording(configuration: makeConfiguration())
+      let (engine, backend, _) = AIOEngine.fakeRecording()
+      let url = try await engine.startRecording(configuration: makeConfiguration())
       defer { try? FileManager.default.removeItem(at: url) }
 
-      engine.injectTestAudio(channels: [ramp(count: 32)], hostTime: 1_000, sourceSampleTime: 10)
-      engine.injectTestAudio(channels: [ramp(count: 32)], hostTime: 2_000, sourceSampleTime: 20)
+      backend.inject(channels: [ramp(count: 32)], hostTime: 1_000, sourceSampleTime: 10)
+      backend.inject(channels: [ramp(count: 32)], hostTime: 2_000, sourceSampleTime: 20)
 
       let snapshot = try #require(await engine.recordingTimingSnapshot())
       #expect(snapshot.firstBufferHostTime == 1_000)
@@ -65,11 +65,11 @@
 
     @Test
     func `snapshot persists after stopRecording`() async throws {
-      let engine = AIOEngine()
-      let url = try await engine.startTestRecording(configuration: makeConfiguration())
+      let (engine, backend, _) = AIOEngine.fakeRecording()
+      let url = try await engine.startRecording(configuration: makeConfiguration())
       defer { try? FileManager.default.removeItem(at: url) }
 
-      engine.injectTestAudio(channels: [ramp(count: 64)], hostTime: 7_777, sourceSampleTime: 42)
+      backend.inject(channels: [ramp(count: 64)], hostTime: 7_777, sourceSampleTime: 42)
       _ = try await engine.stopRecording()
 
       let snapshot = try #require(await engine.recordingTimingSnapshot())
@@ -82,16 +82,16 @@
 
     @Test
     func `buffers without a valid host time do not anchor`() async throws {
-      let engine = AIOEngine()
-      let url = try await engine.startTestRecording(configuration: makeConfiguration())
+      let (engine, backend, _) = AIOEngine.fakeRecording()
+      let url = try await engine.startRecording(configuration: makeConfiguration())
       defer { try? FileManager.default.removeItem(at: url) }
 
       // A buffer with no host time leaves the anchor unset...
-      engine.injectTestAudio(channels: [ramp(count: 32)], hostTime: nil)
+      backend.inject(channels: [ramp(count: 32)], hostTime: nil)
       #expect(await engine.recordingTimingSnapshot() == nil)
 
       // ...and the next buffer that *does* carry a host time becomes the anchor.
-      engine.injectTestAudio(channels: [ramp(count: 32)], hostTime: 555, sourceSampleTime: nil)
+      backend.inject(channels: [ramp(count: 32)], hostTime: 555, sourceSampleTime: nil)
       let snapshot = try #require(await engine.recordingTimingSnapshot())
       #expect(snapshot.firstBufferHostTime == 555)
       #expect(snapshot.firstBufferSampleTime == nil)
@@ -106,14 +106,14 @@
     func `host time span excludes persisted frames before the first host-timed buffer`()
       async throws
     {
-      let engine = AIOEngine()
-      let url = try await engine.startTestRecording(configuration: makeConfiguration())
+      let (engine, backend, _) = AIOEngine.fakeRecording()
+      let url = try await engine.startRecording(configuration: makeConfiguration())
       defer { try? FileManager.default.removeItem(at: url) }
 
-      engine.injectTestAudio(channels: [ramp(count: 16)], hostTime: nil)
-      engine.injectTestAudio(channels: [ramp(count: 32)], hostTime: 1_000)
-      engine.injectTestAudio(channels: [ramp(count: 64)], hostTime: 2_000)
-      engine.injectTestAudio(channels: [ramp(count: 8)], hostTime: nil)
+      backend.inject(channels: [ramp(count: 16)], hostTime: nil)
+      backend.inject(channels: [ramp(count: 32)], hostTime: 1_000)
+      backend.inject(channels: [ramp(count: 64)], hostTime: 2_000)
+      backend.inject(channels: [ramp(count: 8)], hostTime: nil)
 
       let snapshot = try #require(await engine.recordingTimingSnapshot())
       #expect(snapshot.firstBufferHostTime == 1_000)

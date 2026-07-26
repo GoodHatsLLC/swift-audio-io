@@ -1,22 +1,23 @@
 // © GoodHatsLLC
 
-#if canImport(UIKit)
+#if canImport(AVFoundation)
+  import AIOTestSupport
   import Foundation
   import Testing
 
   @testable import AIOAudioSession
-  @_spi(TESTING) import AudioIO
+  import AudioIO
 
   struct AIOEngineBufferCapacityTests {
     @Test
     func `mono buffer capacity matches two seconds`() async throws {
-      let engine = AIOEngine()
+      let (engine, _, _) = AIOEngine.fakeRecording()
       let configuration = makeConfiguration(channels: .mono)
 
-      let url = try await engine.startTestRecording(configuration: configuration)
+      let url = try await engine.startRecording(configuration: configuration)
       defer { try? FileManager.default.removeItem(at: url) }
 
-      let capacities = engine.debugBufferCapacities()
+      let capacities = engine.bufferCapacities()
       let expected = expectedCapacity(sampleRate: 48000, seconds: 2.0)
 
       #expect(capacities.writer.count == 1)
@@ -29,13 +30,13 @@
 
     @Test
     func `stereo buffer capacity matches two seconds`() async throws {
-      let engine = AIOEngine()
+      let (engine, _, _) = AIOEngine.fakeRecording()
       let configuration = makeConfiguration(channels: .stereo)
 
-      let url = try await engine.startTestRecording(configuration: configuration)
+      let url = try await engine.startRecording(configuration: configuration)
       defer { try? FileManager.default.removeItem(at: url) }
 
-      let capacities = engine.debugBufferCapacities()
+      let capacities = engine.bufferCapacities()
       let expected = expectedCapacity(sampleRate: 48000, seconds: 2.0)
 
       #expect(capacities.writer.count == 2)

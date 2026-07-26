@@ -190,6 +190,22 @@ let package = Package(
       // silent doc loss is not.
       swiftSettings: swiftSettings(),
     ),
+    // Fakes and helpers shared by the test targets. Deliberately not listed in
+    // `products`, so it is never vended to consumers of this package.
+    .target(
+      name: "AIOTestSupport",
+      dependencies: [
+        "AIOAudioSession",
+        "AIOContracts",
+        "AIOEngineCore",
+        "AIORecording",
+        "AIORecordingSupport",
+        "AudioIO",
+        "Tools",
+        .product(name: "Atomics", package: "swift-atomics"),
+      ],
+      swiftSettings: swiftSettings(),
+    ),
     .testTarget(
       name: "AIOTests",
       dependencies: [
@@ -197,13 +213,14 @@ let package = Package(
         "AIORecording",
         "AIORecordingSupport",
         "AIOSupport",
+        "AIOTestSupport",
         "AudioIO",
       ],
       swiftSettings: swiftSettings(),
     ),
     .testTarget(
       name: "AIOPlatformIntegrationTests",
-      dependencies: ["AudioIO", "Tools"],
+      dependencies: ["AIOTestSupport", "AudioIO", "Tools"],
       swiftSettings: swiftSettings(),
     ),
     .testTarget(

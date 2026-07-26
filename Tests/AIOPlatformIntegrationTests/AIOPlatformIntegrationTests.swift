@@ -1,37 +1,34 @@
 // © GoodHatsLLC
 
 #if os(iOS)
+  import AIOTestSupport
   import AVFoundation
   import Foundation
   import Testing
   import Tools
-
-  @_spi(TESTING) @testable import AudioIO
+  @testable import AudioIO
 
   @Suite(.serialized)
   @MainActor
   struct AIOPlatformIntegrationTests {
     @Test
     func routeChangeHandlerExercisesIOSAudioSessionPath() async throws {
-      let engine = AIOEngine()
+      let routeFormat = try #require(
+        AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1),
+      )
+      let (engine, backend, tapInstaller) = AIOEngine.fakeRecording(
+        tapInstaller: FakeTapInstaller(tapFormat: routeFormat),
+      )
       let configuration = makeRecordingConfiguration(fileFormat: .caf, channelCount: 1)
       let probe = RecordingEventProbe()
       let bridge = probe.bridge(to: engine)
       defer { bridge.cancelNow() }
 
-      let url = try engine.startTestRecording(configuration: configuration)
+      let url = try await engine.startRecording(configuration: configuration)
       defer { try? FileManager.default.removeItem(at: url) }
 
-      engine.injectTestAudio(channels: [samples(channelCount: 1, frames: 1_024)[0]])
-
-      let reinstallCalls = LockedCounter()
-      let routeFormat = try #require(
-        AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1),
-      )
-      engine.debugInstallSuccessfulTapReinstallOverrideForTesting(tapFormat: routeFormat) {
-        reinstallCalls.increment()
-      }
-      defer { engine.debugClearTapReinstallOverrideForTesting() }
+      backend.inject(channels: [samples(channelCount: 1, frames: 1_024)[0]])
+      let installsAfterStart = tapInstaller.installCount()
 
       let session = AVAudioSession.sharedInstance()
       let event = AudioRouteChange(
@@ -79,7 +76,7 @@
 
         let snapshot = probe.snapshot()
         #expect(engine.isRecording == true)
-        #expect(reinstallCalls.snapshot() == 1)
+        #expect(tapInstaller.installCount() == installsAfterStart + 1)
         #expect(snapshot.failureCount == 0)
         _ = try await engine.stopRecording()
       } else {
@@ -96,23 +93,23 @@
         #expect(captured == true)
 
         #expect(engine.isRecording == false)
-        #expect(reinstallCalls.snapshot() == 0)
+        #expect(tapInstaller.installCount() == installsAfterStart)
       }
       await bridge.cancel()
     }
 
     @Test
     func interruptionHandlerStopsActiveRecording() async throws {
-      let engine = AIOEngine()
+      let (engine, backend, _) = AIOEngine.fakeRecording()
       let configuration = makeRecordingConfiguration(fileFormat: .caf, channelCount: 1)
       let probe = RecordingEventProbe()
       let bridge = probe.bridge(to: engine)
       defer { bridge.cancelNow() }
 
-      let url = try engine.startTestRecording(configuration: configuration)
+      let url = try await engine.startRecording(configuration: configuration)
       defer { try? FileManager.default.removeItem(at: url) }
 
-      engine.injectTestAudio(channels: [samples(channelCount: 1, frames: 1_024)[0]])
+      backend.inject(channels: [samples(channelCount: 1, frames: 1_024)[0]])
       await engine.handleAudioSystemEvent(.interruptionBegan)
 
       let stopped = await waitUntil(timeout: .seconds(2)) {
@@ -138,7 +135,7 @@
     func publicSegmentPlaybackScrubStaysSegmentRelative() async throws {
       let fixture = try AudioFixture(duration: 3, sampleRate: 48_000)
       defer { fixture.cleanup() }
-      let engine = AIOEngine()
+      let (engine, _, _) = AIOEngine.fakeRecording()
 
       let initial = try await engine.playSegment(
         url: fixture.url,
@@ -165,7 +162,7 @@
     func audioSystemInterruptionResumesPlaybackThroughPublicHandler() async throws {
       let fixture = try AudioFixture(duration: 3, sampleRate: 48_000)
       defer { fixture.cleanup() }
-      let engine = AIOEngine()
+      let (engine, _, _) = AIOEngine.fakeRecording()
 
       _ = try await engine.play(
         url: fixture.url,
@@ -186,19 +183,18 @@
     @Test
     func declaredChannelMatrixStartsAndStopsTestRecordings() async throws {
       for testCase in declaredChannelMatrixCases() {
-        let engine = AIOEngine()
+        let (engine, backend, _) = AIOEngine.fakeRecording()
         let configuration = makeRecordingConfiguration(
           fileFormat: testCase.fileFormat,
           channelCount: testCase.channelCount,
         )
 
-        let url = try engine.startTestRecording(
+        let url = try await engine.startRecording(
           configuration: configuration,
-          enableReceivers: false,
         )
         defer { try? FileManager.default.removeItem(at: url) }
 
-        engine.injectTestAudio(
+        backend.inject(
           channels: samples(channelCount: testCase.channelCount, frames: 1_024),
         )
         let stoppedURL = try await engine.stopRecording()
@@ -217,7 +213,7 @@
     @Test
     func writerDrainAndRotationCoversDeclaredFormatEdges() async throws {
       for testCase in declaredFormatEdgeCases() {
-        let engine = AIOEngine()
+        let (engine, backend, _) = AIOEngine.fakeRecording()
         let outputDirectory = FileManager.default.temporaryDirectory
           .appendingPathComponent(
             "AIOPlatformIntegration-\(testCase.fileFormat.rawValue)-\(UUID().uuidString)",
@@ -231,12 +227,11 @@
           outputDestination: .directory(outputDirectory),
         )
 
-        let firstURL = try engine.startTestRecording(
+        let firstURL = try await engine.startRecording(
           configuration: configuration,
-          enableReceivers: false,
         )
 
-        engine.injectTestAudio(
+        backend.inject(
           channels: samples(channelCount: testCase.channelCount, frames: 2_048),
         )
 
@@ -244,15 +239,15 @@
         #expect(rotatedURL == firstURL)
 
         let drainCompleted = await waitUntil(timeout: .seconds(3)) {
-          engine.debugDrainingWriterSessionIDsForTesting().isEmpty
+          engine.drainingWriterSessionIDs().isEmpty
             && fileHasBytes(at: rotatedURL)
         }
         #expect(drainCompleted == true)
 
-        let nextURL = try #require(engine.debugCurrentRecordingURL())
+        let nextURL = try #require(engine.currentRecordingURL())
         #expect(nextURL != firstURL)
 
-        engine.injectTestAudio(
+        backend.inject(
           channels: samples(channelCount: testCase.channelCount, frames: 2_048),
         )
         let finalURL = try await engine.stopRecording()
@@ -272,12 +267,12 @@
     }
 
     @Test
-    func unsupportedChannelCountFailsBeforeRecordingSetup() throws {
-      let engine = AIOEngine()
+    func unsupportedChannelCountFailsBeforeRecordingSetup() async throws {
+      let (engine, _, _) = AIOEngine.fakeRecording()
       let configuration = makeRecordingConfiguration(fileFormat: .caf, channelCount: 33)
 
       do {
-        _ = try engine.startTestRecording(configuration: configuration, enableReceivers: false)
+        _ = try await engine.startRecording(configuration: configuration)
         Issue.record("Expected unsupportedChannelCount")
       } catch RecordingError.unsupportedChannelCount(let requested, let maximum) {
         #expect(requested == 33)
@@ -287,7 +282,7 @@
       }
 
       #expect(engine.isRecording == false)
-      #expect(engine.debugCurrentRecordingURL() == nil)
+      #expect(engine.currentRecordingURL() == nil)
     }
 
     private func declaredChannelMatrixCases() -> [RecordingMatrixCase] {

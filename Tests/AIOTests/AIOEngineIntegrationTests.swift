@@ -1,14 +1,14 @@
 // © GoodHatsLLC
 
-#if canImport(UIKit)
+#if canImport(AVFoundation)
+  import AIOTestSupport
   import AVFoundation
   import Dispatch
   import Foundation
   import Testing
   import Tools
-
   @testable import AIOAudioSession
-  @_spi(TESTING) @testable import AudioIO
+  @testable import AudioIO
   @testable import AIORecording
   @testable import AIORecordingSupport
 
@@ -16,15 +16,14 @@
   struct AIOEngineIntegrationTests {
     @Test
     func `recording writes file`() async throws {
-      let engine = AIOEngine()
-      await engine.debugBypassEngineTeardownForTesting()
+      let (engine, backend, _) = AIOEngine.fakeRecording()
       let configuration = makeConfiguration()
 
-      let url = try await engine.startTestRecording(configuration: configuration)
+      let url = try await engine.startRecording(configuration: configuration)
       defer { try? FileManager.default.removeItem(at: url) }
 
       let samples = (0..<480).map { Float($0) / 480.0 }
-      engine.injectTestAudio(channels: [samples])
+      backend.inject(channels: [samples])
 
       let stoppedURL = try await engine.stopRecording()
       try #require(stoppedURL == url)
@@ -35,22 +34,18 @@
 
     @Test
     func `recording delivers receiver buffers`() async throws {
-      let engine = AIOEngine()
-      await engine.debugBypassEngineTeardownForTesting()
+      let (engine, backend, _) = AIOEngine.fakeRecording()
       let configuration = makeConfiguration()
       let receiver = CapturingReceiver()
 
       let receiverToken = await engine.attachBufferReceiver(receiver)
       defer { receiverToken.invalidate() }
 
-      let url = try await engine.startTestRecording(
-        configuration: configuration,
-        enableReceivers: true,
-      )
+      let url = try await engine.startRecording(configuration: configuration)
       defer { try? FileManager.default.removeItem(at: url) }
 
       let samples = (0..<128).map { Float($0) / 128.0 }
-      engine.injectTestAudio(channels: [samples])
+      backend.inject(channels: [samples])
 
       #expect(await receiver.waitUntilReceived() == true)
 
@@ -63,14 +58,14 @@
 
     @Test
     func `tap handler can run off main queue`() throws {
-      let engine = AIOEngine()
+      let (engine, _, _) = AIOEngine.fakeRecording()
       let processingFormat = try #require(
         AVAudioFormat(
           standardFormatWithSampleRate: 48000,
           channels: 1,
         ),
       )
-      let tapHandler = engine.makeTapHandlerForTesting(processingFormat: processingFormat)
+      let tapHandler = engine.makeTapHandler(processingFormat: processingFormat)
       let buffer = try #require(
         AVAudioPCMBuffer(
           pcmFormat: processingFormat,
@@ -88,8 +83,7 @@
 
     @Test
     func `rotate recording file emits two files`() async throws {
-      let engine = AIOEngine()
-      await engine.debugBypassEngineTeardownForTesting()
+      let (engine, backend, _) = AIOEngine.fakeRecording()
       let outputDirectory = FileManager.default.temporaryDirectory
         .appendingPathComponent(
           "AIOEngineIntegrationTests-\(UUID().uuidString)", isDirectory: true,
@@ -97,21 +91,21 @@
       defer { try? FileManager.default.removeItem(at: outputDirectory) }
       let configuration = makeConfiguration(outputDestination: .directory(outputDirectory))
 
-      let firstURL = try await engine.startTestRecording(configuration: configuration)
+      let firstURL = try await engine.startRecording(configuration: configuration)
       defer { try? FileManager.default.removeItem(at: firstURL) }
 
-      engine.injectTestAudio(channels: [ramp(count: 256)])
+      backend.inject(channels: [ramp(count: 256)])
 
       let rotatedURL = try await engine.rotateRecordingFile()
       defer { try? FileManager.default.removeItem(at: rotatedURL) }
       #expect(rotatedURL == firstURL)
 
       let rotatedOutputURL = try #require(
-        await MainActor.run { engine.debugCurrentRecordingURL() },
+        await MainActor.run { engine.currentRecordingURL() },
       )
       #expect(rotatedOutputURL != firstURL)
 
-      engine.injectTestAudio(channels: [ramp(count: 256)])
+      backend.inject(channels: [ramp(count: 256)])
       let finalURL = try await engine.stopRecording()
       defer { try? FileManager.default.removeItem(at: finalURL) }
 
@@ -126,12 +120,12 @@
     func `queued writer drain stays in draining queue until drain task completes`()
       async throws
     {
-      let engine = AIOEngine()
+      let (engine, _, _) = AIOEngine.fakeRecording()
       let url = FileManager.default.temporaryDirectory
         .appendingPathComponent("queued-writer-drain-\(UUID().uuidString).caf")
 
       let handle = await MainActor.run {
-        engine.debugStartQueuedWriterDrainForTesting(
+        engine.startQueuedWriterDrain(
           fileURL: url,
           targetSampleTime: 256,
           writtenSampleTime: 0,
@@ -139,7 +133,7 @@
       }
 
       let queuedIDs = await MainActor.run {
-        engine.debugDrainingWriterSessionIDsForTesting()
+        engine.drainingWriterSessionIDs()
       }
       #expect(queuedIDs == [handle.id])
       #expect(handle.stopRequested == true)
@@ -148,10 +142,10 @@
 
       await handle.signalDrain()
       await handle.waitUntilClosed()
-      await engine.debugDrainRecordingCallbacksForTesting()
+      await engine.drainRecordingCallbacks()
 
       let removedFromQueue = await MainActor.run {
-        !engine.debugDrainingWriterSessionIDsForTesting().contains(handle.id)
+        !engine.drainingWriterSessionIDs().contains(handle.id)
       }
       #expect(removedFromQueue == true)
       #expect(handle.closeCount() == 1)
@@ -161,12 +155,12 @@
     func `queued writer drain completes when target sample time is already written`()
       async throws
     {
-      let engine = AIOEngine()
+      let (engine, _, _) = AIOEngine.fakeRecording()
       let url = FileManager.default.temporaryDirectory
         .appendingPathComponent("target-satisfied-writer-drain-\(UUID().uuidString).caf")
 
       let handle = await MainActor.run {
-        engine.debugStartQueuedWriterDrainForTesting(
+        engine.startQueuedWriterDrain(
           fileURL: url,
           targetSampleTime: 128,
           writtenSampleTime: 128,
@@ -178,10 +172,10 @@
       #expect(handle.writtenSampleTime == 128)
 
       await handle.waitUntilClosed()
-      await engine.debugDrainRecordingCallbacksForTesting()
+      await engine.drainRecordingCallbacks()
 
       let removedFromQueue = await MainActor.run {
-        !engine.debugDrainingWriterSessionIDsForTesting().contains(handle.id)
+        !engine.drainingWriterSessionIDs().contains(handle.id)
       }
       #expect(removedFromQueue == true)
       #expect(handle.closeCount() == 1)
@@ -189,16 +183,15 @@
 
     @Test
     func `stereo recording writes file`() async throws {
-      let engine = AIOEngine()
-      await engine.debugBypassEngineTeardownForTesting()
+      let (engine, backend, _) = AIOEngine.fakeRecording()
       let configuration = makeStereoConfiguration()
 
-      let url = try await engine.startTestRecording(configuration: configuration)
+      let url = try await engine.startRecording(configuration: configuration)
       defer { try? FileManager.default.removeItem(at: url) }
 
       let left = (0..<480).map { Float($0) / 480.0 }
       let right = (0..<480).map { 1.0 - Float($0) / 480.0 }
-      engine.injectTestAudio(channels: [left, right])
+      backend.inject(channels: [left, right])
 
       let stoppedURL = try await engine.stopRecording()
       try #require(stoppedURL == url)
@@ -214,19 +207,11 @@
     @Test
     @MainActor
     func `unsupported recording channel count fails before tap install`() async throws {
-      let engine = AIOEngine()
-      engine.debugBypassEngineTeardownForTesting()
+      let (engine, _, tapInstaller) = AIOEngine.fakeRecording()
       // 33 exceeds the runtime cap (`currentMaximumRecordingChannelCount` == 32,
       // and .caf's per-format cap is also 32), so capacity validation rejects it
       // before the tap is installed.
       let configuration = makeConfiguration(channels: .init(platform: 33))
-      var tapInstallAttempted = false
-
-      engine.setReinstallTapOverride { _, _ throws(RecordingError) in
-        tapInstallAttempted = true
-        throw RecordingError.engineError
-      }
-      defer { engine.setReinstallTapOverride(nil) }
 
       do {
         _ = try await engine.startRecording(configuration: configuration)
@@ -237,22 +222,21 @@
       } catch {
         Issue.record("Expected unsupportedChannelCount, got \(error)")
       }
-      #expect(tapInstallAttempted == false)
+      #expect(tapInstaller.installCount() == 0)
     }
 
     @Test
     func `interruption stops recording`() async throws {
-      let engine = AIOEngine()
+      let (engine, backend, _) = AIOEngine.fakeRecording()
       let configuration = makeConfiguration()
 
       // Bypass the real AVAudioEngine teardown, which crashes the iOS Simulator
       // audio HAL; the writer drain and stop transitions still run.
-      await engine.debugBypassEngineTeardownForTesting()
 
-      let url = try await engine.startTestRecording(configuration: configuration)
+      let url = try await engine.startRecording(configuration: configuration)
       defer { try? FileManager.default.removeItem(at: url) }
 
-      engine.injectTestAudio(channels: [ramp(count: 256)])
+      backend.inject(channels: [ramp(count: 256)])
 
       await engine.handleAudioSystemEvent(.interruptionBegan)
 
@@ -265,27 +249,17 @@
 
     @Test
     func `handle route change reconfigures tap when format appears unchanged`() async throws {
-      let engine = AIOEngine()
-      await engine.debugBypassEngineTeardownForTesting()
-      let configuration = makeConfiguration()
-      let reinstallCalls = LockedCounter()
-
-      let url = try await engine.startTestRecording(configuration: configuration)
-      defer { try? FileManager.default.removeItem(at: url) }
-
       let unchangedFormat = try #require(
         AVAudioFormat(standardFormatWithSampleRate: 48000, channels: 1),
       )
+      let (engine, _, tapInstaller) = AIOEngine.fakeRecording(
+        tapInstaller: FakeTapInstaller(tapFormat: unchangedFormat),
+      )
+      let configuration = makeConfiguration()
 
-      await MainActor.run {
-        engine.setReinstallTapOverride {
-          _, processingFormat throws(RecordingError) in
-          reinstallCalls.increment()
-          return try makeMockTapInstallResult(
-            tapFormat: unchangedFormat, processingFormat: processingFormat,
-          )
-        }
-      }
+      let url = try await engine.startRecording(configuration: configuration)
+      defer { try? FileManager.default.removeItem(at: url) }
+      let installsAfterStart = tapInstaller.installCount()
 
       let event = AudioRouteChange(
         reason: .configurationChanged,
@@ -296,40 +270,31 @@
       await engine.handleAudioSystemEvent(.routeChanged(event))
 
       #expect(await engine.isRecording == true)
-      #expect(reinstallCalls.snapshot() == 1)
-      await MainActor.run {
-        engine.setReinstallTapOverride(nil)
-      }
+      #expect(tapInstaller.installCount() == installsAfterStart + 1)
 
       _ = try await engine.stopRecording()
     }
 
     @Test
     func `handle route change continues when tap reconfigure succeeds`() async throws {
-      let engine = AIOEngine()
-      await engine.debugBypassEngineTeardownForTesting()
-      let configuration = makeConfiguration()
-      let probe = RouteFaultProbe()
-      let reinstallCalls = LockedCounter()
-      let bridge = await probe.bridge(to: engine)
-      defer { bridge.cancelNow() }
-
-      let url = try await engine.startTestRecording(configuration: configuration)
-      defer { try? FileManager.default.removeItem(at: url) }
-
       let routeFormat = try #require(
         AVAudioFormat(standardFormatWithSampleRate: 16000, channels: 2),
       )
+      // The start reports the configured format; the route change reports a
+      // different one, which is what produces the quality-change payload.
+      let (engine, _, tapInstaller) = AIOEngine.fakeRecording(
+        tapInstaller: FakeTapInstaller(
+          tapFormatForInstall: { $0 == 0 ? nil : routeFormat },
+        ),
+      )
+      let configuration = makeConfiguration()
+      let probe = RouteFaultProbe()
+      let bridge = await probe.bridge(to: engine)
+      defer { bridge.cancelNow() }
 
-      await MainActor.run {
-        engine.setReinstallTapOverride {
-          _, processingFormat throws(RecordingError) in
-          reinstallCalls.increment()
-          return try makeMockTapInstallResult(
-            tapFormat: routeFormat, processingFormat: processingFormat,
-          )
-        }
-      }
+      let url = try await engine.startRecording(configuration: configuration)
+      defer { try? FileManager.default.removeItem(at: url) }
+      let installsAfterStart = tapInstaller.installCount()
 
       let event = AudioRouteChange(
         reason: .deviceConnected,
@@ -340,10 +305,7 @@
       await engine.handleAudioSystemEvent(.routeChanged(event))
 
       #expect(await engine.isRecording == true)
-      #expect(reinstallCalls.snapshot() == 1)
-      await MainActor.run {
-        engine.setReinstallTapOverride(nil)
-      }
+      #expect(tapInstaller.installCount() == installsAfterStart + 1)
 
       let captured = await waitUntil(timeout: .seconds(2)) {
         probe.snapshot().interruptions.contains { interruption in
@@ -363,24 +325,19 @@
 
     @Test
     func `handle route change stops when tap reconfigure fails`() async throws {
-      let engine = AIOEngine()
-      await engine.debugBypassEngineTeardownForTesting()
+      // The start installs cleanly; the route-change reinstall fails.
+      let (engine, _, _) = AIOEngine.fakeRecording(
+        tapInstaller: FakeTapInstaller(
+          failureForInstall: { $0 == 0 ? nil : .engineError },
+        ),
+      )
       let configuration = makeConfiguration()
       let probe = RouteFaultProbe()
       let bridge = await probe.bridge(to: engine)
       defer { bridge.cancelNow() }
 
-      let url = try await engine.startTestRecording(configuration: configuration)
+      let url = try await engine.startRecording(configuration: configuration)
       defer { try? FileManager.default.removeItem(at: url) }
-
-      await MainActor.run {
-        engine.setReinstallTapOverride {
-          (
-            _: RecordingConfiguration, _: AVAudioFormat,
-          ) throws(RecordingError) -> TapInstallResult in
-          throw .engineError
-        }
-      }
 
       let event = AudioRouteChange(
         reason: .configurationChanged,
@@ -389,9 +346,6 @@
         session: makeSessionSnapshot(),
       )
       await engine.handleAudioSystemEvent(.routeChanged(event))
-      await MainActor.run {
-        engine.setReinstallTapOverride(nil)
-      }
 
       #expect(await engine.isRecording == false)
 
@@ -416,36 +370,21 @@
     /// graph the stop is tearing down.
     @Test
     func `route change reinstall bails when engine is tearing down`() async throws {
-      let engine = AIOEngine()
-      await engine.debugBypassEngineTeardownForTesting()
+      // The fake installer always succeeds, so a reinstall that is NOT bailed
+      // would set `installedTapBus`.
+      let (engine, _, _) = AIOEngine.fakeRecording()
       let configuration = makeConfiguration()
       let probe = RouteFaultProbe()
       let bridge = await probe.bridge(to: engine)
       defer { bridge.cancelNow() }
 
-      let url = try await engine.startTestRecording(configuration: configuration)
+      let url = try await engine.startRecording(configuration: configuration)
       defer { try? FileManager.default.removeItem(at: url) }
-
-      // No tap is installed by `startTestRecording`; a successful reinstall would
-      // set `installedTapBus`. Confirm the precondition.
-      #expect(await engine.debugInstalledTapBusForTesting() == nil)
+      let busAfterStart = await engine.installedTapBus()
 
       // Simulate a teardown that has raised the sentinel (as `gracefulStop()` /
       // `hardStop()` do) before its on-queue work cleared state.
-      await MainActor.run { engine.debugSetEngineTearingDownForTesting(true) }
-
-      // An override that WOULD reinstall (and resurrect `installedTapBus`) unless
-      // the on-queue teardown guard bails first.
-      let routeFormat = try #require(
-        AVAudioFormat(standardFormatWithSampleRate: 16000, channels: 2),
-      )
-      await MainActor.run {
-        engine.setReinstallTapOverride { _, processingFormat throws(RecordingError) in
-          try makeMockTapInstallResult(
-            tapFormat: routeFormat, processingFormat: processingFormat,
-          )
-        }
-      }
+      await MainActor.run { engine.setEngineTearingDown(true) }
 
       let event = AudioRouteChange(
         reason: .deviceConnected,
@@ -455,12 +394,10 @@
       )
       await engine.handleAudioSystemEvent(.routeChanged(event))
 
-      await MainActor.run { engine.setReinstallTapOverride(nil) }
-
-      // The reinstall bailed on the queue: no tap installed, recording still
-      // active (the stop that raised the sentinel owns teardown), and no
-      // `routeChangeContinuing` event was emitted.
-      #expect(await engine.debugInstalledTapBusForTesting() == nil)
+      // The reinstall bailed on the queue: the installed bus is unchanged,
+      // recording is still active (the stop that raised the sentinel owns
+      // teardown), and no `routeChangeContinuing` event was emitted.
+      #expect(await engine.installedTapBus() == busAfterStart)
       #expect(await engine.isRecording == true)
       let sawContinuing = await waitUntil(timeout: .milliseconds(300)) {
         probe.snapshot().interruptions.contains { interruption in
@@ -472,7 +409,7 @@
       await bridge.cancel()
 
       // Clearing the sentinel restores normal reinstall behaviour.
-      await MainActor.run { engine.debugSetEngineTearingDownForTesting(false) }
+      await MainActor.run { engine.setEngineTearingDown(false) }
       _ = try? await engine.stopRecording()
     }
 
@@ -485,8 +422,7 @@
     /// `isRecording`.
     @Test
     func `rotate recording file bails when engine is tearing down`() async throws {
-      let engine = AIOEngine()
-      await engine.debugBypassEngineTeardownForTesting()
+      let (engine, backend, _) = AIOEngine.fakeRecording()
       let outputDirectory = FileManager.default.temporaryDirectory
         .appendingPathComponent(
           "AIOEngineIntegrationTests-\(UUID().uuidString)", isDirectory: true,
@@ -494,13 +430,13 @@
       defer { try? FileManager.default.removeItem(at: outputDirectory) }
       let configuration = makeConfiguration(outputDestination: .directory(outputDirectory))
 
-      let url = try await engine.startTestRecording(configuration: configuration)
+      let url = try await engine.startRecording(configuration: configuration)
       defer { try? FileManager.default.removeItem(at: url) }
-      engine.injectTestAudio(channels: [ramp(count: 256)])
+      backend.inject(channels: [ramp(count: 256)])
 
       // Simulate a teardown that has raised the sentinel (as gracefulStop does
       // before its drain, while `isRecording` is still true).
-      await MainActor.run { engine.debugSetEngineTearingDownForTesting(true) }
+      await MainActor.run { engine.setEngineTearingDown(true) }
 
       await #expect(throws: RecordingError.notRecording) {
         _ = try await engine.rotateRecordingFile()
@@ -508,13 +444,13 @@
 
       // No swap happened: the recording URL is unchanged, and the discarded
       // rotation file was removed (only the original remains in the directory).
-      #expect(await engine.debugCurrentRecordingURL() == url)
+      #expect(await engine.currentRecordingURL() == url)
       let remaining = try FileManager.default.contentsOfDirectory(
         at: outputDirectory, includingPropertiesForKeys: nil,
       )
       #expect(remaining.map(\.lastPathComponent) == [url.lastPathComponent])
 
-      await MainActor.run { engine.debugSetEngineTearingDownForTesting(false) }
+      await MainActor.run { engine.setEngineTearingDown(false) }
       _ = try? await engine.stopRecording()
     }
 
@@ -539,9 +475,18 @@
     }
 
     private func makeSessionSnapshot() -> AudioSessionSnapshot {
-      AudioSessionSnapshot(
-        category: AVAudioSession.Category.record.rawValue,
-        mode: AVAudioSession.Mode.default.rawValue,
+      // `AudioSessionSnapshot` carries category/mode as plain strings, so the
+      // macOS build uses the same literals `AVAudioSession` vends on iOS.
+      #if os(iOS)
+        let category = AVAudioSession.Category.record.rawValue
+        let mode = AVAudioSession.Mode.default.rawValue
+      #else
+        let category = "AVAudioSessionCategoryRecord"
+        let mode = "AVAudioSessionModeDefault"
+      #endif
+      return AudioSessionSnapshot(
+        category: category,
+        mode: mode,
         options: [],
         sampleRate: 48_000,
         ioBufferDuration: 0.01,

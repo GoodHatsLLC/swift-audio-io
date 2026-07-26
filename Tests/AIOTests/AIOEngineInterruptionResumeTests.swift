@@ -1,35 +1,31 @@
 // © GoodHatsLLC
 
-#if canImport(UIKit)
+#if canImport(AVFoundation)
+  import AIOTestSupport
   import AVFoundation
   import Foundation
   import Testing
 
   @testable import AIOAudioSession
-  @_spi(TESTING) @testable import AudioIO
   @testable import AIORecording
   @testable import AIORecordingSupport
+  import AudioIO
 
-  /// Exercises the audio-session interruption **resume decision** for recording in
-  /// isolation from the real audio engine.
+  /// Exercises the audio-session interruption **resume decision** for recording.
   ///
-  /// `.interruptionBegan` routes through graceful stop, whose real
-  /// `AVAudioEngine` teardown crashes the iOS Simulator audio HAL. The
-  /// `debugBypassEngineTeardownForTesting()` seam replaces only that teardown, so
-  /// the staging/`.shouldResume`-gating logic runs end-to-end headlessly. These
-  /// tests live in their own suite so the simulator crash in sibling
-  /// `AIOEngineIntegrationTests` cannot abort the process and mask them.
+  /// Both the initial start and the resume run the real
+  /// `RecordingLifecycle.attemptRecordingStart`; only the tap install, engine
+  /// start, and graph teardown are faked. A resume is therefore observable as a
+  /// second `start()` on the capture backend.
   @MainActor
   struct AIOEngineInterruptionResumeTests {
     @Test
     func `interruption resumes recording when shouldResume is set`() async throws {
-      let engine = AIOEngine()
-      engine.debugBypassEngineTeardownForTesting()
-      let readiness = CountingRecordingStartReadiness()
-      engine.setRecordingStartReadinessForTesting(readiness)
+      let (engine, backend, _) = AIOEngine.fakeRecording()
 
-      let url = try engine.startTestRecording(configuration: makeConfiguration())
+      let url = try await engine.startRecording(configuration: makeConfiguration())
       defer { try? FileManager.default.removeItem(at: url) }
+      #expect(backend.startCalls == 1)
 
       // `.began` tears down recording but stages the configuration for resume.
       await engine.handleAudioSystemEvent(.interruptionBegan)
@@ -37,18 +33,17 @@
 
       // `.ended` with `.shouldResume` re-enters the canonical awaited start path.
       await engine.handleAudioSystemEvent(.interruptionEnded(shouldResume: true))
-      #expect(await readiness.attemptCount() == 1)
+      #expect(backend.startCalls == 2)
+      #expect(engine.isRecording)
     }
 
     @Test
     func `interruption does not resume recording without shouldResume`() async throws {
-      let engine = AIOEngine()
-      engine.debugBypassEngineTeardownForTesting()
-      let readiness = CountingRecordingStartReadiness()
-      engine.setRecordingStartReadinessForTesting(readiness)
+      let (engine, backend, _) = AIOEngine.fakeRecording()
 
-      let url = try engine.startTestRecording(configuration: makeConfiguration())
+      let url = try await engine.startRecording(configuration: makeConfiguration())
       defer { try? FileManager.default.removeItem(at: url) }
+      #expect(backend.startCalls == 1)
 
       await engine.handleAudioSystemEvent(.interruptionBegan)
       #expect(engine.isRecording == false)
@@ -57,7 +52,7 @@
       // e.g. some Siri/route-loss endings) must leave recording stopped.
       await engine.handleAudioSystemEvent(.interruptionEnded(shouldResume: false))
       #expect(engine.isRecording == false)
-      #expect(await readiness.attemptCount() == 0)
+      #expect(backend.startCalls == 1)
     }
 
     private func makeConfiguration() -> RecordingConfiguration {
@@ -75,22 +70,6 @@
         outputConfiguration: output,
         outputDestination: .temporary,
       )
-    }
-  }
-
-  private actor CountingRecordingStartReadiness: RecordingStartReadiness {
-    private var count = 0
-
-    func attempt(
-      configuration _: RecordingConfiguration,
-    ) async throws(RecordingError) -> URL {
-      count += 1
-      return FileManager.default.temporaryDirectory
-        .appendingPathComponent("interruption-resume-\(UUID().uuidString).caf")
-    }
-
-    func attemptCount() -> Int {
-      count
     }
   }
 #endif

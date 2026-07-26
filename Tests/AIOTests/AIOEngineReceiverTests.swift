@@ -1,33 +1,33 @@
 // © GoodHatsLLC
 
-#if canImport(UIKit)
+#if canImport(AVFoundation)
   #if canImport(Darwin)
     import Darwin
   #elseif canImport(Glibc)
     import Glibc
   #endif
   import Dispatch
+  import AIOTestSupport
   import Foundation
   import Testing
-
   @testable import AIOAudioSession
-  @_spi(TESTING) import AudioIO
+  import AudioIO
   import Tools
 
   struct AIOEngineReceiverTests {
     @Test
     func `receiver runs on receiver queue`() async throws {
-      let engine = AIOEngine()
+      let (engine, backend, _) = AIOEngine.fakeRecording()
       let configuration = makeConfiguration()
       let receiver = QueueLabelReceiver()
 
       let receiverToken = await engine.attachBufferReceiver(receiver)
       defer { receiverToken.invalidate() }
 
-      let url = try await engine.startTestRecording(configuration: configuration)
+      let url = try await engine.startRecording(configuration: configuration)
       defer { try? FileManager.default.removeItem(at: url) }
 
-      engine.injectTestAudio(channels: [ramp(count: 64)])
+      backend.inject(channels: [ramp(count: 64)])
 
       let received = await receiver.waitUntilReceived()
       #expect(received == true)
@@ -40,20 +40,20 @@
 
     @Test
     func `receiver ordering uses timing packets`() async throws {
-      let engine = AIOEngine()
+      let (engine, backend, _) = AIOEngine.fakeRecording()
       let configuration = makeConfiguration()
       let receiver = OrderedReceiver()
 
       let receiverToken = await engine.attachBufferReceiver(receiver)
       defer { receiverToken.invalidate() }
 
-      let url = try await engine.startTestRecording(configuration: configuration)
+      let url = try await engine.startRecording(configuration: configuration)
       defer { try? FileManager.default.removeItem(at: url) }
 
       let first = ramp(count: 32)
       let second = ramp(count: 32).map { $0 + 1 }
-      engine.injectTestAudio(channels: [first])
-      engine.injectTestAudio(channels: [second])
+      backend.inject(channels: [first])
+      backend.inject(channels: [second])
 
       let received = await receiver.waitUntilReceived(count: 2)
       #expect(received == true)
@@ -70,18 +70,18 @@
 
     @Test
     func `slow receiver does not block writer`() async throws {
-      let engine = AIOEngine()
+      let (engine, backend, _) = AIOEngine.fakeRecording()
       let configuration = makeConfiguration()
       let receiver = SlowReceiver(delay: 0.05)
 
       let receiverToken = await engine.attachBufferReceiver(receiver)
       defer { receiverToken.invalidate() }
 
-      let url = try await engine.startTestRecording(configuration: configuration)
+      let url = try await engine.startRecording(configuration: configuration)
       defer { try? FileManager.default.removeItem(at: url) }
 
       for _ in 0..<4 {
-        engine.injectTestAudio(channels: [ramp(count: 128)])
+        backend.inject(channels: [ramp(count: 128)])
       }
 
       _ = try await engine.stopRecording()
@@ -89,7 +89,7 @@
       #expect(size > 0)
 
       #if DEBUG
-        let metrics = engine.debugMetricsSnapshot()
+        let metrics = engine.metricsSnapshot()
         #expect(metrics.receiverUnderruns == 0)
         #expect(metrics.receiverDrops == 0)
         #expect(metrics.writerDrops == 0)
