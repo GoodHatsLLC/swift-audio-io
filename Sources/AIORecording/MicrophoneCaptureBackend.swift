@@ -41,6 +41,12 @@
     func stop(mode: RecordingCaptureStopMode) {
       guard let owner else { return }
 
+      if let teardown = owner.recordingEnvironment.engineTeardown {
+        teardown()
+        _ = owner.state.consume(\.installedTapBus)
+        return
+      }
+
       #if DEBUG
         if let override = owner.testEngineTeardownOverride {
           override()

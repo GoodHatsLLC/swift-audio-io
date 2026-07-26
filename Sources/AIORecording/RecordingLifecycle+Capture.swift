@@ -316,7 +316,9 @@
           }
         }
 
-        owner.state[locked: \.captureBackend] = MicrophoneCaptureBackend(owner: owner)
+        owner.state[locked: \.captureBackend] =
+          owner.recordingEnvironment.makeCaptureBackend?(configuration.input, owner)
+          ?? MicrophoneCaptureBackend(owner: owner)
 
         owner.runOnEngineControlQueue { [weak owner] in
           guard let owner else { return }

@@ -79,6 +79,22 @@
       configuration: RecordingConfiguration,
       processingFormat: AVAudioFormat,
     ) -> Transferring<Result<TapInstallResult, RecordingError>>? {
+      if let installer = recordingEnvironment.tapInstaller {
+        let result: Result<TapInstallResult, RecordingError>
+        do {
+          result = .success(
+            try installer.installTap(
+              configuration: configuration,
+              processingFormat: processingFormat,
+            ),
+          )
+        } catch let error as RecordingError {
+          result = .failure(error)
+        } catch {
+          result = .failure(.engineError)
+        }
+        return Transferring(result)
+      }
       #if DEBUG
         return resolveReinstallTapOverrideResult(
           configuration: configuration,

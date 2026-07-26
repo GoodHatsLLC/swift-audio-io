@@ -374,6 +374,11 @@
     /// When `nil`, the engine manages the platform session directly.
     public let audioSessionAuthority: (any AudioSessionAuthority)?
 
+    /// The immutable set of collaborators this engine reaches through to touch
+    /// real audio hardware. Every field defaults to `nil`, meaning "use the
+    /// built-in production path"; tests supply fakes at initialization.
+    package let recordingEnvironment: RecordingEnvironment
+
     /// Maximum wall-clock time allowed for transient recording readiness to settle.
     public let recordingStartTimeout: Duration
 
@@ -493,12 +498,29 @@
     ///     audio-session activation. Pass `nil` for engine-managed lifecycle.
     ///   - recordingStartTimeout: Maximum time transient recording readiness may
     ///     take to settle. Defaults to two seconds.
-    public init(
+    public convenience init(
       audioSessionAuthority: (any AudioSessionAuthority)? = nil,
       recordingStartTimeout: Duration = .seconds(2),
     ) {
+      self.init(
+        audioSessionAuthority: audioSessionAuthority,
+        recordingStartTimeout: recordingStartTimeout,
+        recordingEnvironment: .live,
+      )
+    }
+
+    /// Creates an engine with replaceable audio collaborators.
+    ///
+    /// Tests use this to drive the real recording lifecycle without a live
+    /// audio graph. See ``RecordingEnvironment``.
+    package init(
+      audioSessionAuthority: (any AudioSessionAuthority)? = nil,
+      recordingStartTimeout: Duration = .seconds(2),
+      recordingEnvironment: RecordingEnvironment,
+    ) {
       self.audioSessionAuthority = audioSessionAuthority
       self.recordingStartTimeout = max(.zero, recordingStartTimeout)
+      self.recordingEnvironment = recordingEnvironment
       recordingLifecycleState = RecordingLifecycleState()
       audioRecoveryState = AudioRecoveryState()
       runOnEngineControlQueue { [engine, player] in

@@ -315,6 +315,21 @@
     package let tapConfiguration: TapConfiguration
   }
 
+  /// Installs the input tap for one prepared microphone recording.
+  ///
+  /// This is the seam between the recording lifecycle and `AVAudioEngine`'s
+  /// graph. The lifecycle owns everything around the tap — validation, ring
+  /// buffers, the writer, the output URL, event emission — and reaches
+  /// through here for the one step that requires a live audio graph, so tests
+  /// can exercise the real lifecycle without one.
+  package protocol TapInstalling: Sendable {
+    @MainActor
+    func installTap(
+      configuration: RecordingConfiguration,
+      processingFormat: AVAudioFormat,
+    ) throws(RecordingError) -> TapInstallResult
+  }
+
   package struct TapSnapshot {
     package init(
       audioBuffers: [SPSCRingBuffer<Float>]?,
