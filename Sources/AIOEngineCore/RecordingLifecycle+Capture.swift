@@ -336,7 +336,7 @@
 
         log.info("preparing recording graph with config: \(configuration, privacy: .public)")
         do {
-          try owner.configureAudioSession(
+          try owner.recording.configureAudioSession(
             for: configuration,
             sessionConfiguration: inputs.sessionConfiguration,
           )

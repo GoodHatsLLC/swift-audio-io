@@ -370,7 +370,7 @@
         let alreadyActive = owner.isRecording || owner.isPlaying
         if !alreadyActive {
           do throws(SessionError) {
-            try await owner.activateAudioSessionAuthority()
+            try await owner.recording.activateAudioSessionAuthority()
           } catch {
             throw RecordingError.session(error)
           }

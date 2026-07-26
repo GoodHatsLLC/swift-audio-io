@@ -10,7 +10,7 @@
 
   private let recordingSessionLog = SystemLog.make()
 
-  extension AIOEngine {
+  extension RecordingLifecycle {
     /// Asks the engine's immutable audio-session authority to satisfy active demand.
     ///
     /// The authority method is `@MainActor`, so activation cannot run on the
@@ -21,8 +21,8 @@
     package func activateAudioSessionAuthority() async throws(SessionError) {
       // Engine-managed iOS activation happens only after category, mode, and
       // preferred I/O values have been applied in `configureAudioSession`.
-      guard audioSessionAuthority != nil else { return }
-      try await setAudioSessionDemand(active: true)
+      guard owner.audioSessionAuthority != nil else { return }
+      try await owner.setAudioSessionDemand(active: true)
     }
 
     package nonisolated func configureAudioSession(
@@ -34,7 +34,7 @@
           () throws(SessionError) -> Void in
           let session = AVAudioSession.sharedInstance()
 
-          try applyAudioSessionConfiguration(session, configuration: sessionConfiguration)
+          try owner.applyAudioSessionConfiguration(session, configuration: sessionConfiguration)
 
           do {
             try session.setPreferredSampleRate(configuration.format.sampleRate.hz)
@@ -53,7 +53,7 @@
             )
           }
 
-          if audioSessionAuthority == nil {
+          if owner.audioSessionAuthority == nil {
             do {
               try session.setActive(true)
             } catch {
