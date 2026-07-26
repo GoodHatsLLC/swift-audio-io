@@ -1,12 +1,11 @@
 // © GoodHatsLLC
 
 #if canImport(AVFoundation)
+  @testable import AIOEngineCore
   import AIOTestSupport
   import Foundation
   import Testing
   import Tools
-
-  @testable import AIORecording
   @testable import AudioIO
 
   @Suite(.serialized)

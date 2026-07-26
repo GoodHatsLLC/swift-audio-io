@@ -1,9 +1,8 @@
 // © GoodHatsLLC
 
 #if canImport(AVFoundation)
+  @testable import AIOEngineCore
   import Testing
-  @testable import AIORecording
-
   struct RecordingInputChannelContractTests {
     @Test
     func `stereo request rejects a mono route`() {

@@ -1,14 +1,12 @@
 // © GoodHatsLLC
 
 #if canImport(AVFoundation)
+  @testable import AIOEngineCore
   import Testing
 
   import AVFoundation
   @testable import AIOAudioSession
-  @testable import AIORecording
   @testable import AudioIO
-  import AIORecordingSupport
-
   struct RecordingChannelCapacityTests {
     @Test
     @MainActor

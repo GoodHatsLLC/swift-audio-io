@@ -1,12 +1,11 @@
 // © GoodHatsLLC
 
 #if os(macOS)
+  @testable import AIOEngineCore
   import CoreAudio
   import Testing
 
   @testable import AIOAudioSession
-  @testable import AIORecording
-
   struct CoreAudioTapDescriptionTests {
     private func input(
       channels: Int,

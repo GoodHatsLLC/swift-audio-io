@@ -1,13 +1,11 @@
 // © GoodHatsLLC
 
 #if canImport(AVFoundation)
+  @testable import AIOEngineCore
   import AVFoundation
   import Testing
-
-  import AIORecordingSupport
   import AIOTestSupport
   @testable import AIOAudioSession
-  @testable import AIORecording
   @testable import AudioIO
 
   /// SAFETY: only touched from the MainActor by the teardown test.

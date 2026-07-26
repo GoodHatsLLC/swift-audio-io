@@ -2,8 +2,6 @@
 
 #if canImport(AVFoundation)
   import AIOAudioSession
-  import AIOEngineCore
-  import AIORecordingSupport
   import Foundation
   import Tools
 

@@ -3,8 +3,6 @@
 #if canImport(AVFoundation)
   import AIOAudioSession
   import AIOSupport
-  import AIOEngineCore
-  import AIORecordingSupport
   import Atomics
   import AVFoundation
   import Foundation

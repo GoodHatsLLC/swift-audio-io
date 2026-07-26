@@ -2,7 +2,6 @@
 
 #if canImport(AVFoundation)
   package import AIOAudioSession
-  package import AIORecordingSupport
   import Foundation
 
   /// The replaceable collaborators a recording lifecycle reaches through to

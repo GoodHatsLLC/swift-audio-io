@@ -1,13 +1,16 @@
 // © GoodHatsLLC
 
 #if canImport(AVFoundation)
-  import AIOAudioSession
-  import AIOContracts
-  import AIOEngineCore
-  import AIORecording
+  // These protocols are `public` and their requirements are spelled in types
+  // from these modules, so the imports must be public too. They were internal
+  // while AIORecording `@_exported`-ed the same modules, which made the types
+  // reachable without saying so here.
+  public import AIOAudioSession
+  public import AIOContracts
+  public import AIOEngineCore
   import Foundation
   public import Observation
-  import Tools
+  public import Tools
 
   #if os(iOS)
     public import AVFAudio

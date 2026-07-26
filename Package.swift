@@ -110,50 +110,21 @@ let package = Package(
       ],
       swiftSettings: swiftSettings(),
     ),
+    // The engine: AIOEngine plus the recording and playback lifecycles that
+    // implement its surface. These were three targets split by file rather
+    // than by type — AIOEngine lived here while the behaviour over its state
+    // lived in AIORecording, which depended on this module, so the state types
+    // had to be exiled to a third target (AIORecordingSupport) purely to break
+    // the resulting cycle. Merging lets each lifecycle own its own state.
     .target(
       name: "AIOEngineCore",
       dependencies: [
         "AIOAudioSession",
         "AIOContracts",
-        "AIORecordingSupport",
         "AIOSupport",
         "Tools",
         .product(name: "AsyncAlgorithms", package: "swift-async-algorithms"),
         .product(name: "Atomics", package: "swift-atomics"),
-      ],
-      swiftSettings: swiftSettings(),
-    ),
-    .target(
-      name: "AIORecording",
-      dependencies: [
-        "AIOAudioSession",
-        "AIOContracts",
-        "AIOEngineCore",
-        "AIORecordingSupport",
-        "AIOSupport",
-        "Tools",
-        .product(name: "AsyncAlgorithms", package: "swift-async-algorithms"),
-        .product(name: "Atomics", package: "swift-atomics"),
-      ],
-      swiftSettings: swiftSettings(),
-    ),
-    .target(
-      name: "AIORecordingSupport",
-      dependencies: [
-        "AIOAudioSession",
-        "Tools",
-        .product(name: "Atomics", package: "swift-atomics"),
-      ],
-      swiftSettings: swiftSettings(),
-    ),
-    .target(
-      name: "AIOPlayback",
-      dependencies: [
-        "AIOAudioSession",
-        "AIOEngineCore",
-        "AIOSupport",
-        "Tools",
-        .product(name: "AsyncAlgorithms", package: "swift-async-algorithms"),
       ],
       swiftSettings: swiftSettings(),
     ),
@@ -172,9 +143,6 @@ let package = Package(
         "AIOContracts",
         "AIOEngineCore",
         "AIOMicHealth",
-        "AIOPlayback",
-        "AIORecording",
-        "AIORecordingSupport",
         "AIOSupport",
         "AIOVisualization",
         "Tools",
@@ -198,8 +166,6 @@ let package = Package(
         "AIOAudioSession",
         "AIOContracts",
         "AIOEngineCore",
-        "AIORecording",
-        "AIORecordingSupport",
         "AudioIO",
         "Tools",
         .product(name: "Atomics", package: "swift-atomics"),
@@ -210,8 +176,6 @@ let package = Package(
       name: "AIOTests",
       dependencies: [
         "AIOAudioSession",
-        "AIORecording",
-        "AIORecordingSupport",
         "AIOSupport",
         "AIOTestSupport",
         "AudioIO",

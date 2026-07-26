@@ -2,7 +2,6 @@
 
 #if os(macOS)
   import AIOAudioSession
-  import AIORecordingSupport
   import AIOSupport
   import Atomics
   import AVFoundation

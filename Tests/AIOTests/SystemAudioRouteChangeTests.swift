@@ -1,13 +1,12 @@
 // © GoodHatsLLC
 
 #if os(macOS)
+  @testable import AIOEngineCore
   import AIOTestSupport
   import AVFoundation
   import Testing
 
   @testable import AIOAudioSession
-  @testable import AIORecording
-  @testable import AIORecordingSupport
   @testable import AudioIO
 
   /// A route change during a system-audio recording must not touch the

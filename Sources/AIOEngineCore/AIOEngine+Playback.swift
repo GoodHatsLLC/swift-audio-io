@@ -2,7 +2,6 @@
 
 #if canImport(AVFoundation)
   import AIOAudioSession
-  import AIOEngineCore
   package import AVFoundation
   import Foundation
 

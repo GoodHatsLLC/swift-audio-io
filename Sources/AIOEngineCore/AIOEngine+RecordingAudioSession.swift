@@ -4,7 +4,6 @@
   package import AIOAudioSession
   import AIOContracts
   import AIOSupport
-  package import AIOEngineCore
   import AVFoundation
   import os
   import Tools

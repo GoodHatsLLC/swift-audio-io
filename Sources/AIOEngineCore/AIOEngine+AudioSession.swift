@@ -3,7 +3,6 @@
 #if canImport(AVFoundation)
   import AIOAudioSession
   import AIOContracts
-  import AIORecordingSupport
   import AIOSupport
   #if os(iOS)
     package import AVFoundation

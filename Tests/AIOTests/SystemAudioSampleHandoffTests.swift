@@ -1,12 +1,10 @@
 // © GoodHatsLLC
 
 #if os(macOS)
+  @testable import AIOEngineCore
   import AVFoundation
   import CoreAudio
   import Testing
-
-  @testable import AIORecording
-
   struct SystemAudioSampleHandoffTests {
     private func sourceFormat() -> AVAudioFormat {
       // Non-interleaved float32 stereo — the canonical global-tap mixdown shape.

@@ -1,6 +1,7 @@
 // © GoodHatsLLC
 
 #if canImport(AVFoundation)
+  @testable import AIOEngineCore
   import AIOTestSupport
   import AVFoundation
   import Dispatch
@@ -9,9 +10,6 @@
   import Tools
   @testable import AIOAudioSession
   @testable import AudioIO
-  @testable import AIORecording
-  @testable import AIORecordingSupport
-
   @Suite(.serialized)
   struct AIOEngineIntegrationTests {
     @Test

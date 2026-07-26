@@ -4,7 +4,6 @@
   package import AIOAudioSession
   package import AIOContracts
   package import AIOEngineCore
-  package import AIORecordingSupport
   import Atomics
   package import AVFoundation
   import Foundation

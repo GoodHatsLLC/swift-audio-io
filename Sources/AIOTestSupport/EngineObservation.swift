@@ -2,8 +2,6 @@
 
 #if canImport(AVFoundation)
   package import AIOEngineCore
-  package import AIORecording
-  package import AIORecordingSupport
   import Atomics
   package import AVFoundation
   import Foundation

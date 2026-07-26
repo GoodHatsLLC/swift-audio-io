@@ -3,8 +3,6 @@
 #if canImport(AVFoundation)
   package import AIOAudioSession
   import AIOSupport
-  package import AIOEngineCore
-  package import AIORecordingSupport
   import Atomics
   package import AVFoundation
   #if os(macOS)

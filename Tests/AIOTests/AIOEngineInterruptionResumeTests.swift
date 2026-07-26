@@ -1,14 +1,13 @@
 // © GoodHatsLLC
 
 #if canImport(AVFoundation)
+  @testable import AIOEngineCore
   import AIOTestSupport
   import AVFoundation
   import Foundation
   import Testing
 
   @testable import AIOAudioSession
-  @testable import AIORecording
-  @testable import AIORecordingSupport
   import AudioIO
 
   /// Exercises the audio-session interruption **resume decision** for recording.

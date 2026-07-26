@@ -3,14 +3,10 @@
 #if canImport(AVFoundation)
   public import AIOAudioSession
   public import AIOContracts
-  public import AIOEngineCore
 
   // The following modules stay on `@_exported import` until the relevant
   // member surface is moved into the AudioIO target:
   //
-  // - AIOPlayback, AIORecording contribute `public` extension methods on
-  //   `AIOEngine` (defined in AIOEngineCore). Swift has no typealias-based
-  //   re-export for extension methods.
   // - AIOVisualization, AIOMicHealth, AudioSignals contribute `public`
   //   instance methods, initializers, and static members that consumers
   //   call directly. Swift 6's `MemberImportVisibility` upcoming feature
@@ -18,6 +14,12 @@
   //   `public import`, so the consuming targets would need to add direct
   //   `import` lines for each of those source modules; instead we keep
   //   `@_exported` here.
+  //
+  // AIORecording and AIOPlayback used to be listed here, for the same reason:
+  // they contributed `public` extension methods on `AIOEngine`, and Swift has
+  // no typealias-based re-export for extension methods. They were merged into
+  // AIOEngineCore, so those members now live in the module that declares the
+  // type and reach consumers through the `public import` above.
   //
   // Asymmetry note: AIOAudioSession is on `public import` above despite
   // having `public` instance methods on `AudioEnvironmentManager` that
@@ -27,12 +29,12 @@
   // itself (see `Contracts/RuntimeDriving.swift`), so MemberImportVisibility
   // never trips. Future direct-call hot paths might force AIOAudioSession
   // back onto `@_exported import`. Migrate behind a protocol contract first.
+  // AIOEngineCore declares `AIOEngine` and every member of it — recording,
+  // playback, session, events. `MemberImportVisibility` does not let callers
+  // reach those members through a transitive `public import`, so this must be
+  // `@_exported` for `import AudioIO` alone to be enough.
+  @_exported import AIOEngineCore
   @_exported import AIOMicHealth
-  @_exported import AIOPlayback
-  // AIORecording is re-exported so the canonical awaited
-  // `AIOEngine.startRecording(configuration:)` surface is visible to plain
-  // `import AudioIO` consumers.
-  @_exported import AIORecording
   @_exported import AIOVisualization
   @_exported import AudioSignals
 
