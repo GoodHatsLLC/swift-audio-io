@@ -8,10 +8,10 @@ Status: **proposed**
 Two small additions so a consumer can reassemble a rotated recording without
 drift:
 
-1. **`rotateRecordingFile()` and `stopRecording()` should return the boundary
-   frame position** — the cumulative persisted-sample position at which the
-   completed file ends and the next one begins. The engine already computes this
-   value; it just doesn't return it.
+1. **`rotateRecordingFile()` and `stopRecording()` should both return the
+   boundary frame position** — the cumulative persisted-sample position at which
+   the completed file ends. The engine already computes this value on both
+   paths; it just doesn't return it.
 2. **Two orthogonal facts on `FileFormat`** — whether a truncated file is still
    valid, and whether decoded output is frame-identical to the PCM written.
 
@@ -112,17 +112,47 @@ public struct RecordingRotation: Sendable, Hashable {
 func rotateRecordingFile() async throws(RecordingError) -> RecordingRotation
 ```
 
-`stopRecording()` needs the same information for the final segment. It is
-currently obtainable — `recordingTimingSnapshot()` is documented as remaining
-readable after stop, and it is sound *there* because capture has ended — but
-returning it symmetrically would let a consumer use one mechanism for every
-boundary instead of two:
+**`stopRecording()` changes the same way.**
 
 ```swift
+/// The outcome of stopping a recording.
+public struct RecordingCompletion: Sendable, Hashable {
+  /// The final file of this capture.
+  public let completedURL: URL
+
+  /// Cumulative persisted-frame position at which `completedURL` ends —
+  /// therefore also the total frame count of the whole capture, across every
+  /// rotation.
+  public let boundaryFramePosition: Int64
+}
+
 @MainActor
 func stopRecording() async throws(RecordingError) -> RecordingCompletion
-// { completedURL, boundaryFramePosition }
 ```
+
+The final boundary is *technically* obtainable today —
+`recordingTimingSnapshot()` is documented as remaining readable after stop, and
+it is sound *there* because capture has ended. Returning it anyway is worth a
+second source break for three reasons:
+
+- **One mechanism instead of two.** Otherwise a consumer assembling a session
+  reads N−1 boundaries from a return value and the Nth from a separate accessor
+  whose soundness depends on a timing rule it has to know about. Two mechanisms
+  for one concept is where the bugs live.
+- **The soundness rule is invisible.** "This read is only correct after capture
+  ends" is a real constraint that nothing in the type system expresses. A
+  consumer that reasonably factors its stop and rotation handling into one code
+  path silently gets a racy read on the rotation branch — which is exactly the
+  defect this proposal exists to remove.
+- **It closes the arithmetic.** With both returned, the final
+  `boundaryFramePosition` is the capture's total frame count, so a consumer can
+  assert its assembled segments sum to the whole. That check is the cheapest
+  possible guard against a boundary bug, and it is unavailable if the last
+  number arrives by a different route.
+
+`stopAndDrainAll` already computes the value at
+`RecordingLifecycle+Writer.swift:198`, the same way `enqueueDrain` does at
+line 165.
 
 ### 2. Format facts
 
@@ -185,16 +215,29 @@ code. This proposal deliberately reports a number and stops.
 ## Source compatibility
 
 Changing the return type of `rotateRecordingFile()` and `stopRecording()` is
-**source-breaking** for conformers to and callers of `RecordingDriving`. Given
+**source-breaking** for conformers to and callers of `RecordingDriving`.
+`stopRecording()` is the wider break of the two — every consumer calls it,
+whereas rotation is only used by consumers that opted into it. Given
 `Unreleased` already carries a source-breaking removal
-(`RecordingInterruption.stoppedGracefully`), landing this in the same release
-seems reasonable. Migration is mechanical:
+(`RecordingInterruption.stoppedGracefully`), landing both in the same release
+seems reasonable — one migration pass rather than two.
+
+Migration is mechanical, and the compiler finds every site:
 
 ```swift
 let url = try await engine.rotateRecordingFile()
-// becomes
+let url = try await engine.stopRecording()
+// become
 let url = try await engine.rotateRecordingFile().completedURL
+let url = try await engine.stopRecording().completedURL
 ```
+
+`RecordingCompletion` and `RecordingRotation` are deliberately separate types
+rather than one shared type. They carry the same fields today, but they answer
+different questions — "where does this file end and the next begin" versus
+"where does this capture end" — and merging them would invite a consumer to
+treat a stop as a rotation. If that reads as over-modelling, one type named for
+the shared fact (`RecordingSegmentBoundary`) is a reasonable alternative.
 
 The format properties are purely additive.
 
@@ -204,9 +247,11 @@ The current rotation tests (`AIOTests/AIOEngineIntegrationTests.swift:90`,
 `:487`) assert that two distinct non-empty files are produced. They should be
 extended, because boundary errors are invisible at this granularity:
 
-- **Boundary monotonicity and totals** — across N forced rotations, assert the
-  boundary sequence is strictly increasing and that the final boundary equals
-  the capture's total frame count. Pure arithmetic over the returned values.
+- **Boundary monotonicity and totals** — across N forced rotations followed by a
+  stop, assert the boundary sequence is strictly increasing and that
+  `stopRecording()`'s boundary equals the capture's total frame count. With both
+  calls returning boundaries this is pure arithmetic over the returned values,
+  with nothing read out of band.
 - **Boundary matches persisted frames** — assert each file's actual decoded frame
   count equals the difference between adjacent boundaries. This is the assertion
   that would have caught the race; it fails today for any read taken outside the
@@ -230,6 +275,9 @@ extended, because boundary errors are invisible at this granularity:
    *intended* boundary; the written count is the *achieved* one and differs only
    when a drain fails — which is already surfaced as an error. The drain target
    seems better, but the maintainer knows the failure modes.
-3. **Should `stopRecording()` change at all**, given the post-stop snapshot read
-   is already sound? Symmetry is the only argument, and it costs a second source
-   break.
+3. **One boundary type or two?** See the note under Source compatibility.
+   `RecordingRotation` and `RecordingCompletion` are proposed as separate types
+   so a stop cannot be mistaken for a rotation; a single
+   `RecordingSegmentBoundary` would be less surface for the same information.
+
+*(Resolved: `stopRecording()` does change too — see the Proposed API section.)*
