@@ -54,7 +54,7 @@ func runRecording() async throws {
 
   let recordingURL = try await engine.startRecording(configuration: configuration)
   // …record for some duration…
-  let savedURL = try await engine.stopRecording()
+  let savedURL = try await engine.stopRecording().completedURL
 
   _ = try await engine.play(url: savedURL)
   await engine.stopPlayback()

@@ -7,7 +7,52 @@ releases follow the versioning policy in `README.md` and `ROADMAP.md`.
 
 ## Unreleased
 
+### Added
+
+- `FileFormat.toleratesTruncation` and `FileFormat.preservesExactFrameCount`.
+  Two orthogonal facts about the writer and the container, in the style of
+  `requiresQuality`: whether a file cut off mid-write is still readable up to
+  the truncation point, and whether decoding returns exactly the frames that
+  were written. Only `adts` tolerates truncation — every AAC frame carries its
+  own header — while the PCM containers and `m4a` declare a length or an index
+  finalized at close. FLAC is reported conservatively as `false`: its frames
+  carry sync codes, but `STREAMINFO`'s total-samples field and the seektable
+  are written at close, so a truncated stream is decoder-dependent. Everything
+  except the AAC family is frame-exact; AAC adds encoder priming and tail
+  padding. A consumer composes its own policy from the two — "rotate for
+  crash-safety" wants `!toleratesTruncation`, "reassemble losslessly" wants
+  `preservesExactFrameCount`.
+
 ### Changed
+
+- **Source-breaking.** `stopRecording()` returns `RecordingCompletion` and
+  `rotateRecordingFile()` returns `RecordingRotation`, each carrying the
+  `completedURL` that used to be the whole return value plus a
+  `boundaryFramePosition`: the cumulative persisted-frame position at which
+  that file ends. Consecutive rotations produce a strictly increasing
+  sequence, so a consumer reassembling a rotated capture can derive each
+  file's exact frame length as the difference between adjacent boundaries, and
+  the final boundary — the capture's total frame count — closes the
+  arithmetic.
+
+  The engine already computed this number on both paths and discarded it. A
+  consumer could only approximate it by reading `recordingTimingSnapshot()`
+  after the call, which is unsound during a rotation for three independent
+  reasons: the capture counter is cumulative and never resets at a rotation,
+  the read races the capture callback, and frames awaiting drain into the
+  completed file have already been counted. Returning the value from the call
+  that produces it removes all three — it is sampled where the split is
+  decided.
+
+  Migration is mechanical and the compiler finds every site:
+
+  ```swift
+  let url = try await engine.stopRecording()
+  let url = try await engine.rotateRecordingFile()
+  // become
+  let url = try await engine.stopRecording().completedURL
+  let url = try await engine.rotateRecordingFile().completedURL
+  ```
 
 - Recording tests now drive the real `startRecording(configuration:)` path.
   Previously the two most-used test entry points reimplemented recording start
@@ -32,6 +77,73 @@ releases follow the versioning policy in `README.md` and `ROADMAP.md`.
   equivalents live in the new, unvended `AIOTestSupport` target.
 
 ### Fixed
+
+- A `stopRecording()` that lands while a rotation's drain is still in flight no
+  longer stalls for the full five-second writer drain timeout. The stop set one
+  target — the capture's end — on *every* writer session, including ones a
+  rotation had already drained to the boundary its file ends at. The frames
+  between that boundary and the capture's end went into the next file's ring,
+  so the completed writer could never reach the raised target: its drain waited
+  out `writerDrainTimeout`, force-closed, and recorded a write failure for a
+  file that was already complete. A session that already has a target now keeps
+  it, and the stop joins its in-flight drain instead of re-aiming it. The
+  pre-existing `rotate recording file emits two files` test had been paying
+  this five-second cost on every run while still passing.
+
+- A rotation no longer hands the capture tap fresh ring buffers, which makes
+  the reported boundary exact rather than approximate. Rotation used to sample
+  the boundary, replace the tap's rings, and refresh the snapshot the tap falls
+  back to when `state` is contended as three separate steps, so a capture
+  callback could take its rings from one side of the split and its frame
+  position from the other — writing into the completed file's ring while being
+  counted past that file's boundary. That cannot be fixed by locking on the
+  rotation side: the tap must never block, so it reads its rings under
+  `withLockIfAvailable` and accounts for its frames afterwards, and no lock
+  held here orders those two events. Combining the steps into one critical
+  section only converts the error into a dropped buffer, because a callback
+  arriving inside it misses both locks.
+
+  Rotation is now a change of consumer rather than of transport. The tap keeps
+  writing into the same rings across the boundary; the completed writer stops
+  reading at exactly `boundaryFramePosition`, leaving the frames past it in the
+  ring for the writer that takes over, and the two loops share a serial queue
+  so they can never read it at the same time. The split is enforced where it is
+  observed instead of being raced for, so no callback can be on the wrong side
+  of it, no buffer is dropped, and a file is exactly as long as the boundary
+  reported for it. `receiverBuffers` already survived rotation this way.
+
+  The writer loop reading no further than its target also removes an older
+  hazard on the same path: a loop could previously still be writing when the
+  satisfied drain closed the file underneath it. One visible consequence at
+  stop: frames the capture path delivers *after* `stopRecording()` samples its
+  target are no longer appended to the file. Whether they landed there used to
+  depend on how quickly the drain cancelled the loop; now the final file is
+  exactly `boundaryFramePosition` frames long, every time.
+
+- Every recording-file rotation after the first no longer stalls for the full
+  five-second writer drain timeout. Drain targets are sampled from the
+  capture-wide frame counter, but each writer loop reported its progress from
+  zero, so the comparison `written >= target` was between two different
+  domains. They coincide for the first file, which is why a single rotation —
+  all the tests exercised — looked healthy. From the second rotation on the
+  target was unreachable: the drain waited out `writerDrainTimeout`,
+  force-closed the file, and recorded a write failure that the next
+  `stopRecording()` then had to explain away. A writer session now carries the
+  frame position its file starts at and reports progress in the capture's
+  domain. The audio was never affected — the writer keeps flushing until its
+  ring empties — but a three-rotation capture now settles in milliseconds
+  instead of fifteen seconds.
+
+- Two documentation claims about rotation that the code does not support.
+  `RecordingTimingSnapshot.capturedFrameCount` said it counted frames "for this
+  segment"; it is cumulative for the capture and is not reset by a rotation, so
+  reading it as a segment length after one is wrong by the length of the entire
+  preceding session. (The counter's behaviour is the useful one — resetting it
+  at a rotation would destroy `firstBufferHostTime` for the capture, which
+  multi-device alignment depends on — so the documentation follows the code.)
+  The `Recording` article said "the previous file is fully drained before the
+  rotation returns"; the drain is handed to a background task, and rotation
+  returns without waiting for it.
 
 - The DocC catalogue is now actually built. It lived at `Sources/AIO.docc`,
   outside any target, so SwiftPM never associated it with a module and nothing

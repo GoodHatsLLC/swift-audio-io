@@ -27,15 +27,26 @@
       recordingLifecycle.updateRecordingTapInterval(interval)
     }
 
-    /// Stops the current recording and returns the URL of the recorded file.
+    /// Stops the current recording and returns the recorded file along with the
+    /// persisted-frame position at which it ends.
+    ///
+    /// That position is the total frame count of the capture, across every
+    /// rotation, so segment lengths derived from
+    /// ``rotateRecordingFile()`` sum to it.
     @MainActor
-    public func stopRecording() async throws(RecordingError) -> URL {
+    public func stopRecording() async throws(RecordingError) -> RecordingCompletion {
       try await recordingLifecycle.stopRecording()
     }
 
-    /// Rotates the recording to a new file without interrupting audio capture.
+    /// Rotates the recording to a new file without interrupting audio capture,
+    /// returning the completed file and the persisted-frame position at which
+    /// it ends and the next file begins.
+    ///
+    /// Capture is continuous across the boundary: the previous writer is
+    /// drained to that position while the tap keeps running, so no frame is
+    /// dropped or written twice.
     @MainActor
-    public func rotateRecordingFile() async throws(RecordingError) -> URL {
+    public func rotateRecordingFile() async throws(RecordingError) -> RecordingRotation {
       try await recordingLifecycle.rotateRecordingFile()
     }
 

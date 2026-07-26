@@ -197,7 +197,7 @@
         backend.inject(
           channels: samples(channelCount: testCase.channelCount, frames: 1_024),
         )
-        let stoppedURL = try await engine.stopRecording()
+        let stoppedURL = try await engine.stopRecording().completedURL
 
         #expect(stoppedURL == url)
         #expect(fileHasBytes(at: url) == true)
@@ -235,7 +235,8 @@
           channels: samples(channelCount: testCase.channelCount, frames: 2_048),
         )
 
-        let rotatedURL = try await engine.rotateRecordingFile()
+        let rotation = try await engine.rotateRecordingFile()
+        let rotatedURL = rotation.completedURL
         #expect(rotatedURL == firstURL)
 
         let drainCompleted = await waitUntil(timeout: .seconds(3)) {
@@ -250,10 +251,16 @@
         backend.inject(
           channels: samples(channelCount: testCase.channelCount, frames: 2_048),
         )
-        let finalURL = try await engine.stopRecording()
+        let completion = try await engine.stopRecording()
+        let finalURL = completion.completedURL
 
         #expect(finalURL == nextURL)
         #expect(fileHasBytes(at: finalURL) == true)
+
+        // Every format splits at the same place: the boundary is a fact about
+        // the capture stream, not about the encoder.
+        #expect(rotation.boundaryFramePosition == 2_048)
+        #expect(completion.boundaryFramePosition == 4_096)
 
         if supportsAVAudioFileReadback(testCase.fileFormat) {
           let rotatedFile = try AVAudioFile(forReading: rotatedURL)
@@ -262,6 +269,21 @@
           #expect(finalFile.fileFormat.channelCount == AVAudioChannelCount(testCase.channelCount))
           #expect(rotatedFile.length > 0)
           #expect(finalFile.length > 0)
+
+          // What the boundary means on disk is format-dependent, and that is
+          // exactly what `preservesExactFrameCount` reports: for the PCM
+          // containers and FLAC each file holds precisely the frames between
+          // adjacent boundaries; AAC priming and tail padding make the encoded
+          // formats longer than the PCM they were handed.
+          if testCase.fileFormat.preservesExactFrameCount {
+            #expect(rotatedFile.length == rotation.boundaryFramePosition)
+            #expect(
+              finalFile.length
+                == completion.boundaryFramePosition - rotation.boundaryFramePosition,
+            )
+          } else {
+            #expect(rotatedFile.length >= rotation.boundaryFramePosition)
+          }
         }
       }
     }

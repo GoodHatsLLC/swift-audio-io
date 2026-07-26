@@ -73,6 +73,42 @@ public enum FileFormat: String, CaseIterable, CustomStringConvertible, Sendable,
     }
   }
 
+  /// Whether a file truncated mid-write remains valid up to the truncation
+  /// point — i.e. whether the format is self-framing rather than dependent on
+  /// a header or index finalized at close.
+  ///
+  /// Only ADTS qualifies: every AAC frame carries its own header, so a reader
+  /// can resynchronize from any point. The PCM containers all declare a data
+  /// length in a header written at close, and `m4a` has no `moov` atom until
+  /// then. FLAC is reported conservatively: its frames carry sync codes, so
+  /// many decoders will play a truncated stream, but `STREAMINFO`'s
+  /// total-samples field and the seektable are finalized at close, which makes
+  /// the outcome decoder-dependent.
+  ///
+  /// A consumer rotating files for crash-safety wants this to be `false`.
+  public var toleratesTruncation: Bool {
+    switch self {
+    case .adts: true
+    case .aac, .wav, .caf, .aiff, .flac: false
+    }
+  }
+
+  /// Whether decoding the written file yields exactly the frames that were
+  /// written, with no encoder priming or trailing padding.
+  ///
+  /// The PCM containers and FLAC are frame-exact. AAC — in either container —
+  /// is not: the encoder prepends priming frames and pads the tail out to a
+  /// whole 1024-frame AAC frame. `m4a` at least records the priming in its
+  /// edit list; ADTS has no container metadata to declare it at all.
+  ///
+  /// A consumer reassembling rotated files losslessly wants this to be `true`.
+  public var preservesExactFrameCount: Bool {
+    switch self {
+    case .wav, .aiff, .caf, .flac: true
+    case .aac, .adts: false
+    }
+  }
+
   public var maximumRecordingChannelCount: Int {
     switch self {
     case .aac, .adts, .flac:

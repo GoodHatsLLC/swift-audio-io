@@ -47,7 +47,7 @@ The canonical entry point is single-shot and typed-throws:
 ```swift
 let url = try await engine.startRecording(configuration: configuration)
 // …record for some duration…
-let savedURL = try await engine.stopRecording()
+let savedURL = try await engine.stopRecording().completedURL
 ```
 
 ``AIOEngine/startRecording(configuration:)`` returns the destination URL once
@@ -62,11 +62,45 @@ let engine = AIOEngine(recordingStartTimeout: .seconds(5))
 Cancel the task awaiting `startRecording` to withdraw startup intent. A second
 start while one is pending throws ``RecordingError/startInProgress``; a start
 while capture is active throws ``RecordingError/alreadyRecording``.
-``AIOEngine/stopRecording()`` returns the final saved URL.
+``AIOEngine/stopRecording()`` returns a ``RecordingCompletion`` carrying the
+final saved URL.
 
 ## Segmented recording
 
-``AIOEngine/rotateRecordingFile()`` closes the current file and continues capture into a new file without reinstalling the tap. The closed file appears in the events stream as a `.recordingStarted(url:, format:)` for the *new* URL; the previous file is fully drained before the rotation returns.
+``AIOEngine/rotateRecordingFile()`` closes the current file and continues capture into a new file without reinstalling the tap. The closed file appears in the events stream as a `.recordingStarted(url:, format:)` for the *new* URL. Capture is never interrupted, and nothing about the capture path changes at a rotation: the tap keeps writing into the same buffers, and only the writer draining them is replaced. The completed writer stops at exactly the reported boundary, leaving the frames past it for the writer that takes over, so no frame is dropped or written twice. That drain finishes in the background — the rotation does not wait for it — so a just-completed file may still be growing for a moment after the call returns.
+
+Rotation reports where the split happened, which is what lets a consumer treat
+the files as one recording:
+
+```swift
+var boundaries: [Int64] = []
+
+let rotation = try await engine.rotateRecordingFile()
+boundaries.append(rotation.boundaryFramePosition)   // where `rotation.completedURL` ends
+
+let completion = try await engine.stopRecording()
+boundaries.append(completion.boundaryFramePosition) // total frames of the capture
+```
+
+``RecordingRotation/boundaryFramePosition`` is the cumulative persisted-frame
+position at which the completed file ends and the next one begins, measured
+from the start of the capture. Consecutive rotations produce a strictly
+increasing sequence, so each file's frame length is the difference between
+adjacent boundaries, and the sequence closes on
+``RecordingCompletion/boundaryFramePosition`` — the capture's total.
+
+The value is sampled where the split is decided, so it already accounts for
+frames still queued for the completed file. Do not try to reconstruct it from
+``AIOEngine/recordingTimingSnapshot()``: that counter is cumulative for the
+whole capture, is not reset by a rotation, and races the capture callback while
+recording is active.
+
+Whether a boundary difference equals the file's *decoded* frame count depends
+on the format. ``FileFormat/preservesExactFrameCount`` reports it: the PCM
+containers and FLAC are frame-exact, while AAC adds encoder priming and pads
+the tail. ``FileFormat/toleratesTruncation`` reports the companion fact — for
+crash-safety rotation, the interesting formats are the ones where a file cut
+off mid-write is *not* readable.
 
 ## Observing lifecycle
 
@@ -112,6 +146,13 @@ See <doc:Events> for the full subscription pattern.
 - ``AIOEngine/stopRecording()``
 - ``AIOEngine/rotateRecordingFile()``
 - ``AIOEngine/isRecording``
+
+### Segment boundaries
+
+- ``RecordingRotation``
+- ``RecordingCompletion``
+- ``FileFormat/preservesExactFrameCount``
+- ``FileFormat/toleratesTruncation``
 
 ### Errors
 

@@ -103,6 +103,8 @@
   public typealias BufferReceiver = AIOContracts.BufferReceiver
   public typealias BufferReceiverToken = AIOContracts.BufferReceiverToken
   public typealias BufferTiming = AIOContracts.BufferTiming
+  public typealias RecordingCompletion = AIOContracts.RecordingCompletion
+  public typealias RecordingRotation = AIOContracts.RecordingRotation
 
   // MARK: - AIOEngineCore re-exports
 

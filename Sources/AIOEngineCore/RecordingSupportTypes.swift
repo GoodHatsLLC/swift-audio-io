@@ -175,17 +175,34 @@
   }
 
   package struct WriterSession {
-    package init(id: UUID, control: WriterControl, writer: any RecordingFileWriter, fileURL: URL) {
+    package init(
+      id: UUID,
+      control: WriterControl,
+      writer: any RecordingFileWriter,
+      fileURL: URL,
+      startFramePosition: Int64,
+    ) {
       self.id = id
       self.control = control
       self.writer = writer
       self.fileURL = fileURL
+      self.startFramePosition = startFramePosition
     }
 
     package let id: UUID
     package let control: WriterControl
     package let writer: any RecordingFileWriter
     package let fileURL: URL
+
+    /// Cumulative persisted-frame position at which this file begins — the
+    /// boundary reported by the rotation that opened it, and `0` for the first
+    /// file of a capture.
+    ///
+    /// Drain targets are sampled from the capture-wide counter, so the
+    /// session's own progress (`control.writtenSampleTime`) is kept in that
+    /// same domain by starting it here. Without the offset, every file after
+    /// the first is measured against a target it can never reach.
+    package let startFramePosition: Int64
   }
 
   // SAFETY: Sole field is a ManagedAtomic<Bool> — inherently thread-safe.

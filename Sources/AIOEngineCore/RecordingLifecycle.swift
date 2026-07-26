@@ -291,7 +291,15 @@
           if !owner.recordingLifecycleState.startAbortRequested {
             owner.eventSubject.send(AudioIOEvent.recordingStarted(url: url, format: fileFormat))
           }
-          writer.start(flushing: buffers, format: processingFormat, to: writeWriter)
+          // The first file of a capture starts at the origin of the frame
+          // domain, which `resetRecordingTiming()` established during graph
+          // preparation.
+          writer.start(
+            flushing: buffers,
+            format: processingFormat,
+            to: writeWriter,
+            startingAt: 0,
+          )
           if let receiverBuffers, let receiverTiming {
             receiver.start(
               buffers: receiverBuffers,
@@ -455,7 +463,7 @@
     }
 
     @MainActor
-    func stopRecording() async throws(RecordingError) -> URL {
+    func stopRecording() async throws(RecordingError) -> RecordingCompletion {
       // Pending startup belongs to the caller's start task. The caller withdraws
       // that intent by cancelling the task; stop is valid only after success.
       if owner.recordingLifecycleState.isStartingRecording {
@@ -464,7 +472,12 @@
       guard let url = owner.state[locked: \.recordingURL], owner.isRecording else {
         throw RecordingError.notRecording
       }
+      // Held across the stop: `gracefulStop` clears the lifecycle's reference to
+      // the session, but the session is where the drain target — this file's
+      // boundary — is recorded.
+      let stoppingSession = owner.recordingLifecycleState.writerSession
       await capture.gracefulStop()
+      let boundaryFramePosition = drainBoundary(of: stoppingSession)
       let fileExists = FileManager().fileExists(atPath: url.path)
       let fileSize = owner.fileSizeValue(for: url)
       let failure = writer.consumeFailure()
@@ -497,14 +510,32 @@
       }
       let finalSize = owner.fileSizeDescription(for: url)
       log.info(
-        "✅ Recording stopped: \(url.lastPathComponent, privacy: .public) size=\(finalSize, privacy: .public)",
+        "✅ Recording stopped: \(url.lastPathComponent, privacy: .public) size=\(finalSize, privacy: .public) frames=\(boundaryFramePosition, privacy: .public)",
       )
       owner.eventSubject.send(AudioIOEvent.recordingCompleted)
-      return url
+      return RecordingCompletion(
+        completedURL: url,
+        boundaryFramePosition: boundaryFramePosition,
+      )
+    }
+
+    /// The persisted-frame position the just-completed file was drained to.
+    ///
+    /// Prefers the target recorded on the writer session, because that is the
+    /// value sampled on the path that decided the stop. Falls back to the live
+    /// counter only for a session that never reached `prepareDrain` — sound
+    /// there because capture has already ended, which is precisely the
+    /// condition a rotation cannot rely on.
+    @MainActor
+    private func drainBoundary(of session: WriterSession?) -> Int64 {
+      guard let session, session.control.stopRequested.load(ordering: .relaxed) else {
+        return owner.recordingSampleTimeAtomic.load(ordering: .relaxed)
+      }
+      return session.control.targetSampleTime.load(ordering: .relaxed)
     }
 
     @MainActor
-    func rotateRecordingFile() async throws(RecordingError) -> URL {
+    func rotateRecordingFile() async throws(RecordingError) -> RecordingRotation {
       try await rotation.rotate()
     }
   }

@@ -1,7 +1,8 @@
 # Rotation boundary frame position + format concatenation facts
 
 Date: 2026-07-25
-Status: **proposed**
+Status: **implemented** — all three parts landed as proposed. Open questions
+resolved below.
 
 ## Summary
 
@@ -264,20 +265,89 @@ extended, because boundary errors are invisible at this granularity:
 
 ## Open questions
 
-1. **Is `flac` truncation-tolerant in practice?** The stream is frame-framed with
+1. **Is `flac` truncation-tolerant in practice?** ~~The stream is frame-framed with
    sync codes, so many decoders will play a truncated file, but `STREAMINFO`'s
-   total-samples field and the seektable are written at close. The honest answer
-   may be "decoder-dependent", in which case `toleratesTruncation` should be
-   `false` — the property is only useful if it is conservative.
+   total-samples field and the seektable are written at close.~~
+   **Resolved: `false`.** The honest answer is "decoder-dependent", and the
+   property is only useful if it is conservative.
 2. **Is `recordingSampleTimeAtomic` the right counter to expose**, or should the
    boundary come from the completed writer session's final `writtenSampleTime`
-   after its drain resolves? The drain target is available immediately and is the
-   *intended* boundary; the written count is the *achieved* one and differs only
-   when a drain fails — which is already surfaced as an error. The drain target
-   seems better, but the maintainer knows the failure modes.
-3. **One boundary type or two?** See the note under Source compatibility.
-   `RecordingRotation` and `RecordingCompletion` are proposed as separate types
-   so a stop cannot be mistaken for a rotation; a single
-   `RecordingSegmentBoundary` would be less surface for the same information.
+   after its drain resolves?
+   **Resolved: the drain target.** Two corrections to the framing above. First,
+   the counters differ in one more case than "when a drain fails": the capture
+   path increments `recordingSampleTimeAtomic` unconditionally, including for
+   frames it *dropped* because the writer ring was full
+   (`RecordingLifecycle+Capture.swift`), so under overflow the boundary
+   overstates a file's decoded frame count. That is documented on the property
+   — the boundary tracks the capture timeline, and a drop is a separately
+   reported fault. Second, the achieved count is not merely a different read:
+   rotation hands the old writer's drain to a background task and returns
+   immediately, so sourcing the boundary from `writtenSampleTime` would mean
+   awaiting that drain inside `rotate()` — adding drain latency to every
+   rotation.
+3. **One boundary type or two?**
+   **Resolved: two.** `RecordingRotation` and `RecordingCompletion` as
+   proposed, so a stop cannot be mistaken for a rotation.
 
 *(Resolved: `stopRecording()` does change too — see the Proposed API section.)*
+
+## What landing this turned up
+
+The multi-rotation test the plan asks for ("across N forced rotations…")
+immediately failed, and not on the boundary arithmetic — which was correct on
+the first run — but on a latent engine defect the plan did not anticipate.
+
+Drain targets are sampled from the capture-wide `recordingSampleTimeAtomic`,
+but `Writer.runLoop` tracked `writtenSampleTime` as a per-file counter starting
+at zero. The two domains coincide for the first file of a capture, which is why
+the existing single-rotation tests (`AIOEngineIntegrationTests.swift`,
+`AIOPlatformIntegrationTests.swift`) never saw it. From the second rotation on,
+the target was unreachable: every drain waited out the full five-second
+`writerDrainTimeout`, force-closed, and recorded a `WriteFailure` that the
+following `stopRecording()` then had to explain away via its
+"drain timed out but file exists with data" path.
+
+The audio was never wrong — the writer keeps flushing until its ring empties —
+which is exactly the plan's point that "boundary errors are invisible at this
+granularity". `WriterSession` now carries the frame position its file starts at
+and reports progress in the capture's domain. A three-rotation capture settles
+in milliseconds rather than fifteen seconds.
+
+Two further defects in the same area were fixed on top:
+
+**A stop during a rotation's drain re-aimed it.** `stopAndDrainAll` set one
+target — the capture's end — on every writer session, including ones a rotation
+had already drained to their own boundary. Those frames went into the next
+file's ring, so the completed writer could never reach the raised target: it
+waited out `writerDrainTimeout` and reported a failure for a complete file. The
+pre-existing `rotate recording file emits two files` test had been paying that
+five seconds on every run, passing the whole time. A session that already has a
+target now keeps it.
+
+**The boundary was raced for rather than enforced.** Rotation sampled the
+boundary, replaced the tap's ring buffers, and refreshed the tap's fallback
+snapshot as three separate steps, so a capture callback could take its rings
+from one side of the split and its frame position from the other — writing into
+the completed file's ring while being counted past that file's boundary.
+
+The first attempt was to make those three steps one `state` critical section.
+That narrows the window but cannot close it, and the residue is instructive:
+the tap must never block, so it reads its rings under `withLockIfAvailable` and
+accounts for its frames *afterwards*. Nothing the rotation side holds orders
+those two events. Worse, combining the steps means a callback arriving inside
+the critical section misses both locks and drops its buffer — trading a
+mis-numbered frame for a lost one.
+
+The fix is to stop swapping. **Rotation is a change of consumer, not of
+transport.** The tap keeps writing into the same rings across the boundary; the
+completed writer stops reading at exactly `boundaryFramePosition`, leaving the
+frames past it for the writer that takes over, and the two loops share a serial
+queue so they never read it at the same time. The split is now enforced where
+it is observed rather than raced for: no callback can be on the wrong side of
+it, nothing is dropped, and a file is exactly as long as its boundary claims.
+`receiverBuffers` already survived rotation untouched, which was the standing
+proof the pattern works.
+
+This also removes an older hazard on the same path — a writer loop could
+previously still be writing when the satisfied drain closed the file underneath
+it — and deletes the ring allocation and snapshot republishing from `rotate()`.

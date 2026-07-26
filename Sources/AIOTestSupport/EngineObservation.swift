@@ -144,6 +144,9 @@
         control: control,
         writer: writer,
         fileURL: fileURL,
+        // A first-file session: its frame domain is the capture's own, so the
+        // explicit `writtenSampleTime` above needs no offset.
+        startFramePosition: 0,
       )
       self.recording.writer.enqueueDrain(for: session)
       return WriterDrainTestHandle(

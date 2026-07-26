@@ -59,7 +59,7 @@ func aioQuickstart() async throws {
   )
 
   _ = try await engine.startRecording(configuration: configuration)
-  let recordedFile = try await engine.stopRecording()
+  let recordedFile = try await engine.stopRecording().completedURL
 
   _ = try await engine.play(url: recordedFile)
   await engine.stopPlayback()

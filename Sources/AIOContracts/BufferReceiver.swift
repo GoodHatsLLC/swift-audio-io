@@ -122,9 +122,14 @@ public struct RecordingTimingSnapshot: Sendable, Hashable {
   /// Equal to `firstBufferHostTime` until a second host-timed buffer is persisted.
   public let lastBufferHostTime: UInt64
 
-  /// Exact number of frames accepted by the recording writer for this segment, including buffers
-  /// without valid host time. This describes persisted PCM, not merely frames presented by the
-  /// capture callback.
+  /// Exact number of frames accepted by the recording writer since the capture started, including
+  /// buffers without valid host time. This describes persisted PCM, not merely frames presented by
+  /// the capture callback.
+  ///
+  /// The count is cumulative for the whole capture and is **not** reset by a file rotation, so it
+  /// is a segment length only when the capture wrote a single file. To locate the segments of a
+  /// rotated capture, use the boundaries returned by `rotateRecordingFile()` and `stopRecording()`
+  /// (``RecordingRotation`` / ``RecordingCompletion``).
   public let capturedFrameCount: UInt64
 
   /// Exact number of persisted frames between `firstBufferHostTime` and `lastBufferHostTime`.

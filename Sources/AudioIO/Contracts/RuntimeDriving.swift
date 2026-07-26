@@ -99,15 +99,25 @@
       configuration: RecordingConfiguration,
     ) async throws(RecordingError) -> URL
 
-    @MainActor func stopRecording() async throws(RecordingError) -> URL
-    @MainActor func rotateRecordingFile() async throws(RecordingError) -> URL
+    /// Stops capture and reports the final file with the persisted-frame
+    /// position at which it ends — the capture's total frame count.
+    @MainActor func stopRecording() async throws(RecordingError) -> RecordingCompletion
 
-    /// The host-time interval and exact persisted frame counts of the current (or just-finished)
-    /// recording segment, for multi-device alignment and effective sample-rate measurement.
+    /// Continues capture into a new file and reports the completed file with
+    /// the persisted-frame position at which it ends and the next begins.
+    @MainActor func rotateRecordingFile() async throws(RecordingError) -> RecordingRotation
+
+    /// The host-time interval and exact persisted frame counts of the current recording, for
+    /// multi-device alignment and effective sample-rate measurement.
     /// Returns `nil` if no persisted buffer with a valid host time has been captured since the last
     /// recording start. The value persists after ``stopRecording()`` until the next start, so read
     /// it immediately after stopping for a complete snapshot. Defaults to `nil` for conformers that
     /// do not surface capture timing.
+    ///
+    /// The counts are cumulative for the whole capture and do **not** reset at a rotation. For
+    /// per-file frame positions use the boundaries returned by ``rotateRecordingFile()`` and
+    /// ``stopRecording()``, which are sampled where the split is decided rather than read back
+    /// afterwards.
     @MainActor func recordingTimingSnapshot() -> RecordingTimingSnapshot?
 
     @discardableResult

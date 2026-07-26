@@ -19,11 +19,14 @@
     package struct Writer {
       let owner: AIOEngine
 
+      /// Starts the writer loop for a file that begins at
+      /// `startFramePosition` in the capture's cumulative frame domain.
       @MainActor
       package func start(
         flushing buffers: [SPSCRingBuffer<Float>],
         format: AVAudioFormat,
         to fileWriter: any RecordingFileWriter,
+        startingAt startFramePosition: Int64,
       ) {
         let control = WriterControl()
         let localMetrics = owner.metrics
@@ -57,7 +60,12 @@
           control: control,
           writer: fileWriter,
           fileURL: fileWriter.fileURL,
+          startFramePosition: startFramePosition,
         )
+        // Published before the loop runs so a drain requested immediately after
+        // start — a rotation with nothing captured in between — sees a written
+        // position in the target's domain rather than a bare zero.
+        control.writtenSampleTime.store(startFramePosition, ordering: .relaxed)
         owner.recordingLifecycleState.writerSession = session
         let writeBufferSize = 1024
         let preAllocatedBuffer = Transferring(
@@ -74,6 +82,7 @@
             writeBuffer: preAllocatedBuffer.value,
             control: control,
             metrics: localMetrics,
+            startFramePosition: startFramePosition,
             shouldCancel: { [control] in
               control.cancelRequested.load(ordering: .relaxed)
             },
@@ -158,13 +167,27 @@
         }
       }
 
+      /// Requests a drain of `session` up to `targetSampleTime`, the
+      /// persisted-frame position its file ends at.
+      ///
+      /// The session's loop reads no further than that position, leaving the
+      /// frames past it in the ring for whichever writer takes over, so the
+      /// target is the exact boundary between the two files rather than an
+      /// approximation of it; see ``RecordingRotation``.
+      ///
+      /// `logsLiveBuffers` says whether the session still owns the ring
+      /// buffers in `state`, which decides whether logging their depths
+      /// describes this file or another one.
       @MainActor
-      package func enqueueDrain(for session: WriterSession) {
-        let target = owner.recordingSampleTimeAtomic.load(ordering: .relaxed)
+      package func enqueueDrain(
+        for session: WriterSession,
+        upTo targetSampleTime: Int64,
+        logsLiveBuffers: Bool,
+      ) {
         prepareDrain(
           for: session,
-          targetSampleTime: target,
-          logBuffers: session.id == owner.recordingLifecycleState.writerSession?.id,
+          targetSampleTime: targetSampleTime,
+          logBuffers: logsLiveBuffers,
         )
         owner.recordingLifecycleState.drainingWriterSessions.append(session)
         owner.recordingCallbackTasks.run { [weak owner] in
@@ -179,6 +202,24 @@
             }
           }
         }
+      }
+
+      /// Samples the current capture position and drains `session` to it,
+      /// returning that position.
+      ///
+      /// For a teardown of the live session, where the tap's rings are not
+      /// being handed to a successor, the live counter and the session's
+      /// boundary are the same value.
+      @MainActor
+      @discardableResult
+      package func enqueueDrain(for session: WriterSession) -> Int64 {
+        let target = owner.recordingSampleTimeAtomic.load(ordering: .relaxed)
+        enqueueDrain(
+          for: session,
+          upTo: target,
+          logsLiveBuffers: session.id == owner.recordingLifecycleState.writerSession?.id,
+        )
+        return target
       }
 
       @MainActor
@@ -198,6 +239,19 @@
           if Task.isCancelled {
             log.warning("🧹 stopAndDrainAll cancelled before stop request")
             return
+          }
+          // A session that already has a target was closed by a rotation,
+          // which drained it to the boundary its file ends at. The frames
+          // between that boundary and the capture's end went into a different
+          // ring, so raising its target here would ask this writer for frames
+          // it can never see: the drain would wait out `writerDrainTimeout`
+          // and report a failure for a file that is already complete. Its
+          // in-flight drain is joined below instead.
+          guard !session.control.stopRequested.load(ordering: .relaxed) else {
+            log.info(
+              "🧹 Writer \(session.fileURL.lastPathComponent, privacy: .public) already drains to its rotation boundary \(session.control.targetSampleTime.load(ordering: .relaxed), privacy: .public); joining",
+            )
+            continue
           }
           log.info(
             "🧹 Stop requested for writer \(session.fileURL.lastPathComponent, privacy: .public)",
@@ -255,6 +309,11 @@
           || failure.error.message.localizedCaseInsensitiveContains("writer drain timed out")
       }
 
+      /// Drains `audioBuffers` into `writer` until cancelled.
+      ///
+      /// `startFramePosition` is where this file begins in the capture's
+      /// cumulative frame domain. Progress is reported in that domain, because
+      /// that is the domain drain targets are sampled in.
       static func runLoop(
         writer: any RecordingFileWriter,
         format: AVAudioFormat,
@@ -262,6 +321,7 @@
         writeBuffer: AVAudioPCMBuffer?,
         control: WriterControl,
         metrics: EngineMetrics,
+        startFramePosition: Int64,
         clock: ContinuousClock = .continuous,
         shouldCancel: @escaping @Sendable () -> Bool,
         errorHandler: @escaping @Sendable (ErrorContext) -> Void,
@@ -274,7 +334,7 @@
         let bufferSize = 1024
         var stopRequestedAt: ContinuousClock.Instant?
         var lastStallLog = clock.now
-        var writtenSampleTime: Int64 = 0
+        var writtenSampleTime: Int64 = startFramePosition
         var idleBackoffMillis: Double = 1
 
         while true {
@@ -282,8 +342,22 @@
           if let tapErrorPoll, let onTapError, let code = tapErrorPoll() {
             onTapError(code)
           }
+          // Never read past the position this file ends at. The ring buffers
+          // outlive the file — a rotation hands the same ones to the next
+          // writer — so frames beyond the target belong to that writer, and
+          // consuming them here would both misplace them and leave the file
+          // longer than the boundary reported for it.
+          //
+          // Stopping exactly at the target also means no write can follow the
+          // close that the satisfied drain performs: past this point the loop
+          // only idles.
+          var chunkSize = bufferSize
+          if control.stopRequested.load(ordering: .relaxed) {
+            let remaining = control.targetSampleTime.load(ordering: .relaxed) - writtenSampleTime
+            chunkSize = remaining <= 0 ? 0 : Int(min(remaining, Int64(bufferSize)))
+          }
           let result = flushChunk(
-            size: bufferSize,
+            size: chunkSize,
             from: audioBuffers,
             in: format,
             to: writer,

@@ -131,18 +131,21 @@
 
     /// Pushes PCM through the same ring buffers the real tap callback writes
     /// to, so the writer and receiver loops see genuine traffic.
+    /// Returns whether the writer ring accepted the frames; see
+    /// ``AIOEngine/injectRecordingSamples(channels:hostTime:sourceSampleTime:sourceSampleRate:)``.
+    @discardableResult
     package func inject(
       channels: [[Float]],
       hostTime: UInt64? = nil,
       sourceSampleTime: Int64? = nil,
       sourceSampleRate: Double? = nil,
-    ) {
+    ) -> Bool {
       owner?.injectRecordingSamples(
         channels: channels,
         hostTime: hostTime,
         sourceSampleTime: sourceSampleTime,
         sourceSampleRate: sourceSampleRate,
-      )
+      ) ?? false
     }
   }
 

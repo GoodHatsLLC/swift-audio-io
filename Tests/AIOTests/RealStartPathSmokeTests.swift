@@ -38,7 +38,7 @@
       backend.inject(channels: [[Float](repeating: 0.25, count: 1_024)])
 
       let stopped = try await engine.stopRecording()
-      #expect(stopped == url)
+      #expect(stopped.completedURL == url)
       #expect(!engine.isRecording)
     }
   }

@@ -23,8 +23,8 @@
       let samples = (0..<480).map { Float($0) / 480.0 }
       backend.inject(channels: [samples])
 
-      let stoppedURL = try await engine.stopRecording()
-      try #require(stoppedURL == url)
+      let stopped = try await engine.stopRecording()
+      try #require(stopped.completedURL == url)
 
       let size = try #require(url.resourceValues(forKeys: [.fileSizeKey]).fileSize)
       #expect(size > 0)
@@ -94,9 +94,9 @@
 
       backend.inject(channels: [ramp(count: 256)])
 
-      let rotatedURL = try await engine.rotateRecordingFile()
-      defer { try? FileManager.default.removeItem(at: rotatedURL) }
-      #expect(rotatedURL == firstURL)
+      let rotation = try await engine.rotateRecordingFile()
+      defer { try? FileManager.default.removeItem(at: rotation.completedURL) }
+      #expect(rotation.completedURL == firstURL)
 
       let rotatedOutputURL = try #require(
         await MainActor.run { engine.currentRecordingURL() },
@@ -104,12 +104,16 @@
       #expect(rotatedOutputURL != firstURL)
 
       backend.inject(channels: [ramp(count: 256)])
-      let finalURL = try await engine.stopRecording()
-      defer { try? FileManager.default.removeItem(at: finalURL) }
+      let completion = try await engine.stopRecording()
+      defer { try? FileManager.default.removeItem(at: completion.completedURL) }
 
-      let rotatedSize = try #require(rotatedURL.resourceValues(forKeys: [.fileSizeKey]).fileSize)
-      let finalSize = try #require(finalURL.resourceValues(forKeys: [.fileSizeKey]).fileSize)
-      #expect(finalURL != rotatedURL)
+      let rotatedSize = try #require(
+        rotation.completedURL.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+      )
+      let finalSize = try #require(
+        completion.completedURL.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+      )
+      #expect(completion.completedURL != rotation.completedURL)
       #expect(rotatedSize > 0)
       #expect(finalSize > 0)
     }
@@ -191,8 +195,8 @@
       let right = (0..<480).map { 1.0 - Float($0) / 480.0 }
       backend.inject(channels: [left, right])
 
-      let stoppedURL = try await engine.stopRecording()
-      try #require(stoppedURL == url)
+      let stopped = try await engine.stopRecording()
+      try #require(stopped.completedURL == url)
 
       let size = try #require(url.resourceValues(forKeys: [.fileSizeKey]).fileSize)
       #expect(size > 0)

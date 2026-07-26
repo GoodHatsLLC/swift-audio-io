@@ -29,7 +29,7 @@ let configuration = RecordingConfiguration(
 
 let url = try await engine.startRecording(configuration: configuration)
 // …
-let saved = try await engine.stopRecording()
+let saved = try await engine.stopRecording().completedURL
 ```
 
 ## Permission
