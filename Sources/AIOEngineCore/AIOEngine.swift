@@ -214,8 +214,18 @@
     @ObservationIgnored package nonisolated(unsafe) var jogSourceNode: AVAudioSourceNode?
     @ObservationIgnored package nonisolated(unsafe) var jogTimePitchNode: AVAudioUnitTimePitch?
     package let engineControlQueue = DispatchQueue(label: "AIOEngine.engine-control", qos: .default)
-    package let recordingInfrastructure = RecordingInfrastructure()
-    @MainActor package let recordingLifecycleState: RecordingLifecycleState
+
+    /// The recording lifecycle, which owns all recording state.
+    ///
+    /// Held once for the engine's lifetime rather than re-materialised per
+    /// call, so `isRecording`, the ring buffers, the writer session and the
+    /// capture backend all have exactly one owner.
+    package let recording = RecordingLifecycle()
+
+    package var recordingInfrastructure: RecordingInfrastructure { recording.infrastructure }
+    @MainActor package var recordingLifecycleState: RecordingLifecycleState {
+      recording.lifecycleState
+    }
     @MainActor package let audioRecoveryState: AudioRecoveryState
     @MainActor package var playbackRuntimeContext = PlaybackRuntimeContext()
 
@@ -502,8 +512,9 @@
       self.audioSessionAuthority = audioSessionAuthority
       self.recordingStartTimeout = max(.zero, recordingStartTimeout)
       self.recordingEnvironment = recordingEnvironment
-      recordingLifecycleState = RecordingLifecycleState()
       audioRecoveryState = AudioRecoveryState()
+      // Every stored property is initialized, so `self` can be handed over.
+      recording.owner = self
       runOnEngineControlQueue { [engine, player] in
         engine.attach(player)
       }

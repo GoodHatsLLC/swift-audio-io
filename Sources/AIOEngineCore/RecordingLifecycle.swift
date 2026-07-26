@@ -12,17 +12,39 @@
   private let log = SystemLog.make()
 
   extension AIOEngine {
-    var recordingLifecycle: RecordingLifecycle {
-      RecordingLifecycle(owner: self)
-    }
+    var recordingLifecycle: RecordingLifecycle { recording }
   }
 
-  package struct RecordingLifecycle {
-    package let owner: AIOEngine
+  /// The ordered transition from recording intent through readiness, active
+  /// capture, file rotation, and either graceful or immediate stop.
+  ///
+  /// This is the sole owner of recording state. Callers observe and control it
+  /// through ``AIOEngine``, which holds exactly one of these for its lifetime.
+  ///
+  /// The lifecycle keeps a back-reference to the engine for the things that are
+  /// genuinely engine-level rather than recording-level: the `AVAudioEngine`
+  /// graph and its control queue, the player node, the event subject, and the
+  /// immutable configuration (clock, start timeout, session authority,
+  /// recording environment).
+  ///
+  // SAFETY: the individual stores carry their own synchronization —
+  // `infrastructure` is `@unchecked Sendable` with atomics and a lock, and
+  // `lifecycleState` is `@MainActor`. This type adds no unsynchronized state
+  // of its own beyond the immutable `owner` reference.
+  package final class RecordingLifecycle: @unchecked Sendable {
+    /// The engine that owns this lifecycle. `unowned` is safe because the
+    /// engine holds the lifecycle as a stored `let`, so it always outlives it.
+    /// Implicitly unwrapped because the engine must finish initializing its own
+    /// stored properties before it can hand `self` over.
+    package unowned var owner: AIOEngine!
 
-    package init(owner: AIOEngine) {
-      self.owner = owner
-    }
+    /// Queues, atomics, timeouts and the locked ``RecordingState``.
+    package let infrastructure = RecordingInfrastructure()
+
+    /// Main-actor-isolated, observable lifecycle state.
+    @MainActor package let lifecycleState = RecordingLifecycleState()
+
+    package init() {}
 
     @MainActor
     package func gracefulStop() async {
@@ -186,7 +208,7 @@
 
         do {
           // (c) OFF-MAIN: blocking bring-up + engine/backend start, never on main.
-          try RecordingLifecycle(owner: owner).capture.prepareRecordingGraph(
+          try owner.recording.capture.prepareRecordingGraph(
             configuration: configuration,
             inputs: inputs,
           )
@@ -344,7 +366,7 @@
       }
 
       do throws(RecordingError) {
-        try RecordingLifecycle(owner: owner).capture.validateRecordingConfiguration(configuration)
+        try owner.recording.capture.validateRecordingConfiguration(configuration)
         let alreadyActive = owner.isRecording || owner.isPlaying
         if !alreadyActive {
           do throws(SessionError) {
@@ -357,7 +379,7 @@
           throw RecordingError.cancelled
         }
 
-        return RecordingLifecycle(owner: owner).capture.makePreparationInputs(
+        return owner.recording.capture.makePreparationInputs(
           configuration: configuration,
           alreadyActive: alreadyActive,
         )
@@ -421,7 +443,7 @@
         [weak owner] in
         guard let owner else { return }
         do {
-          try await RecordingLifecycle(owner: owner).capture.reconfigureTapForIntervalChange(
+          try await owner.recording.capture.reconfigureTapForIntervalChange(
             configuration: updated,
           )
         } catch {

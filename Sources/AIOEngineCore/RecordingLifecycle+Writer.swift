@@ -35,7 +35,7 @@
           callbackTasks.run { [weak owner] in
             await MainActor.run {
               guard let owner else { return }
-              RecordingLifecycle(owner: owner).writer.recordFailure(
+              owner.recording.writer.recordFailure(
                 error,
                 url: fileWriter.fileURL,
               )
@@ -169,7 +169,7 @@
         owner.recordingLifecycleState.drainingWriterSessions.append(session)
         owner.recordingCallbackTasks.run { [weak owner] in
           guard let owner else { return }
-          await RecordingLifecycle(owner: owner).writer.drain(
+          await owner.recording.writer.drain(
             session,
             notifyOnFailure: true,
           )

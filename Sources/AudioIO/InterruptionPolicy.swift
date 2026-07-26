@@ -253,7 +253,7 @@
         return
       }
 
-      await RecordingLifecycle(owner: owner).gracefulStop()
+      await owner.recording.gracefulStop()
       owner.eventSubject.send(.recordingFailed)
     }
 

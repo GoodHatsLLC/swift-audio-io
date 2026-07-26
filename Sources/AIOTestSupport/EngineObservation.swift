@@ -86,7 +86,7 @@
       processingFormat: AVAudioFormat,
     ) -> @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void {
       { [self] buffer, time in
-        RecordingLifecycle(owner: self).capture.processAudio(
+        self.recording.capture.processAudio(
           buffer: buffer,
           time: time,
           to: processingFormat,
@@ -145,7 +145,7 @@
         writer: writer,
         fileURL: fileURL,
       )
-      RecordingLifecycle(owner: self).writer.enqueueDrain(for: session)
+      self.recording.writer.enqueueDrain(for: session)
       return WriterDrainTestHandle(
         id: session.id,
         fileURL: fileURL,

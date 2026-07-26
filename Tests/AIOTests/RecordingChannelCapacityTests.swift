@@ -44,7 +44,7 @@
       let configuration = makeConfiguration(fileFormat: .flac, channels: .init(platform: 9))
 
       do {
-        try RecordingLifecycle(owner: engine).capture.validateRecordingChannelCapacity(
+        try engine.recording.capture.validateRecordingChannelCapacity(
           for: configuration,
         )
         Issue.record("Expected unsupportedChannelCount")
@@ -63,7 +63,7 @@
     func `runtime allocates the requested supported channel count`() {
       let engine = AIOEngine()
 
-      let buffers = RecordingLifecycle(owner: engine).capture.makeAudioBuffers(
+      let buffers = engine.recording.capture.makeAudioBuffers(
         sampleRate: 48_000,
         channelCount: 32,
       )
@@ -106,7 +106,7 @@
           channels: .init(platform: AVAudioChannelCount(channelCount)),
         )
 
-        try RecordingLifecycle(owner: engine).capture.validateRecordingChannelCapacity(
+        try engine.recording.capture.validateRecordingChannelCapacity(
           for: configuration,
         )
         #expect(
@@ -140,7 +140,7 @@
           channels: .init(platform: AVAudioChannelCount(channelCount)),
         )
         let processingFormat = try #require(configuration.processingFormat)
-        let buffers = RecordingLifecycle(owner: engine).capture.makeAudioBuffers(
+        let buffers = engine.recording.capture.makeAudioBuffers(
           sampleRate: 48_000,
           channelCount: channelCount,
         )

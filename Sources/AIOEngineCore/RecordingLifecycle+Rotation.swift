@@ -78,7 +78,7 @@
           throw RecordingError.invalidConfiguration(details: "Invalid processing format")
         }
 
-        let lifecycle = RecordingLifecycle(owner: owner)
+        let lifecycle = owner.recording
         let (newWriter, newURL) = try await prepareFile(
           configuration: configuration,
           writerBackend: owner.recordingLifecycleState.writerBackend,

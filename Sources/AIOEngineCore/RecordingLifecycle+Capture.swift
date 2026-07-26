@@ -113,7 +113,7 @@
               backend = try CoreAudioSystemAudioBackend(session: session) {
                 [weak owner] buffer, time in
                 guard let owner else { return }
-                RecordingLifecycle(owner: owner).capture.processAudio(
+                owner.recording.capture.processAudio(
                   buffer: buffer,
                   time: time,
                   to: processingFormatBox.value,
@@ -534,7 +534,7 @@
           owner.recordingLifecycleState.writerSession != nil
           || !owner.recordingLifecycleState.drainingWriterSessions.isEmpty
         if let current = owner.recordingLifecycleState.writerSession {
-          RecordingLifecycle(owner: owner).writer.enqueueDrain(for: current)
+          owner.recording.writer.enqueueDrain(for: current)
           owner.recordingLifecycleState.writerSession = nil
         }
         cleanUp(closeFile: !hasActiveWriter)
@@ -569,7 +569,7 @@
         let stopDrainTimeoutPolicy = TimeoutPolicy(stopDrainTimeout)
         let drainCompleted = await withTaskGroup(of: Bool.self) { group in
           group.addTask { [self] in
-            await RecordingLifecycle(owner: owner).writer.stopAndDrainAll(
+            await owner.recording.writer.stopAndDrainAll(
               notifyOnFailure: false,
             )
             return true
@@ -586,7 +586,7 @@
           let url = owner.state[locked: \.recordingURL]
           let error = WriterDrainTimeoutError(url: url, timeout: stopDrainTimeout)
           log.error("stopAndDrainAllWriterSessions timed out: \(error, privacy: .public)")
-          let writer = RecordingLifecycle(owner: owner).writer
+          let writer = owner.recording.writer
           writer.cancelAll()
           writer.recordFailure(ErrorContext(error), url: url)
         }
@@ -598,7 +598,7 @@
 
       @MainActor
       func cleanUp(closeFile: Bool = true) {
-        RecordingLifecycle(owner: owner).receiver.stop()
+        owner.recording.receiver.stop()
         owner.tapErrorCode.store(0, ordering: .relaxed)
         let (writer, backend) = owner.state {
           state -> ((any RecordingFileWriter)?, (any RecordingCaptureBackend)?) in

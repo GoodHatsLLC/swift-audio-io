@@ -23,7 +23,7 @@
     func attempt(
       configuration: RecordingConfiguration,
     ) async throws(RecordingError) -> URL {
-      try await RecordingLifecycle(owner: owner).attemptRecordingStart(
+      try await owner.recording.attemptRecordingStart(
         configuration: configuration,
       )
     }

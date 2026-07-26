@@ -37,7 +37,7 @@
       let backend = FakeCaptureBackend()
       engine.state[locked: \.captureBackend] = backend
 
-      RecordingLifecycle(owner: engine).capture.cleanUp()
+      engine.recording.capture.cleanUp()
 
       #expect(backend.cleanupCalls == 1)
       #expect(engine.state.withLock { $0.captureBackend == nil })
@@ -50,7 +50,7 @@
       let backend = FakeCaptureBackend()
       engine.state[locked: \.captureBackend] = backend
 
-      RecordingLifecycle(owner: engine).capture.hardStop()
+      engine.recording.capture.hardStop()
 
       #expect(backend.stopModes == [.immediate])
       #expect(backend.cleanupCalls == 1)
@@ -64,7 +64,7 @@
       let backend = FakeCaptureBackend()
       engine.state[locked: \.captureBackend] = backend
 
-      await RecordingLifecycle(owner: engine).gracefulStop()
+      await engine.recording.gracefulStop()
 
       #expect(backend.stopModes == [.graceful])
       #expect(backend.cleanupCalls == 1)
@@ -76,7 +76,7 @@
     @Test
     func `cleanUp without a backend is a no-op for the backend path`() {
       let engine = AIOEngine()
-      RecordingLifecycle(owner: engine).capture.cleanUp()
+      engine.recording.capture.cleanUp()
       #expect(engine.state.withLock { $0.captureBackend == nil })
     }
 
@@ -87,7 +87,7 @@
       let (engine, _, _) = AIOEngine.fakeRecording(onTeardown: { teardownCalls.increment() })
       engine.state[locked: \.captureBackend] = MicrophoneCaptureBackend(owner: engine)
 
-      RecordingLifecycle(owner: engine).capture.hardStop()
+      engine.recording.capture.hardStop()
 
       #expect(teardownCalls.value == 1)
       #expect(engine.state.withLock { $0.captureBackend == nil })

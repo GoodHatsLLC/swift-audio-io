@@ -260,7 +260,7 @@
         bufferSize: tapConfig.bufferSize,
         format: inputFormat,
         block: { @Sendable [self] buffer, time in
-          RecordingLifecycle(owner: self).capture.processAudio(
+          self.recording.capture.processAudio(
             buffer: buffer,
             time: time,
             to: processingFormat,
