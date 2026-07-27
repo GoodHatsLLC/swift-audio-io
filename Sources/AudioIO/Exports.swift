@@ -44,7 +44,28 @@
   public typealias AudioEnvironment = AIOAudioSession.AudioEnvironment
   public typealias AudioEnvironmentManager = AIOAudioSession.AudioEnvironmentManager
   public typealias AudioInput = AIOAudioSession.AudioInput
+  public typealias AppliedAudioInputConfiguration =
+    AIOAudioSession.AppliedAudioInputConfiguration
+  public typealias AudioChannelPreference = AIOAudioSession.AudioChannelPreference
+  public typealias AudioInputConfigurationCapabilities =
+    AIOAudioSession.AudioInputConfigurationCapabilities
+  public typealias AudioInputConfigurationDeferral =
+    AIOAudioSession.AudioInputConfigurationDeferral
+  public typealias AudioInputConfigurationIssue = AIOAudioSession.AudioInputConfigurationIssue
+  public typealias AudioInputConfigurationReconciliation =
+    AIOAudioSession.AudioInputConfigurationReconciliation
+  public typealias AudioInputConfigurationRequest =
+    AIOAudioSession.AudioInputConfigurationRequest
+  public typealias AudioInputConfigurationState = AIOAudioSession.AudioInputConfigurationState
+  public typealias AudioInputPreference = AIOAudioSession.AudioInputPreference
+  public typealias AudioInputProcessingPreference =
+    AIOAudioSession.AudioInputProcessingPreference
   public typealias AudioInputSelection = AIOAudioSession.AudioInputSelection
+  public typealias AudioSampleRatePreference = AIOAudioSession.AudioSampleRatePreference
+  public typealias AudioSourceConfigurationOption =
+    AIOAudioSession.AudioSourceConfigurationOption
+  public typealias AudioSourcePreference = AIOAudioSession.AudioSourcePreference
+  public typealias AudioSourceSelection = AIOAudioSession.AudioSourceSelection
   public typealias AudioPortSnapshot = AIOAudioSession.AudioPortSnapshot
   public typealias AudioRouteChange = AIOAudioSession.AudioRouteChange
   public typealias AudioRouteChangeReason = AIOAudioSession.AudioRouteChangeReason
@@ -53,8 +74,6 @@
   public typealias AudioSystemEvent = AIOAudioSession.AudioSystemEvent
   public typealias AudioSessionConfiguration = AIOAudioSession.AudioSessionConfiguration
   public typealias AudioSource = AIOAudioSession.AudioSource
-  public typealias AudioChannelConfigurationAvailability =
-    AIOAudioSession.AudioChannelConfigurationAvailability
   public typealias AnyErrorManager = AIOAudioSession.AnyErrorManager
   public typealias AudioIOError = AIOAudioSession.AudioIOError
   public typealias BitDepth = AIOAudioSession.BitDepth
@@ -93,6 +112,8 @@
   public typealias Reporter = AIOAudioSession.Reporter
   public typealias SampleRate = AIOAudioSession.SampleRate
   public typealias SessionError = AIOAudioSession.SessionError
+  public typealias SettledMicrophoneInputConfiguration =
+    AIOAudioSession.SettledMicrophoneInputConfiguration
   public typealias SourceLocation = AIOAudioSession.SourceLocation
   public typealias TypeDescribable = AIOAudioSession.TypeDescribable
 

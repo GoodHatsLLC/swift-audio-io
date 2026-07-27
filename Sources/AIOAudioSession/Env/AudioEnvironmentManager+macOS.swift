@@ -12,7 +12,8 @@
     public enum ManagerError: AudioError {
       case alreadyRunning
       case notRunning
-      case unsupportedOperation
+      case inputConfigurationDeferred(AudioInputConfigurationDeferral)
+      case inputConfigurationUnsatisfied(AudioInputConfigurationIssue)
 
       public var description: String {
         switch self {
@@ -20,8 +21,10 @@
           "AudioEnvironmentManager is already running"
         case .notRunning:
           "AudioEnvironmentManager is not running"
-        case .unsupportedOperation:
-          "Requested audio operation is unsupported on this platform"
+        case .inputConfigurationDeferred(let deferral):
+          "Input configuration is deferred: \(deferral)"
+        case .inputConfigurationUnsatisfied(let issue):
+          "Input configuration is unsatisfied: \(issue)"
         }
       }
     }
@@ -50,52 +53,36 @@
     ) {
       self.env = env
       self.errorManager = errorManager
-      self.defaults = defaults
       self.platformAudioBackend = platformAudioBackend
-      _useMeasurement = defaults.bool(forKey: StorageKey.useMeasurement)
-      _availableInputs = []
-      _selectedInput = nil
-      _availableSources = []
-      _selectedSource = nil
-      _sampleRate = .dvd
-      _channels = .mono
-      sessionConfiguration = .recordingConfiguration(useMeasurement: _useMeasurement)
+      let coordinator = AudioInputConfigurationCoordinator(
+        defaults: defaults,
+        adapter: MacOSAudioInputConfigurationAdapter(backend: platformAudioBackend),
+      )
+      inputConfigurationCoordinator = coordinator
+      inputConfigurationState = coordinator.state
     }
 
     private let env: AudioEnvironment
     private let errorManager: any ErrorManaging
-    private let defaults: UserDefaults
     private let platformAudioBackend: any PlatformAudioBackend
+    private let inputConfigurationCoordinator: AudioInputConfigurationCoordinator
     private let callbackTasks = MainActorTaskRunner()
-    private var sessionController: AudioSessionController { .init(owner: self) }
     private var routeObserver: AudioRouteObserver { .init(owner: self) }
     private var backendRouteTask: MainActorOwnedWork?
     private var currentRoute = AudioRouteSnapshot(inputs: [], outputs: [])
 
-    private enum StorageKey {
-      static let useMeasurement = "aio.audio_env.use_measurement"
-    }
-
     public var sessionConfiguration: AudioSessionConfiguration = .recordingConfiguration
-
     public private(set) var isRunning = false
     public private(set) var isReady = false
     public private(set) var isAudioSessionActive = false
+    public private(set) var inputConfigurationState: AudioInputConfigurationState
 
-    private var _selectedInput: AudioInput?
-    /// The device id of the user's explicit input selection. Unlike
-    /// `_selectedInput` (the resolved selection), this survives the device
-    /// disappearing so the selection re-attaches when the device returns.
-    /// `nil` means "follow the system default input".
-    private var _explicitInputID: String?
-    /// The system-default input device id from the most recent platform refresh.
-    private var _defaultInputID: String?
-    private var _availableInputs: [AudioInput]
-    private var _selectedSource: AudioSource?
-    private var _availableSources: [AudioSource]
-    private var _sampleRate: SampleRate
-    private var _channels: ChannelCount
-    private var _useMeasurement: Bool
+    public var recordingUsesMeasurementMode: Bool {
+      let processing =
+        inputConfigurationState.applied?.processing
+        ?? inputConfigurationState.requested.processing
+      return processing == .measurement
+    }
 
     public var onRequestAudioSessionActive: (@MainActor (Bool) -> Void)?
 
@@ -118,170 +105,72 @@
       }
     }
 
-    public var shouldAutoSelectStereoWhenAvailable: Bool {
-      true
+    public func requestInputConfiguration(
+      _ requested: AudioInputConfigurationRequest,
+    ) async -> AudioInputConfigurationState {
+      sessionConfiguration = .recordingConfiguration(
+        useMeasurement: requested.processing == .measurement,
+      )
+      inputConfigurationState = await inputConfigurationCoordinator.submit(
+        requested,
+        isRunning: isRunning,
+        isActive: isAudioSessionActive,
+      )
+      return inputConfigurationState
     }
 
-    public var useMeasurement: Bool {
-      get { _useMeasurement }
-      set {
-        _useMeasurement = newValue
-        defaults.set(newValue, forKey: StorageKey.useMeasurement)
-        sessionConfiguration = .recordingConfiguration(useMeasurement: newValue)
+    public func settleInputConfiguration() async throws(ManagerError)
+      -> SettledMicrophoneInputConfiguration
+    {
+      try await readySignal()
+      guard isAudioSessionActive else {
+        throw .inputConfigurationDeferred(.sessionInactive)
       }
+      inputConfigurationState = await inputConfigurationCoordinator.reconcile(
+        isRunning: isRunning,
+        isActive: true,
+      )
+      return try settledConfiguration(from: inputConfigurationState)
     }
 
-    public var recordingUsesMeasurementMode: Bool { useMeasurement }
-
-    public var channels: ChannelCount {
-      _channels
-    }
-
-    public var availableSources: [AudioSource] {
-      _availableSources
-    }
-
-    public var availableInputs: [AudioInput] {
-      _availableInputs
-    }
-
-    public var likelySupportedSampleRates: [SampleRate] {
-      Array(Set(SampleRate.common + [_sampleRate])).sorted()
-    }
-
-    public var sampleRate: SampleRate {
-      get { _sampleRate }
-      set { setSampleRate(newValue, persistPreference: true) }
-    }
-
-    public func setSampleRate(_ newValue: SampleRate, persistPreference: Bool = true) {
-      _ = persistPreference
-      _sampleRate = newValue
-    }
-
-    public var selectedInput: AudioInput? {
-      get { _selectedInput }
-      set {
-        _explicitInputID = newValue?.id
-        _selectedInput = newValue
-        updateDerivedSourceState()
-      }
-    }
-
-    public var preferredInput: AudioInput? {
-      _selectedInput
-    }
-
-    /// The system-default input, resolved against the current input list.
-    private var defaultInput: AudioInput? {
-      guard let id = _defaultInputID else { return nil }
-      return _availableInputs.first(where: { $0.id == id })
-    }
-
-    /// The input that capability state (sources/channels) derives from: the
-    /// explicit selection when present, otherwise the system default. A `nil`
-    /// explicit selection means "follow the system default input" — it must
-    /// never be replaced with a pinned concrete device, because recording
-    /// passes `preferredInput` through and pinning would stop recordings from
-    /// following default-input changes.
-    private var activeInput: AudioInput? {
-      _selectedInput ?? defaultInput
-    }
-
-    private func updateDerivedSourceState() {
-      let requestedChannelPreference = _channels
-      _availableSources = activeInput?.availableSources ?? []
-      if let selected = _selectedSource, !_availableSources.contains(selected) {
-        _selectedSource = _availableSources.first
-      } else if _selectedSource == nil {
-        _selectedSource = _availableSources.first
-      }
-
-      let maxSupportedChannels = activeInput?.channelCount ?? .mono
-      if requestedChannelPreference == .stereo, maxSupportedChannels == .stereo {
-        _channels = .stereo
-      } else {
-        _channels = .mono
-      }
-    }
-
-    public var selectedSource: AudioSource? {
-      get { _selectedSource }
-      set {
-        if let newValue, !_availableSources.contains(newValue) {
-          return
+    private func settledConfiguration(
+      from state: AudioInputConfigurationState,
+    ) throws(ManagerError) -> SettledMicrophoneInputConfiguration {
+      switch state.reconciliation {
+      case .satisfied:
+        guard let applied = state.applied else {
+          throw .inputConfigurationUnsatisfied(
+            .readbackMismatch(
+              expected: InputConfiguration(sampleRate: .dvd, channels: .mono),
+              actual: nil,
+            ),
+          )
         }
-        _selectedSource = newValue
+        let preferredInput: AudioInputSelection? =
+          switch state.requested.input {
+          case .systemDefault: nil
+          case .specific: applied.input
+          }
+        return SettledMicrophoneInputConfiguration(
+          format: applied.format,
+          preferredInput: preferredInput,
+          source: applied.source,
+          requestGeneration: state.requestedGeneration,
+        )
+      case .deferred(let deferral):
+        throw .inputConfigurationDeferred(deferral)
+      case .unsatisfied(let issue):
+        throw .inputConfigurationUnsatisfied(issue)
+      case .discovering, .reconciling:
+        throw .inputConfigurationDeferred(.mediaServicesUnavailable)
       }
     }
 
-    public var inputHasStereoSource: Bool {
-      _availableSources.contains { $0.hasStereo }
-    }
-
-    public var availableChannelCountsForSelectedSource: [ChannelCount] {
-      guard let selectedSource = _selectedSource else {
-        return inputHasStereoSource ? [.mono, .stereo] : [.mono]
-      }
-      return selectedSource.hasStereo ? [.mono, .stereo] : [.mono]
-    }
-
-    /// Channel configuration capability of the explicit input, or of the
-    /// system-default input when no device is explicitly selected.
-    public var channelConfigurationAvailability: AudioChannelConfigurationAvailability {
-      guard isReady, let activeInput else { return .unresolved }
-      guard activeInput.channelCount == .stereo else { return .fixed(.mono) }
-      return .configurable([.mono, .stereo])
-    }
-
-    public var isConfiguredForStereo: Bool {
-      _channels == .stereo
-    }
-
-    public func applyMono() async throws(ManagerError) {
-      _channels = .mono
-    }
-
-    public func applyMono(persistPreference: Bool) async throws(ManagerError) {
-      _ = persistPreference
-      try await applyMono()
-    }
-
-    public func applyStereo() async throws(ManagerError) {
-      guard activeInput?.channelCount == .stereo else {
-        throw .unsupportedOperation
-      }
-      _channels = .stereo
-    }
-
-    public func applyStereo(persistPreference: Bool) async throws(ManagerError) {
-      _ = persistPreference
-      try await applyStereo()
-    }
-
-    public func applySourceConfiguration(
-      source: AudioSource,
-      channelCount: ChannelCount,
-      polarPattern: PolarPattern? = nil,
-      persistPreference: Bool = true,
-    ) async throws(ManagerError) {
-      _ = persistPreference
-      guard _availableSources.contains(source) else {
-        throw .unsupportedOperation
-      }
-      if let polarPattern, !source.supportedPolarPatterns.contains(polarPattern) {
-        throw .unsupportedOperation
-      }
-
-      _selectedSource = source
-      if channelCount == .stereo {
-        guard source.hasStereo else {
-          throw .unsupportedOperation
-        }
-        try await applyStereo()
-      } else {
-        try await applyMono()
-      }
+    private func reconcileInputConfiguration() async {
+      inputConfigurationState = await inputConfigurationCoordinator.reconcile(
+        isRunning: isRunning,
+        isActive: isAudioSessionActive,
+      )
     }
 
     private let eventHub = AudioEnvironmentEventHub()
@@ -299,72 +188,44 @@
 
     @MainActor
     public func readySignal() async throws(ManagerError) {
-      if !isRunning {
-        throw .notRunning
-      }
+      guard isRunning else { throw .notRunning }
     }
 
     public func setAudioSessionActive(_ active: Bool) async throws(ManagerError) {
-      try await sessionController.setAudioSessionActive(active)
+      guard isRunning else { return }
+      guard isAudioSessionActive != active else {
+        if active {
+          await reconcileInputConfiguration()
+        }
+        return
+      }
+      isAudioSessionActive = active
+      if active {
+        await reconcileInputConfiguration()
+      } else {
+        inputConfigurationState = inputConfigurationCoordinator.markUnavailable(.sessionInactive)
+      }
     }
 
     public func run() async throws(ManagerError) {
-      if isRunning {
-        throw .alreadyRunning
-      }
+      guard !isRunning else { throw .alreadyRunning }
       isRunning = true
-      await refreshInputsFromPlatform()
+      await reconcileInputConfiguration()
       currentRoute = await platformAudioBackend.currentRoute()
       isReady = true
 
       await backendRouteTask?.cancel()
       backendRouteTask = routeObserver.makeRouteTask()
 
-      // Keep parity with iOS semantics: `run()` represents a long-lived manager loop
-      // and only returns after cancellation.
       await withCancellationOperation {
         await backendRouteTask?.cancel()
         backendRouteTask = nil
         isAudioSessionActive = false
+        inputConfigurationState =
+          inputConfigurationCoordinator.markUnavailable(.environmentNotRunning)
         isReady = false
         isRunning = false
       }
-    }
-
-    private func refreshInputsFromPlatform() async {
-      let descriptors = await platformAudioBackend.availableInputs()
-      let inputs = descriptors.map { descriptor in
-        makeAudioInput(from: descriptor)
-      }
-
-      _availableInputs = inputs
-      _defaultInputID = descriptors.first(where: \.isDefault)?.id
-      // Re-resolve the explicit selection against the refreshed list. When the
-      // explicitly selected device is absent, the resolved selection drops to
-      // `nil` (follow the system default) instead of pinning another device;
-      // the explicit id is kept so the selection re-attaches when the device
-      // returns. Assigned directly — the `selectedInput` setter would record a
-      // new explicit intent and erase a temporarily-disconnected selection.
-      _selectedInput = _explicitInputID.flatMap { id in inputs.first(where: { $0.id == id }) }
-      updateDerivedSourceState()
-    }
-
-    private func makeAudioInput(from descriptor: PlatformAudioInputDescriptor) -> AudioInput {
-      let supportsStereo = descriptor.channelCount >= 2
-      let sourcePatterns: [PolarPattern] =
-        supportsStereo ? [.omnidirectional, .stereo] : [.omnidirectional]
-      let defaultSource = AudioSource(
-        id: "\(descriptor.id)-source",
-        name: descriptor.name,
-        supportedPolarPatterns: sourcePatterns,
-      )
-      return AudioInput(
-        id: descriptor.id,
-        name: descriptor.name,
-        type: descriptor.type,
-        channelCount: supportsStereo ? .stereo : .mono,
-        availableSources: [defaultSource],
-      )
     }
 
     private func notifyRouteChangeSubscribers(
@@ -381,18 +242,6 @@
   }
 
   extension AudioEnvironmentManager {
-    private struct AudioSessionController {
-      let owner: AudioEnvironmentManager
-
-      @MainActor
-      func setAudioSessionActive(_ active: Bool) async throws(ManagerError) {
-        guard owner.isRunning else {
-          return
-        }
-        owner.isAudioSessionActive = active
-      }
-    }
-
     private struct AudioRouteObserver {
       let owner: AudioEnvironmentManager
 
@@ -403,7 +252,7 @@
           guard let owner else { return }
           for await _ in backend.routeChanges() {
             let previousRoute = owner.currentRoute
-            await owner.refreshInputsFromPlatform()
+            await owner.reconcileInputConfiguration()
             let currentRoute = await backend.currentRoute()
             owner.currentRoute = currentRoute
             await owner.notifyRouteChangeSubscribers(
@@ -413,6 +262,98 @@
           }
         }
       }
+    }
+  }
+
+  private actor MacOSAudioInputConfigurationAdapter:
+    PlatformAudioInputConfigurationAdapter
+  {
+    private let backend: any PlatformAudioBackend
+    private var appliedPlan: PlatformAudioInputConfigurationPlan?
+
+    init(backend: any PlatformAudioBackend) {
+      self.backend = backend
+    }
+
+    func discover() async -> PlatformAudioInputSnapshot {
+      let descriptors = await backend.availableInputs()
+      return snapshot(descriptors: descriptors, appliedPlan: appliedPlan)
+    }
+
+    func apply(
+      _ plan: PlatformAudioInputConfigurationPlan,
+    ) async throws -> PlatformAudioInputSnapshot {
+      let descriptors = await backend.availableInputs()
+      guard
+        let descriptor = descriptors.first(where: { $0.id == plan.resolvedInput.id }),
+        descriptor.channelCount >= plan.format.channels.count
+      else {
+        return snapshot(descriptors: descriptors, appliedPlan: nil)
+      }
+      appliedPlan = plan
+      return snapshot(descriptors: descriptors, appliedPlan: plan)
+    }
+
+    private func snapshot(
+      descriptors: [PlatformAudioInputDescriptor],
+      appliedPlan: PlatformAudioInputConfigurationPlan?,
+    ) -> PlatformAudioInputSnapshot {
+      let inputs = descriptors.map(Self.selection)
+      let effectiveInput =
+        descriptors.first(where: \.isDefault).map(Self.selection)
+        ?? inputs.first
+      let options = descriptors.flatMap { descriptor in
+        let input = Self.selection(descriptor)
+        var result = [
+          AudioSourceConfigurationOption(
+            inputID: input.id,
+            source: nil,
+            channels: .mono,
+          )
+        ]
+        if descriptor.channelCount >= 2 {
+          result.append(
+            AudioSourceConfigurationOption(
+              inputID: input.id,
+              source: nil,
+              channels: .stereo,
+            ),
+          )
+        }
+        return result
+      }
+      let applied: AppliedAudioInputConfiguration? = appliedPlan.flatMap { plan in
+        guard inputs.contains(where: { $0.id == plan.resolvedInput.id }) else {
+          return nil
+        }
+        return AppliedAudioInputConfiguration(
+          input: plan.resolvedInput,
+          source: plan.source,
+          format: plan.format,
+          processing: plan.processing,
+        )
+      }
+      return PlatformAudioInputSnapshot(
+        capabilities: AudioInputConfigurationCapabilities(
+          discovery: descriptors.isEmpty ? .unavailable : .resolved,
+          inputs: inputs,
+          effectiveInput: effectiveInput,
+          sourceOptions: options,
+          likelySampleRates: SampleRate.common,
+        ),
+        applied: applied,
+      )
+    }
+
+    private static func selection(
+      _ descriptor: PlatformAudioInputDescriptor,
+    ) -> AudioInputSelection {
+      AudioInputSelection(
+        id: descriptor.id,
+        name: descriptor.name,
+        type: descriptor.type,
+        channelCount: descriptor.channelCount >= 2 ? .stereo : .mono,
+      )
     }
   }
 #endif

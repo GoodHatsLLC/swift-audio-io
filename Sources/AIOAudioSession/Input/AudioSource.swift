@@ -20,10 +20,9 @@
       }
 
       /// AVFoundation escape hatch. Consumers should obtain `AudioSource` values
-      /// through ``AudioEnvironmentConfiguring/availableSources`` or
-      /// ``AudioInput/availableSources`` rather than construct them; this
-      /// accessor exists for code that must drop down to the underlying
-      /// AVAudioSession objects.
+      /// through ``AudioInputConfigurationCapabilities/sourceOptions`` rather
+      /// than construct them; this accessor exists for AudioIO implementation
+      /// code that must drop down to the underlying AVAudioSession objects.
       @_spi(AVFoundation)
       public let avAudio: AVAudioSessionDataSourceDescription
 

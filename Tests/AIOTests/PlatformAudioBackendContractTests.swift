@@ -8,8 +8,8 @@
   import Tools
 
   struct PlatformAudioBackendContractTests {
-    // SAFETY: Test backend state is guarded by `lock`; `routeSignal` and
-    // `subscriberReady` are Sendable synchronization primitives.
+    // SAFETY: Test backend state is guarded by `lock`; the signals are
+    // Sendable synchronization primitives.
     final class StubState: @unchecked Sendable {
       private let lock = NSLock()
       private var inputs: [PlatformAudioInputDescriptor]
@@ -48,8 +48,7 @@
 
     struct StubPlatformAudioBackend: PlatformAudioBackend {
       let state: StubState
-
-      let platformName: String = "stub"
+      let platformName = "stub"
 
       func routeChanges() -> AsyncSignalStream<PlatformAudioRouteEvent> {
         state.routeChanges()
@@ -60,223 +59,154 @@
       }
     }
 
+    @Test
     @MainActor
-    private func makeIsolatedDefaults() throws -> UserDefaults {
+    func `run discovers the system default without converting it to explicit intent`() async throws
+    {
+      let state = StubState(inputs: [monoInput(isDefault: false), stereoInput(isDefault: true)])
+      let manager = try manager(state: state)
+
+      let runTask = MainActorOwnedWork { try? await manager.run() }
+      await state.waitForSubscriber()
+
+      #expect(manager.isReady)
+      #expect(manager.inputConfigurationState.requested.input == .systemDefault)
+      #expect(manager.inputConfigurationState.capabilities.inputs.count == 2)
+      #expect(manager.inputConfigurationState.capabilities.effectiveInput?.id == "mic-b")
+      #expect(manager.inputConfigurationState.reconciliation == .deferred(.sessionInactive))
+
+      await runTask.cancel()
+    }
+
+    @Test
+    @MainActor
+    func `activation applies automatic stereo through the common settle barrier`() async throws {
+      let state = StubState(inputs: [stereoInput(isDefault: true)])
+      let manager = try manager(state: state)
+      let runTask = MainActorOwnedWork { try? await manager.run() }
+      await state.waitForSubscriber()
+
+      try await manager.setAudioSessionActive(true)
+      let settled = try await manager.settleInputConfiguration()
+
+      #expect(settled.format.channels == .stereo)
+      #expect(settled.preferredInput == nil)
+      #expect(manager.inputConfigurationState.reconciliation == .satisfied)
+
+      await runTask.cancel()
+    }
+
+    @Test
+    @MainActor
+    func `settle returns only the latest satisfied request generation`() async throws {
+      let state = StubState(inputs: [stereoInput(isDefault: true)])
+      let manager = try manager(state: state)
+      let runTask = MainActorOwnedWork { try? await manager.run() }
+      await state.waitForSubscriber()
+      try await manager.setAudioSessionActive(true)
+
+      var stereo = manager.inputConfigurationState.requested
+      stereo.channels = .stereo
+      let first = await manager.requestInputConfiguration(stereo)
+      var mono = stereo
+      mono.channels = .mono
+      let latest = await manager.requestInputConfiguration(mono)
+
+      let settled = try await manager.settleInputConfiguration()
+
+      #expect(latest.requestedGeneration > first.requestedGeneration)
+      #expect(settled.requestGeneration == latest.requestedGeneration)
+      #expect(settled.format.channels == .mono)
+      #expect(manager.inputConfigurationState.reconciliation == .satisfied)
+
+      await runTask.cancel()
+    }
+
+    @Test
+    @MainActor
+    func `explicit input request survives disappearance and reattaches on return`() async throws {
+      let micA = monoInput()
+      let micB = stereoInput(isDefault: false)
+      let state = StubState(inputs: [micA, micB])
+      let manager = try manager(state: state)
+      let runTask = MainActorOwnedWork { try? await manager.run() }
+      await state.waitForSubscriber()
+      try await manager.setAudioSessionActive(true)
+
+      var request = manager.inputConfigurationState.requested
+      request.input = .specific(id: micB.id)
+      request.channels = .stereo
+      _ = await manager.requestInputConfiguration(request)
+      #expect(manager.inputConfigurationState.reconciliation == .satisfied)
+
+      state.updateInputs([micA])
+      await emitRouteChangeAndAwaitRefresh(state: state, manager: manager)
+      #expect(manager.inputConfigurationState.requested.input == .specific(id: micB.id))
+      #expect(
+        manager.inputConfigurationState.reconciliation
+          == .deferred(.requestedInputUnavailable(id: micB.id)),
+      )
+
+      state.updateInputs([micA, micB])
+      await emitRouteChangeAndAwaitRefresh(state: state, manager: manager)
+      #expect(manager.inputConfigurationState.reconciliation == .satisfied)
+      #expect(manager.inputConfigurationState.applied?.input.id == micB.id)
+
+      await runTask.cancel()
+    }
+
+    @Test
+    @MainActor
+    func `route change refreshes capabilities without changing requested channels`() async throws {
+      let state = StubState(inputs: [monoInput()])
+      let manager = try manager(state: state)
+      let runTask = MainActorOwnedWork { try? await manager.run() }
+      await state.waitForSubscriber()
+      var request = manager.inputConfigurationState.requested
+      request.channels = .stereo
+      _ = await manager.requestInputConfiguration(request)
+
+      state.updateInputs([stereoInput(isDefault: true)])
+      await emitRouteChangeAndAwaitRefresh(state: state, manager: manager)
+
+      #expect(manager.inputConfigurationState.requested.channels == .stereo)
+      #expect(manager.inputConfigurationState.capabilities.effectiveInput?.channelCount == .stereo)
+
+      await runTask.cancel()
+    }
+
+    @MainActor
+    private func manager(state: StubState) throws -> AudioEnvironmentManager {
       let suiteName = "aio.tests.platform-backend.\(UUID().uuidString)"
       let defaults = try #require(UserDefaults(suiteName: suiteName))
       defaults.removePersistentDomain(forName: suiteName)
-      return defaults
-    }
-
-    @Test
-    @MainActor
-    func `run loads available inputs and follows the system default without pinning`() async throws
-    {
-      let initialInputs = [
-        PlatformAudioInputDescriptor(
-          id: "mic-a",
-          name: "Built-in Microphone",
-          channelCount: 1,
-          isDefault: false,
-        ),
-        PlatformAudioInputDescriptor(
-          id: "mic-b",
-          name: "USB Mic",
-          type: .usbAudio,
-          channelCount: 2,
-          isDefault: true,
-        ),
-      ]
-      let state = StubState(inputs: initialInputs)
-      let backend = StubPlatformAudioBackend(state: state)
-      let manager = try AudioEnvironmentManager(
+      return AudioEnvironmentManager(
         env: AudioEnvironment(),
         errorManager: MockErrorManager(),
-        defaults: makeIsolatedDefaults(),
-        platformAudioBackend: backend,
+        defaults: defaults,
+        platformAudioBackend: StubPlatformAudioBackend(state: state),
       )
-      #expect(manager.channelConfigurationAvailability == .unresolved)
-
-      let runTask = MainActorOwnedWork {
-        try? await manager.run()
-      }
-
-      await state.waitForSubscriber()
-
-      #expect(manager.isReady)
-      #expect(manager.availableInputs.count == 2)
-      // No explicit selection: `selectedInput` stays nil ("follow the system
-      // default") so recordings never pin a concrete device the user didn't
-      // choose. Capability state still derives from the default input.
-      #expect(manager.selectedInput == nil)
-      #expect(manager.preferredInput == nil)
-      #expect(manager.inputHasStereoSource)
-      #expect(
-        manager.channelConfigurationAvailability == .configurable([.mono, .stereo]),
-      )
-
-      await runTask.cancel()
     }
 
-    @Test
-    @MainActor
-    func `route changes refresh available inputs`() async throws {
-      let state = StubState(
-        inputs: [
-          PlatformAudioInputDescriptor(
-            id: "mic-a",
-            name: "Built-in Microphone",
-            channelCount: 1,
-            isDefault: true,
-          )
-        ],
-      )
-      let backend = StubPlatformAudioBackend(state: state)
-      let manager = try AudioEnvironmentManager(
-        env: AudioEnvironment(),
-        errorManager: MockErrorManager(),
-        defaults: makeIsolatedDefaults(),
-        platformAudioBackend: backend,
-      )
-
-      let runTask = MainActorOwnedWork {
-        try? await manager.run()
-      }
-
-      await state.waitForSubscriber()
-      #expect(manager.isReady)
-      #expect(manager.channelConfigurationAvailability == .fixed(.mono))
-
-      let refreshed = AsyncContinuation<AudioRouteChange>()
-      let subscriberID = manager.addAudioSystemEventSubscriber { event in
-        if case .routeChanged(let change) = event {
-          try? refreshed.yield(change)
-        }
-      }
-
-      state.updateInputs(
-        [
-          PlatformAudioInputDescriptor(
-            id: "mic-b",
-            name: "USB Mic",
-            type: .usbAudio,
-            channelCount: 2,
-            isDefault: true,
-          )
-        ],
-      )
-      state.emitRouteChange()
-      let change = await refreshed()
-      manager.removeSubscriber(subscriberID)
-
-      #expect(manager.availableInputs.count == 1)
-      #expect(change.previousRoute?.inputs.map(\.uid) == ["mic-a"])
-      #expect(change.currentRoute.inputs.map(\.uid) == ["mic-b"])
-      // Still no explicit selection after the refresh: the manager keeps
-      // following the system default instead of pinning the new device.
-      #expect(manager.selectedInput == nil)
-      #expect(manager.inputHasStereoSource)
-      #expect(
-        manager.channelConfigurationAvailability == .configurable([.mono, .stereo]),
-      )
-
-      await runTask.cancel()
-    }
-
-    @Test
-    @MainActor
-    func `explicit selection survives route refreshes`() async throws {
-      let micA = PlatformAudioInputDescriptor(
+    private func monoInput(isDefault: Bool = true) -> PlatformAudioInputDescriptor {
+      PlatformAudioInputDescriptor(
         id: "mic-a",
         name: "Built-in Microphone",
         channelCount: 1,
-        isDefault: true,
+        isDefault: isDefault,
       )
-      let micB = PlatformAudioInputDescriptor(
-        id: "mic-b",
-        name: "USB Mic",
-        type: .usbAudio,
-        channelCount: 2,
-        isDefault: false,
-      )
-      let state = StubState(inputs: [micA, micB])
-      let backend = StubPlatformAudioBackend(state: state)
-      let manager = try AudioEnvironmentManager(
-        env: AudioEnvironment(),
-        errorManager: MockErrorManager(),
-        defaults: makeIsolatedDefaults(),
-        platformAudioBackend: backend,
-      )
-
-      let runTask = MainActorOwnedWork {
-        try? await manager.run()
-      }
-      await state.waitForSubscriber()
-
-      let explicit = try #require(manager.availableInputs.first(where: { $0.id == "mic-b" }))
-      manager.selectedInput = explicit
-      #expect(manager.selectedInput?.id == "mic-b")
-
-      await emitRouteChangeAndAwaitRefresh(state: state, manager: manager)
-
-      #expect(manager.selectedInput?.id == "mic-b")
-      #expect(manager.preferredInput?.id == "mic-b")
-
-      await runTask.cancel()
     }
 
-    @Test
-    @MainActor
-    func `explicit selection falls back to default when absent and re-attaches on return`()
-      async throws
-    {
-      let micA = PlatformAudioInputDescriptor(
-        id: "mic-a",
-        name: "Built-in Microphone",
-        channelCount: 1,
-        isDefault: true,
-      )
-      let micB = PlatformAudioInputDescriptor(
+    private func stereoInput(isDefault: Bool) -> PlatformAudioInputDescriptor {
+      PlatformAudioInputDescriptor(
         id: "mic-b",
-        name: "USB Mic",
+        name: "USB Microphone",
         type: .usbAudio,
         channelCount: 2,
-        isDefault: false,
+        isDefault: isDefault,
       )
-      let state = StubState(inputs: [micA, micB])
-      let backend = StubPlatformAudioBackend(state: state)
-      let manager = try AudioEnvironmentManager(
-        env: AudioEnvironment(),
-        errorManager: MockErrorManager(),
-        defaults: makeIsolatedDefaults(),
-        platformAudioBackend: backend,
-      )
-
-      let runTask = MainActorOwnedWork {
-        try? await manager.run()
-      }
-      await state.waitForSubscriber()
-
-      let explicit = try #require(manager.availableInputs.first(where: { $0.id == "mic-b" }))
-      manager.selectedInput = explicit
-
-      // The explicitly selected device disappears: fall back to the system
-      // default (nil) rather than pinning some other remaining device.
-      state.updateInputs([micA])
-      await emitRouteChangeAndAwaitRefresh(state: state, manager: manager)
-      #expect(manager.selectedInput == nil)
-      #expect(manager.preferredInput == nil)
-
-      // The device returns: the explicit selection re-attaches.
-      state.updateInputs([micA, micB])
-      await emitRouteChangeAndAwaitRefresh(state: state, manager: manager)
-      #expect(manager.selectedInput?.id == "mic-b")
-
-      await runTask.cancel()
     }
 
-    /// Emits a stub route change and waits until the manager has refreshed its
-    /// inputs (route subscribers are notified after the refresh completes).
     @MainActor
     private func emitRouteChangeAndAwaitRefresh(
       state: StubState,

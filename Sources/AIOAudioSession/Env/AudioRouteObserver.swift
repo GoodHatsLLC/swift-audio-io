@@ -16,7 +16,7 @@
         group.addTask { [weak owner] in
           for await _ in env.notifications.availableInputsChanged {
             guard let owner else { return }
-            await owner.updateAudioInputs(reason: "availableInputsChanged notification")
+            await owner.reconcileInputConfiguration()
           }
         }
         group.addTask { [weak owner] in
@@ -26,27 +26,7 @@
             )
             if Task.isCancelled { return }
             guard let owner else { return }
-            let reasonMsg =
-              switch notification.reason {
-              case .oldDeviceUnavailable: "oldDeviceUnavailable"
-              case .categoryChange: "categoryChange"
-              case .newDeviceAvailable: "newDeviceAvailable"
-              case .noSuitableRouteForCategory: "noSuitableRouteForCategory"
-              case .override: "override"
-              case .routeConfigurationChange: "routeConfigurationChange"
-              case .wakeFromSleep: "wakeFromSleep"
-              case .unknown: "unknown"
-              @unknown default: "unknowndefault"
-              }
-            await owner.updateAudioInputs(reason: "routeChange notification: .\(reasonMsg)")
-            if await !owner.isAudioSessionActive,
-              notification.reason == .newDeviceAvailable
-                || notification.reason == .oldDeviceUnavailable
-            {
-              await owner.restorePreferredInputAndConfigurationIfPossible(
-                reason: "routeChange notification: .\(reasonMsg)",
-              )
-            }
+            await owner.reconcileInputConfiguration()
 
             let event = AudioRouteChange(
               platformReason: notification.reason,

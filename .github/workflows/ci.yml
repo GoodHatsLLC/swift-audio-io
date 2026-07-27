@@ -33,6 +33,9 @@ jobs:
           xcodebuild -version
           xcrun swift --version
 
+      - name: Input configuration API guard
+        run: ./bin/check-input-configuration-api.sh
+
       # Full test run on the macOS host: 186 unit tests across 31 suites.
       # This is the suite that gates correctness.
       - name: SwiftPM tests (macOS host)

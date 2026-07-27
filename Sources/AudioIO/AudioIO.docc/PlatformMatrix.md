@@ -16,7 +16,8 @@ Lowering either floor would require a SemVer-major release. We make no commitmen
 The following surfaces are `#if os(iOS)`-gated and not available on macOS:
 
 - `OrientationObserver`, which bridges UIKit device-orientation notifications.
-- The iOS-only `InputPicker` UI in adopter apps (not part of AudioIO itself).
+- The `AVAudioSession` adapter that discovers and reconciles input data
+  sources, polar patterns, channel counts, sample rates, and processing mode.
 
 ## What's macOS-only
 
@@ -24,9 +25,14 @@ The following surfaces are `#if os(iOS)`-gated and not available on macOS:
 
 ## What's symmetric
 
-Everything else: ``AIOEngine`` recording and playback, ``AudioVisualizationEngine``, the events stream, the entire ``AudioIOError`` family, and the platform-neutral ``AudioSystemEvent`` / route snapshot values. Native notification adapters differ, but consumers use the same ``AudioEnvironmentManager/addAudioSystemEventSubscriber(_:)`` and ``AIOEngine/handleAudioSystemEvent(_:)`` interface.
-
-If you write generic code over `AudioEnvironmentConfiguring` and the input-picking-specific `AudioInputPickingEnvironment`, your callers will compile on both platforms — on macOS the picking-environment alias falls back to the base configuring protocol.
+Everything else: ``AIOEngine`` recording and playback,
+``AudioVisualizationEngine``, the events stream, the entire ``AudioIOError``
+family, and the platform-neutral ``AudioSystemEvent`` / route snapshot values.
+Native configuration and notification adapters differ, but consumers use the
+same ``AudioEnvironmentConfiguring`` requested/applied state,
+``AudioEnvironmentDriving/settleInputConfiguration()``,
+``AudioEnvironmentManager/addAudioSystemEventSubscriber(_:)``, and
+``AIOEngine/handleAudioSystemEvent(_:)`` interfaces on both platforms.
 
 ## CI gate
 

@@ -1,10 +1,56 @@
 # Audio Session
 
-``AudioEnvironmentManager`` coordinates audio-session activation, input device selection, route changes, and interruption handling. The engine consumes this surface through narrow contracts so feature code never has to reach for `AVAudioSession` directly.
+``AudioEnvironmentManager`` coordinates audio-session activation, requested
+and applied input configuration, route changes, and interruption handling. The
+engine consumes this surface through narrow contracts so feature code never
+has to reach for `AVAudioSession` directly.
 
 ## What it owns
 
-On iOS, ``AudioEnvironmentManager`` wraps `AVAudioSession` activation, category/mode configuration, available-input enumeration, and the route-change / interruption / media-services notification surface. On macOS, the same type provides a tap-reinstall-driven equivalent for route changes (macOS has no `AVAudioSession`-style interruption notifications).
+On iOS, ``AudioEnvironmentManager`` wraps `AVAudioSession` activation,
+category/mode configuration, available-input enumeration, and the route-change
+/ interruption / media-services notification surface. On macOS, the same type
+provides a tap-reinstall-driven equivalent for route changes (macOS has no
+`AVAudioSession`-style interruption notifications).
+
+## Requested, applied, and settled input
+
+``AudioInputConfigurationState/requested`` is durable user intent. It is
+updated immediately even when the environment is inactive or the requested
+device is absent. ``AudioInputConfigurationState/applied`` is separate: it is
+an exact active-route readback and is `nil` while inactive.
+
+```swift
+var request = envManager.inputConfigurationState.requested
+request.channels = .stereo
+
+let state = await envManager.requestInputConfiguration(request)
+// state.requested.channels is Stereo immediately.
+// state.reconciliation may still be deferred while inactive.
+```
+
+Activation and route changes reconcile the unchanged request. Exact choices
+never fall back silently: if Stereo reads back as Mono, the request remains
+Stereo and reconciliation becomes unsatisfied with the actual Mono readback.
+Automatic channel selection prefers Stereo when the effective input exposes a
+valid Stereo option and otherwise selects Mono.
+
+Capture starts cross the same barrier:
+
+```swift
+try await envManager.setAudioSessionActive(true)
+let settled = try await envManager.settleInputConfiguration()
+
+let input = MicrophoneRecordingInput(
+  format: settled.format,
+  preferredInput: settled.preferredInput
+)
+```
+
+``AudioEnvironmentManager/settleInputConfiguration()`` returns only a
+satisfied readback for the latest request generation. A deferred or
+unsatisfied request throws a typed ``AudioEnvironmentError`` instead of
+returning a partial configuration.
 
 ## Audio system events
 
@@ -29,8 +75,10 @@ for diagnostics, or replay it in a deterministic test.
 
 Feature code typically depends on one of these narrow contracts rather than the concrete `AudioEnvironmentManager`:
 
-- ``AudioEnvironmentDriving`` — start/stop the environment, observe lifecycle.
-- ``AudioEnvironmentConfiguring`` — query available inputs and configure category/mode.
+- ``AudioEnvironmentDriving`` — run the environment, activate it, and settle
+  the latest input request for capture.
+- ``AudioEnvironmentConfiguring`` — observe requested/applied state and submit
+  complete input requests.
 - ``AudioEnvironmentEventSubscribing`` — subscribe to audio-system events.
 
 These contracts let feature code stay testable without a real `AVAudioSession` and keep the platform asymmetries (iOS vs macOS) handled at the implementation, not the call site.
@@ -63,6 +111,15 @@ The application's role is to subscribe to the events stream and drive UI. The en
 
 - ``AudioInput``
 - ``AudioSource``
+- ``AudioInputConfigurationRequest-struct``
+- ``AudioInputConfigurationState-struct``
+- ``AppliedAudioInputConfiguration-struct``
+- ``AudioInputConfigurationCapabilities-struct``
+- ``AudioInputConfigurationReconciliation-enum``
+- ``AudioInputConfigurationDeferral-enum``
+- ``AudioInputConfigurationIssue-enum``
+- ``AudioSourceConfigurationOption-struct``
+- ``SettledMicrophoneInputConfiguration-struct``
 - ``AudioSystemEvent``
 - ``AudioRouteChange``
 - ``AudioRouteChangeReason``

@@ -142,22 +142,10 @@
           group.addTask { [self] in
             await self.subscribeToOrientation { @MainActor [weak owner] orientation in
               guard let owner else { return }
-              owner._orientation = orientation
               audioEnvironmentLifecycleLog.info(
                 "orientation changed to: \(orientation.rawValue, privacy: .public)",
               )
-              guard orientation != .none, owner.isConfiguredForStereo else { return }
-              // Route the `setPreferredInputOrientation` XPC through the existing
-              // off-main helper rather than calling it on the main actor.
-              var plan = AudioEnvironmentManager.InputConfigurationPlan()
-              plan.inputOrientation = orientation
-              do {
-                try await AudioEnvironmentManager.executeInputConfiguration(
-                  plan, session: owner.session, queue: owner.inputWriteQueue,
-                )
-              } catch {
-                owner.errorManager.enqueue(error)
-              }
+              await owner.updateOrientation(orientation)
             }
           }
 
@@ -166,13 +154,10 @@
               guard let owner else { return }
               let pollInterval: Duration
               if owner.isAudioSessionActive {
-                if let changes = await owner.updateAudioInputs(reason: "periodic poll") {
-                  audioEnvironmentLifecycleLog.info(
-                    "􂡸 poll, device changes: \(changes, privacy: .public)",
-                  )
-                }
+                await owner.reconcileInputConfiguration()
                 pollInterval = .seconds(15)
               } else {
+                await owner.reconcileInputConfiguration()
                 pollInterval = .seconds(30)
               }
               let pollingPolicy = PollingPolicy(interval: pollInterval)
@@ -196,6 +181,7 @@
           "mediaServicesLost notification: audio services unavailable",
         )
         owner.isAudioSessionActive = false
+        owner.markInputConfigurationUnavailable(.mediaServicesUnavailable)
         await owner.dispatchAudioSystemEvent(.mediaServicesLost)
       }
 
@@ -212,9 +198,7 @@
         } catch {
           owner.errorManager.enqueue(error)
         }
-        await owner.restorePreferredInputAndConfigurationIfPossible(
-          reason: "mediaServicesReset notification",
-        )
+        await owner.reconcileInputConfiguration()
         await owner.dispatchAudioSystemEvent(.mediaServicesReset)
       }
     }

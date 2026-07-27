@@ -12,10 +12,6 @@
   public import Observation
   public import Tools
 
-  #if os(iOS)
-    public import AVFAudio
-  #endif
-
   public typealias AudioEnvironmentError = AudioEnvironmentManager.ManagerError
 
   @MainActor
@@ -30,15 +26,10 @@
 
   @MainActor
   public protocol AudioEnvironmentDriving: AnyObject, Sendable {
-    var inputHasStereoSource: Bool { get }
-    var isConfiguredForStereo: Bool { get }
-    var shouldAutoSelectStereoWhenAvailable: Bool { get }
-
     var isAudioSessionActive: Bool { get }
-    var sampleRate: SampleRate { get }
-    var channels: ChannelCount { get }
 
-    func applyStereo() async throws(AudioEnvironmentError)
+    func settleInputConfiguration()
+      async throws(AudioEnvironmentError) -> SettledMicrophoneInputConfiguration
     func setAudioSessionActive(_ active: Bool) async throws(AudioEnvironmentError)
 
     func readySignal() async throws(AudioEnvironmentError)
@@ -47,41 +38,12 @@
 
   @MainActor
   public protocol AudioEnvironmentConfiguring: AudioEnvironmentDriving, Observable {
-    var audioSessionActive: Bool { get set }
-    var sampleRate: SampleRate { get set }
-    var selectedInput: AudioInput? { get set }
-    var selectedSource: AudioSource? { get set }
-    var useMeasurement: Bool { get set }
+    var inputConfigurationState: AudioInputConfigurationState { get }
 
-    var availableInputs: [AudioInput] { get }
-    var availableSources: [AudioSource] { get }
-    var availableChannelCountsForSelectedSource: [ChannelCount] { get }
-    var channelConfigurationAvailability: AudioChannelConfigurationAvailability { get }
-    var likelySupportedSampleRates: [SampleRate] { get }
-
-    func applyMono() async throws(AudioEnvironmentError)
-    func applySourceConfiguration(
-      source: AudioSource,
-      channelCount: ChannelCount,
-      polarPattern: PolarPattern?,
-      persistPreference: Bool,
-    ) async throws(AudioEnvironmentError)
+    func requestInputConfiguration(
+      _ requested: AudioInputConfigurationRequest
+    ) async -> AudioInputConfigurationState
   }
-
-  #if os(iOS)
-    @MainActor
-    public protocol AudioInputPickingEnvironment: AudioEnvironmentConfiguring {
-      var session: AVAudioSession { get }
-    }
-  #else
-    // On macOS the AVAudioSession-bound input picker doesn't exist. Aliasing
-    // to `AudioEnvironmentConfiguring` lets cross-platform views (e.g.
-    // `ConfigurationView`, `RecordingSheetView`) constrain their generic on
-    // `AudioInputPickingEnvironment` uniformly; the iOS-only call sites that
-    // need the stricter `session: AVAudioSession` member are themselves
-    // guarded by `#if os(iOS)`.
-    public typealias AudioInputPickingEnvironment = AudioEnvironmentConfiguring
-  #endif
 
   @MainActor
   public protocol OutputConfigurationProviding: AnyObject {
@@ -138,9 +100,6 @@
   extension AudioEnvironmentManager: AudioEnvironmentEventSubscribing {}
   extension AudioEnvironmentManager: AudioEnvironmentDriving {}
   extension AudioEnvironmentManager: AudioEnvironmentConfiguring {}
-  #if os(iOS)
-    extension AudioEnvironmentManager: AudioInputPickingEnvironment {}
-  #endif
   extension OutputConfigurationManager: OutputConfigurationProviding {}
 
 #endif

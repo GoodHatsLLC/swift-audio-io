@@ -22,7 +22,7 @@
         }
         guard owner.isAudioSessionActive != active else {
           if active {
-            await owner.waitForInputPreferenceRestorationIfNeeded()
+            await owner.reconcileInputConfiguration()
           }
           return
         }
@@ -41,13 +41,9 @@
           "🔊 Audio session manually set to \(active ? "active" : "inactive", privacy: .public)",
         )
         if active {
-          // Activation is a readiness boundary, not merely a request to
-          // `AVAudioSession`. Callers build recording configurations as soon as
-          // this method returns, so the cached route/input state and persisted
-          // channel preferences must already match the active session.
-          await owner.restorePreferredInputAndConfigurationIfPossible(
-            reason: "audio session activated",
-          )
+          await owner.reconcileInputConfiguration()
+        } else {
+          owner.markInputConfigurationUnavailable(.sessionInactive)
         }
       }
     }

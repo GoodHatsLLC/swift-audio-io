@@ -9,6 +9,20 @@ releases follow the versioning policy in `README.md` and `ROADMAP.md`.
 
 ### Added
 
+- A complete requested/applied microphone input model. Durable
+  `AudioInputConfigurationRequest` values cover input, source and polar
+  pattern, channels, sample rate, and processing mode;
+  `AudioInputConfigurationState` reports that request separately from exact
+  active-route readback, capabilities, and reconciliation disposition.
+- `requestInputConfiguration(_:)` for accepting input intent while inactive,
+  and `settleInputConfiguration()` as the generation-aware capture barrier.
+  Automatic channel policy prefers Stereo when a valid Stereo option exists;
+  exact requests never fall back.
+- A package-internal platform adapter and pure resolver with deterministic
+  tests for deferral, rejection, no-op readback, partial application, route
+  churn, persistence, and superseding requests.
+- `bin/check-input-configuration-api.sh`, run by CI, prevents the deleted
+  scalar and apply-method surface from returning.
 - `FileFormat.toleratesTruncation` and `FileFormat.preservesExactFrameCount`.
   Two orthogonal facts about the writer and the container, in the style of
   `requiresQuality`: whether a file cut off mid-write is still readable up to
@@ -25,6 +39,11 @@ releases follow the versioning policy in `README.md` and `ROADMAP.md`.
 
 ### Changed
 
+- **Source-breaking.** `AudioEnvironmentDriving` and
+  `AudioEnvironmentConfiguring` now expose one requested/applied state and one
+  settle barrier. Session activation, route changes, media-services recovery,
+  and orientation changes reconcile the latest request through the same
+  serialized path and publish success only after readback.
 - **Source-breaking.** `stopRecording()` returns `RecordingCompletion` and
   `rotateRecordingFile()` returns `RecordingRotation`, each carrying the
   `completedURL` that used to be the whole return value plus a
@@ -67,6 +86,13 @@ releases follow the versioning policy in `README.md` and `ROADMAP.md`.
 
 ### Removed
 
+- **Source-breaking.** The independent `AudioEnvironmentManager` configuration
+  scalars, `applyMono()`, `applyStereo()`, `applySourceConfiguration()`,
+  `AudioChannelConfigurationAvailability`, and
+  `AudioInputPickingEnvironment`.
+- The prerelease preference controller, restorer, per-property store, and
+  duplicated automatic-Stereo/Mono-fallback policy. Old preference keys are
+  intentionally ignored; the new request uses one encoded schema.
 - `Sources/AudioIO/AIOEngine+Testing.swift` and its 16 `@_spi(TESTING)`
   methods on `AIOEngine`, along with the `#if DEBUG` override properties
   (`testReinstallTapOverride`, `testEngineTeardownOverride`,

@@ -20,8 +20,19 @@ func publicAPISnapshot_AIOAudioSession() throws {
   _ = AudioChannel.self
   _ = AudioEnvironment.self
   _ = AudioEnvironmentManager.self
+  _ = AppliedAudioInputConfiguration.self
+  _ = AudioChannelPreference.self
+  _ = AudioInputConfigurationCapabilities.self
+  _ = AudioInputConfigurationDeferral.self
+  _ = AudioInputConfigurationIssue.self
+  _ = AudioInputConfigurationReconciliation.self
+  _ = AudioInputConfigurationRequest.self
+  _ = AudioInputConfigurationState.self
   _ = AudioInput.self
+  _ = AudioInputPreference.self
+  _ = AudioInputProcessingPreference.self
   _ = AudioInputSelection.self
+  _ = AudioSampleRatePreference.self
   _ = AudioPortSnapshot.self
   _ = AudioRouteChange.self
   _ = AudioRouteChangeReason.self
@@ -30,11 +41,10 @@ func publicAPISnapshot_AIOAudioSession() throws {
   _ = AudioSystemEvent.self
   _ = AudioSessionConfiguration.self
   _ = AudioSource.self
+  _ = AudioSourceConfigurationOption.self
+  _ = AudioSourcePreference.self
+  _ = AudioSourceSelection.self
   _ = AnyErrorManager.self
-  _ = AudioChannelConfigurationAvailability.self
-  _ = AudioChannelConfigurationAvailability.unresolved
-  _ = AudioChannelConfigurationAvailability.fixed(.mono)
-  _ = AudioChannelConfigurationAvailability.configurable([.mono, .stereo])
   _ = BitDepth.self
   _ = ChannelCount.self
   _ = EncodingQuality.self
@@ -64,6 +74,7 @@ func publicAPISnapshot_AIOAudioSession() throws {
   _ = ReportedError.self
   _ = Reporter<ReportedError>.self
   _ = SampleRate.self
+  _ = SettledMicrophoneInputConfiguration.self
   // Module-qualified: swift-testing also exports a `SourceLocation`, so the bare
   // name is ambiguous here. The point of this snapshot is that `AudioIO` re-exports
   // its own type, so name it explicitly.
@@ -90,6 +101,8 @@ func publicAPISnapshotAsyncAudioSessionAPI(
   engine: AIOEngine,
   configuration: RecordingConfiguration,
 ) async throws {
+  _ = await environment.requestInputConfiguration(.automatic)
+  _ = try await environment.settleInputConfiguration()
   try await environment.setAudioSessionActive(true)
   try await authority.setAudioSessionActive(true)
 
