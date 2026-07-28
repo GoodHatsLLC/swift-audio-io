@@ -284,10 +284,11 @@
     }
 
     @MainActor
-    func reconcileInputConfiguration() async {
+    func reconcileInputConfiguration(forcePlatformApply: Bool = false) async {
       inputConfigurationState = await inputConfigurationCoordinator.reconcile(
         isRunning: isRunning,
         isActive: isAudioSessionActive,
+        forcePlatformApply: forcePlatformApply,
       )
     }
 
@@ -304,7 +305,7 @@
     ) async {
       await platformInputAdapter.updateOrientation(orientation)
       if isAudioSessionActive {
-        await reconcileInputConfiguration()
+        await reconcileInputConfiguration(forcePlatformApply: true)
       }
     }
 

@@ -41,7 +41,7 @@
           "🔊 Audio session manually set to \(active ? "active" : "inactive", privacy: .public)",
         )
         if active {
-          await owner.reconcileInputConfiguration()
+          await owner.reconcileInputConfiguration(forcePlatformApply: true)
         } else {
           owner.markInputConfigurationUnavailable(.sessionInactive)
         }

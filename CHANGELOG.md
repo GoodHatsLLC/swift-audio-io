@@ -210,6 +210,17 @@ releases follow the versioning policy in `README.md` and `ROADMAP.md`.
   that `PlatformAudioRouteEvent` cannot express.
 - `AudioEnvironmentManager._InputConfigError`, which was unreferenced.
 
+## 0.12.1 - 2026-07-27
+
+### Fixed
+
+- Made satisfied microphone-input reconciliation read-only during route
+  notifications and periodic capability refreshes. This prevents
+  `AVAudioSession` preference writes from generating another route change and
+  repeatedly stopping and reinstalling the recording tap, which produced
+  regularly spaced bursts instead of continuous audio. Session activation and
+  orientation changes still perform one explicit platform apply.
+
 ## 0.10.3 - 2026-07-24
 
 ### Removed

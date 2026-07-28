@@ -236,6 +236,7 @@ package final class AudioInputConfigurationCoordinator {
   package func reconcile(
     isRunning: Bool,
     isActive: Bool,
+    forcePlatformApply: Bool = false,
   ) async -> AudioInputConfigurationState {
     while true {
       let requested = state.requested
@@ -286,6 +287,25 @@ package final class AudioInputConfigurationCoordinator {
           reconciliation: .unsatisfied(issue),
         )
       case .apply(let plan):
+        // Route notifications and periodic discovery are refreshes, not new
+        // configuration intent. Reissuing satisfied AVAudioSession preferences
+        // can generate another route notification and keep the recording tap
+        // in a stop/reinstall loop. Activation and orientation changes opt into
+        // one forced write because the platform may have discarded state that
+        // is not fully represented by the semantic readback.
+        if !forcePlatformApply,
+          state.requestedGeneration == requestedGeneration,
+          state.reconciliation == .satisfied,
+          Self.classify(readback: applied, expected: plan) == .satisfied
+        {
+          return publish(
+            requested: requested,
+            generation: requestedGeneration,
+            snapshot: snapshot,
+            applied: applied,
+            reconciliation: .satisfied,
+          )
+        }
         _ = publish(
           requested: requested,
           generation: requestedGeneration,

@@ -166,10 +166,11 @@
       }
     }
 
-    private func reconcileInputConfiguration() async {
+    private func reconcileInputConfiguration(forcePlatformApply: Bool = false) async {
       inputConfigurationState = await inputConfigurationCoordinator.reconcile(
         isRunning: isRunning,
         isActive: isAudioSessionActive,
+        forcePlatformApply: forcePlatformApply,
       )
     }
 
@@ -201,7 +202,7 @@
       }
       isAudioSessionActive = active
       if active {
-        await reconcileInputConfiguration()
+        await reconcileInputConfiguration(forcePlatformApply: true)
       } else {
         inputConfigurationState = inputConfigurationCoordinator.markUnavailable(.sessionInactive)
       }

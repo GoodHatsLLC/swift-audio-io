@@ -166,6 +166,48 @@ struct AudioInputConfigurationCoordinatorTests {
 
   @Test
   @MainActor
+  func `refreshing an already satisfied request does not touch the platform`() async throws {
+    let defaults = try isolatedDefaults()
+    let adapter = ScriptedAdapter(snapshot: stereoSnapshot(appliedChannels: .stereo))
+    let coordinator = AudioInputConfigurationCoordinator(defaults: defaults, adapter: adapter)
+    var request = AudioInputConfigurationRequest.automatic
+    request.channels = .stereo
+
+    _ = await coordinator.submit(request, isRunning: true, isActive: true)
+    let refreshed = await coordinator.reconcile(isRunning: true, isActive: true)
+
+    #expect(refreshed.reconciliation == .satisfied)
+    let appliedPlans = await adapter.plans()
+    #expect(
+      appliedPlans.map(\.format.channels) == [.stereo],
+      "A capability refresh reapplied the satisfied route \(appliedPlans.count) times.",
+    )
+  }
+
+  @Test
+  @MainActor
+  func `forcing a satisfied reconciliation reapplies platform preferences once`() async throws {
+    let defaults = try isolatedDefaults()
+    let adapter = ScriptedAdapter(snapshot: stereoSnapshot(appliedChannels: .stereo))
+    let coordinator = AudioInputConfigurationCoordinator(defaults: defaults, adapter: adapter)
+    var request = AudioInputConfigurationRequest.automatic
+    request.channels = .stereo
+
+    _ = await coordinator.submit(request, isRunning: true, isActive: true)
+    let reconciled = await coordinator.reconcile(
+      isRunning: true,
+      isActive: true,
+      forcePlatformApply: true,
+    )
+    let notificationRefresh = await coordinator.reconcile(isRunning: true, isActive: true)
+
+    #expect(reconciled.reconciliation == .satisfied)
+    #expect(notificationRefresh.reconciliation == .satisfied)
+    #expect(await adapter.plans().map(\.format.channels) == [.stereo, .stereo])
+  }
+
+  @Test
+  @MainActor
   func `activation reconciles the stereo request submitted while inactive`() async throws {
     let defaults = try isolatedDefaults()
     let adapter = ScriptedAdapter(snapshot: stereoSnapshot(appliedChannels: .stereo))
