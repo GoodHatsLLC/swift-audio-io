@@ -71,6 +71,70 @@ These subscribers are fan-out by design — registering multiple subscribers doe
 session. A caller can forward it to the engine, inspect it for UI, persist it
 for diagnostics, or replay it in a deterministic test.
 
+## Activation
+
+Activation is asynchronous and completes only when the platform has actually
+finished the transition:
+
+```swift
+try await envManager.setAudioSessionActive(true)
+```
+
+There is exactly one activation code path in the package. On iOS 27 and later
+it uses `AVAudioSession.activate(options:)` / `deactivate(options:)`; on iOS 26
+it uses the synchronous `setActive(_:options:)` serialized behind the internal
+session-access gate. The path is chosen once, when the manager (or an
+engine-managed ``AIOEngine``) is created. Deactivation always passes
+`.notifyOthersOnDeactivation` on both versions, so an interrupted app is still
+told it may resume.
+
+Three rules govern overlapping requests:
+
+- A request that duplicates the newest *intent* and already matches applied
+  state returns immediately.
+- Requests are serialized. A request that reaches the front of the queue and
+  finds the platform already in the requested state makes no platform call.
+- ``AudioEnvironmentManager/isAudioSessionActive`` is written only from a
+  completed platform transition, so it mirrors the platform rather than the
+  request. A superseded request drops its follow-on input reconciliation and
+  lets the newer request perform it.
+
+Completion is evidence that the operation finished, not that capture is ready.
+Callers still read back the route and settled input configuration before
+starting a capture.
+
+## iOS 27 session lifecycle signals
+
+On iOS 27 the platform adds a session-state channel alongside the interruption
+notifications, surfaced as three more ``AudioSystemEvent`` cases:
+
+- ``AudioSystemEvent/sessionActivated`` — a confirmation. If applied state
+  disagrees (an activation the manager did not perform), it is reconciled to
+  follow the platform.
+- ``AudioSystemEvent/sessionDeactivated(_:)`` — carries an
+  ``AudioSessionDeactivation`` with the ``AudioSessionDeactivationSource``
+  (`.app` or `.system`) and, for a system interruption, the
+  ``AudioInterruptionReason``. Applied state is forced inactive on receipt: the
+  platform has already deactivated regardless of what the manager believed.
+- ``AudioSystemEvent/resumptionRecommended(_:)`` — the system's advice on
+  whether to resume.
+
+On iOS 26 these three streams degrade to logged no-ops and the events are never
+emitted, so consumers written against them work unchanged on both versions.
+
+One interruption can surface on *both* channels. The dedup rule: interruption
+events are the recovery trigger, and `sessionDeactivated` stages recovery only
+when nothing is staged yet. An `.app`-sourced deactivation never stages
+recovery — whoever asked for it owns what happens next.
+
+`resumptionRecommended` is advice about **playback only**. A positive
+recommendation may resume pending playback; it never restarts a recording,
+because a recording that was left is stopped and only the pending-recording
+flow — which requires the caller to still want recording — can bring it back. A
+negative recommendation suppresses the automatic playback restart that
+`interruptionEnded(shouldResume: true)` would otherwise perform, and leaves
+recording recovery untouched.
+
 ## Narrow protocol contracts
 
 Feature code typically depends on one of these narrow contracts rather than the concrete `AudioEnvironmentManager`:
@@ -121,6 +185,9 @@ The application's role is to subscribe to the events stream and drive UI. The en
 - ``AudioSourceConfigurationOption-struct``
 - ``SettledMicrophoneInputConfiguration-struct``
 - ``AudioSystemEvent``
+- ``AudioSessionDeactivation``
+- ``AudioSessionDeactivationSource``
+- ``AudioInterruptionReason``
 - ``AudioRouteChange``
 - ``AudioRouteChangeReason``
 - ``AudioRouteSnapshot``

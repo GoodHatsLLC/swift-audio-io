@@ -267,10 +267,15 @@
       ///
       /// The caller is responsible for `@MainActor` failure cleanup and typed
       /// error propagation; this function never publishes lifecycle events.
+      /// `@concurrent` for the same reason ``RecordingLifecycle/attemptRecordingStart(configuration:)``
+      /// carries it: under `NonisolatedNonsendingByDefault` a plain
+      /// `nonisolated async` inherits the caller's actor, and this body must
+      /// never run on the main actor.
+      @concurrent
       nonisolated func prepareRecordingGraph(
         configuration: RecordingConfiguration,
         inputs: PreparationInputs,
-      ) throws(RecordingError) {
+      ) async throws(RecordingError) {
         guard !inputs.alreadyActive else {
           return
         }
@@ -335,8 +340,8 @@
         }
 
         log.info("preparing recording graph with config: \(configuration, privacy: .public)")
-        do {
-          try owner.recording.configureAudioSession(
+        do throws(SessionError) {
+          try await owner.recording.configureAudioSession(
             for: configuration,
             sessionConfiguration: inputs.sessionConfiguration,
           )

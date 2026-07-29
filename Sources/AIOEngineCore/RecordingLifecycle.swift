@@ -208,7 +208,7 @@
 
         do {
           // (c) OFF-MAIN: blocking bring-up + engine/backend start, never on main.
-          try owner.recording.capture.prepareRecordingGraph(
+          try await owner.recording.capture.prepareRecordingGraph(
             configuration: configuration,
             inputs: inputs,
           )

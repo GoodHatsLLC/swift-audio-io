@@ -39,6 +39,9 @@ func publicAPISnapshot_AIOAudioSession() throws {
   _ = AudioRouteSnapshot.self
   _ = AudioSessionSnapshot.self
   _ = AudioSystemEvent.self
+  _ = AudioSessionDeactivation.self
+  _ = AudioSessionDeactivationSource.self
+  _ = AudioInterruptionReason.self
   _ = AudioSessionConfiguration.self
   _ = AudioSource.self
   _ = AudioSourceConfigurationOption.self

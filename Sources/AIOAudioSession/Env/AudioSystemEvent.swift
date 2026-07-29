@@ -9,6 +9,81 @@ public enum AudioSystemEvent: Sendable, Hashable {
   case interruptionEnded(shouldResume: Bool)
   case mediaServicesLost
   case mediaServicesReset
+  /// The platform reported that the session became active.
+  ///
+  /// This is a confirmation and reconciliation signal, not a recovery trigger.
+  /// iOS 27 and later only; iOS 26 never emits it.
+  case sessionActivated
+  /// The platform reported that the session became inactive, and why.
+  ///
+  /// iOS 27 and later only; iOS 26 signals the same underlying conditions
+  /// through ``interruptionBegan`` alone.
+  case sessionDeactivated(AudioSessionDeactivation)
+  /// The system's recommendation on whether interrupted audio should resume.
+  ///
+  /// iOS 27 and later only. It is advice about *playback*: recording recovery
+  /// is never driven by it.
+  case resumptionRecommended(Bool)
+}
+
+/// A captured explanation of why the platform audio session became inactive.
+public struct AudioSessionDeactivation: Sendable, Hashable {
+  public init(
+    source: AudioSessionDeactivationSource,
+    interruptionReason: AudioInterruptionReason? = nil,
+  ) {
+    self.source = source
+    self.interruptionReason = interruptionReason
+  }
+
+  /// Who deactivated the session.
+  public let source: AudioSessionDeactivationSource
+
+  /// Why the system interrupted, when the deactivation came from a system
+  /// interruption. `nil` for an app-requested deactivation.
+  public let interruptionReason: AudioInterruptionReason?
+
+  public var userLabel: String {
+    switch source {
+    case .app:
+      "Audio session released by this app"
+    case .system:
+      if let interruptionReason {
+        "Audio session interrupted: \(interruptionReason.userLabel)"
+      } else {
+        "Audio session deactivated by the system"
+      }
+    case .unknown:
+      "Audio session deactivated"
+    }
+  }
+}
+
+/// Who deactivated the platform audio session.
+public enum AudioSessionDeactivationSource: Sendable, Hashable {
+  /// This app asked for the deactivation.
+  case app
+  /// The system deactivated the session, typically an interruption.
+  case system
+  /// The platform reported a source this version does not model.
+  case unknown
+}
+
+/// Why the system interrupted the audio session.
+public enum AudioInterruptionReason: Sendable, Hashable {
+  case `default`
+  case builtInMicMuted
+  case routeDisconnected
+  case unknown
+
+  public var userLabel: String {
+    switch self {
+    case .default: "Another app took the audio session"
+    case .builtInMicMuted: "Built-in microphone muted"
+    case .routeDisconnected: "Audio route disconnected"
+    case .unknown: "Unknown reason"
+    }
+  }
 }
 
 /// A captured route transition with no live platform-session dependency.

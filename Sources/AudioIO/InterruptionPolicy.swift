@@ -31,7 +31,73 @@
         await handleMediaServicesLost()
       case .mediaServicesReset:
         await handleMediaServicesReset()
+      case .sessionActivated:
+        // Applied-state reconciliation is the environment manager's job. Here
+        // it is diagnostics only: activation is never a recovery trigger.
+        interruptionPolicyLog.info("Audio session became active")
+      case .sessionDeactivated(let deactivation):
+        await handleSessionDeactivated(deactivation)
+      case .resumptionRecommended(let shouldResume):
+        await handleResumptionRecommended(shouldResume)
       }
+    }
+
+    /// iOS 27 surfaces one interruption through *both*
+    /// `interruptionBegan`/`Ended` and `didBecomeInactive`/`didBecomeActive`.
+    /// The dedup rule: interruption events are the recovery trigger, and a
+    /// session-state event only stages recovery when nothing is staged yet.
+    private func handleSessionDeactivated(
+      _ deactivation: AudioSessionDeactivation,
+    ) async {
+      interruptionPolicyLog.info(
+        "Session deactivated: \(deactivation.userLabel, privacy: .public)",
+      )
+
+      guard deactivation.source == .system else {
+        // This app asked for the deactivation. Whoever asked owns what happens
+        // next; staging a restart here would fight it.
+        return
+      }
+
+      guard owner.audioRecoveryState.pendingRecording == nil,
+        owner.audioRecoveryState.pendingPlayback == nil
+      else {
+        interruptionPolicyLog.info(
+          "Session deactivation already covered by a staged interruption; not re-staging",
+        )
+        return
+      }
+
+      // The platform has already torn the session down, so this behaves like
+      // an interruption began: stage pending recovery and stop live I/O.
+      await handleInterruptionBegan()
+    }
+
+    /// The system's resumption advice. It may resume *playback*. It must never
+    /// restart a *recording*: leaving a live recording stops it, and
+    /// interruption-driven recording recovery goes through the
+    /// pending-recording flow, which requires the caller to still want
+    /// recording.
+    private func handleResumptionRecommended(_ shouldResume: Bool) async {
+      guard shouldResume else {
+        interruptionPolicyLog.info(
+          "System recommends not resuming; suppressing automatic playback restart",
+        )
+        owner.audioRecoveryState.playbackResumptionSuppressed = true
+        return
+      }
+
+      owner.audioRecoveryState.playbackResumptionSuppressed = false
+
+      guard let playback = owner.audioRecoveryState.pendingPlayback else {
+        // Deliberately does not consult `pendingRecording`. A recommendation is
+        // never sufficient cause to put a microphone back on.
+        interruptionPolicyLog.info("System recommends resuming; no pending playback to resume")
+        return
+      }
+
+      owner.audioRecoveryState.pendingPlayback = nil
+      await owner.restartPlayback(from: playback)
     }
 
     private func handleRouteChange(_ change: AudioRouteChange) async {
@@ -165,6 +231,7 @@
     private func handleInterruptionEnded(shouldResume: Bool) async {
       let recording = owner.audioRecoveryState.pendingRecording
       let playback = owner.audioRecoveryState.pendingPlayback
+      let playbackSuppressed = owner.audioRecoveryState.playbackResumptionSuppressed
       owner.audioRecoveryState.clear()
 
       guard shouldResume else {
@@ -175,6 +242,12 @@
       if let recording {
         await restartRecording(recording)
       } else if let playback {
+        guard !playbackSuppressed else {
+          interruptionPolicyLog.info(
+            "Playback restart suppressed by the system's resumption recommendation",
+          )
+          return
+        }
         await owner.restartPlayback(from: playback)
       }
     }

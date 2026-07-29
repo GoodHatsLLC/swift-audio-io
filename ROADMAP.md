@@ -53,6 +53,7 @@ Exit criteria: `1.0.0` general availability.
 - **iOS test execution in CI** — currently compile-only (see the CI item above). Needs an Apple-Silicon runner.
 - **Stale iOS-only test expectations** — surfaced during the CI bring-up but not yet fixed in-repo: the `AAC compatible common sample rate matrix` test expects a rate set without `32 kHz`, which iOS 26 now reports as AAC-compatible; the `AudioVisualizationEngineConsumerTests` fan-out tests have x86-simulator-sensitive `waitForSignal` timeouts. These don't gate CI today (iOS is compile-only) but must be addressed before iOS test execution is re-enabled.
 - **`actions/checkout` Node 20 deprecation** — bump to `@v5` (or whatever's current) before September 2026.
+- **iOS 27 activation path needs device validation** (`0.13.0`). `NativeAudioSessionActivator` and the three iOS 27 session-state notification streams are compiled against the iOS 27 SDK but have never *run*: no iOS 27 simulator runtime exists yet, so every local and CI run exercises the iOS 26 `LegacyAudioSessionActivator` branch instead. Needs a physical iOS 27 device to confirm (a) `activate`/`deactivate` completion and refusal semantics, (b) that `.notifyOthersOnDeactivation` still resumes other apps, and (c) the interruption/session-state deduplication rule against real phone-call, Siri, other-app-claim, and route-pull interruptions.
 
 ## Stability commitments
 

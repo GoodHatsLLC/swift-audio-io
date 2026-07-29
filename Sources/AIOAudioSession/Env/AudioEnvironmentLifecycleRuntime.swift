@@ -126,6 +126,26 @@
               }
             }
           }
+          // iOS 27 session-state channel. These streams are finished
+          // immediately on iOS 26, so each loop exits at once there.
+          group.addTask { [self] in
+            for await _ in env.notifications.sessionDidBecomeActive {
+              if Task.isCancelled { return }
+              await handleSessionDidBecomeActive()
+            }
+          }
+          group.addTask { [self] in
+            for await deactivation in env.notifications.sessionDidBecomeInactive {
+              if Task.isCancelled { return }
+              await handleSessionDidBecomeInactive(deactivation)
+            }
+          }
+          group.addTask { [weak owner] in
+            for await shouldResume in env.notifications.resumptionRecommendation {
+              if Task.isCancelled { return }
+              await owner?.dispatchAudioSystemEvent(.resumptionRecommended(shouldResume))
+            }
+          }
           group.addTask { [self] in
             for await _ in env.notifications.mediaServicesLost {
               if Task.isCancelled { return }
@@ -175,12 +195,46 @@
         }
       }
 
+      /// Confirmation signal. Reconciles applied state when it disagrees — an
+      /// activation the controller did not perform still leaves the platform
+      /// active, and the mirror must follow the platform, not the other way
+      /// round.
+      @MainActor
+      private func handleSessionDidBecomeActive() async {
+        if !owner.isAudioSessionActive {
+          audioEnvironmentLifecycleLog.warning(
+            "sessionDidBecomeActive while applied state was inactive; reconciling",
+          )
+          owner.isAudioSessionActive = true
+          owner.requestedAudioSessionActive = true
+          await owner.reconcileInputConfiguration(forcePlatformApply: true)
+        }
+        await owner.dispatchAudioSystemEvent(.sessionActivated)
+      }
+
+      /// The platform has already deactivated, whatever the controller
+      /// believes, so applied state is forced to `false` — the same treatment
+      /// media-services loss gets.
+      @MainActor
+      private func handleSessionDidBecomeInactive(
+        _ deactivation: AudioSessionDeactivation,
+      ) async {
+        audioEnvironmentLifecycleLog.warning(
+          "sessionDidBecomeInactive: \(deactivation.userLabel, privacy: .public)",
+        )
+        owner.isAudioSessionActive = false
+        owner.requestedAudioSessionActive = false
+        owner.markInputConfigurationUnavailable(.sessionInactive)
+        await owner.dispatchAudioSystemEvent(.sessionDeactivated(deactivation))
+      }
+
       @MainActor
       private func handleMediaServicesLost() async {
         audioEnvironmentLifecycleLog.warning(
           "mediaServicesLost notification: audio services unavailable",
         )
         owner.isAudioSessionActive = false
+        owner.requestedAudioSessionActive = false
         owner.markInputConfigurationUnavailable(.mediaServicesUnavailable)
         await owner.dispatchAudioSystemEvent(.mediaServicesLost)
       }
@@ -191,6 +245,7 @@
           "mediaServicesReset notification: rebuilding audio session configuration",
         )
         owner.isAudioSessionActive = false
+        owner.requestedAudioSessionActive = false
         do {
           try owner.sessionBootstrap.rebuildSessionConfiguration(
             configuration: owner.sessionConfiguration,

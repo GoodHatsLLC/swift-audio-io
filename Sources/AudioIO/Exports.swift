@@ -72,6 +72,10 @@
   public typealias AudioRouteSnapshot = AIOAudioSession.AudioRouteSnapshot
   public typealias AudioSessionSnapshot = AIOAudioSession.AudioSessionSnapshot
   public typealias AudioSystemEvent = AIOAudioSession.AudioSystemEvent
+  public typealias AudioSessionDeactivation = AIOAudioSession.AudioSessionDeactivation
+  public typealias AudioSessionDeactivationSource =
+    AIOAudioSession.AudioSessionDeactivationSource
+  public typealias AudioInterruptionReason = AIOAudioSession.AudioInterruptionReason
   public typealias AudioSessionConfiguration = AIOAudioSession.AudioSessionConfiguration
   public typealias AudioSource = AIOAudioSession.AudioSource
   public typealias AnyErrorManager = AIOAudioSession.AnyErrorManager

@@ -18,6 +18,44 @@
     }
   }
 
+  @available(iOS 27.0, *)
+  extension AudioSessionDeactivation {
+    /// Converts the iOS 27 deactivation context into the neutral value the
+    /// recovery policy consumes. Per ADR 0002 the raw platform type never
+    /// leaves this adapter.
+    package init(platformContext context: AVAudioSession.DeactivationContext) {
+      self.init(
+        source: AudioSessionDeactivationSource(context.source),
+        interruptionReason: context.interruptionContext.map {
+          AudioInterruptionReason($0.reason)
+        },
+      )
+    }
+  }
+
+  @available(iOS 27.0, *)
+  extension AudioSessionDeactivationSource {
+    package init(_ source: AVAudioSession.DeactivationSource) {
+      switch source {
+      case .app: self = .app
+      case .system: self = .system
+      @unknown default: self = .unknown
+      }
+    }
+  }
+
+  extension AudioInterruptionReason {
+    package init(_ reason: AVAudioSession.InterruptionReason) {
+      switch reason {
+      case .default: self = .default
+      case .builtInMicMuted: self = .builtInMicMuted
+      case .routeDisconnected: self = .routeDisconnected
+      // `.appWasSuspended` is deprecated and no longer posted from iOS 16.
+      default: self = .unknown
+      }
+    }
+  }
+
   extension AudioRouteChangeReason {
     package init(_ reason: AVAudioSession.RouteChangeReason) {
       switch reason {

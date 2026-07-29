@@ -210,6 +210,57 @@ releases follow the versioning policy in `README.md` and `ROADMAP.md`.
   that `PlatformAudioRouteEvent` cannot express.
 - `AudioEnvironmentManager._InputConfigError`, which was unreferenced.
 
+## 0.13.0 - 2026-07-28
+
+Adopts the iOS 27 asynchronous `AVAudioSession` lifecycle. The deployment floor
+is unchanged at iOS 26 / macOS 26 — every iOS 27 API sits behind an
+availability check with the iOS 26 path preserved.
+
+### Added
+
+- One activation seam, `AudioSessionActivating`, with two package-internal
+  implementations selected once per owner: `NativeAudioSessionActivator`
+  (iOS 27, `activate(options:)` / `deactivate(options:)`) and
+  `LegacyAudioSessionActivator` (iOS 26, the synchronous `setActive` serialized
+  behind the session-access gate). Deactivation passes
+  `.notifyOthersOnDeactivation` on both paths, so other apps are still told
+  they may resume.
+- Three `AudioSystemEvent` cases fed by the iOS 27 session-state channel:
+  `sessionActivated`, `sessionDeactivated(_:)` carrying an
+  `AudioSessionDeactivation` (`AudioSessionDeactivationSource` plus an optional
+  `AudioInterruptionReason`), and `resumptionRecommended(_:)`. On iOS 26 the
+  backing notification streams degrade to logged no-ops and the events are
+  never emitted.
+- `FakeAudioSessionActivator` in the test-support target: records ordered
+  activation calls and takes scriptable per-call failures and gates, which is
+  what makes activation ordering assertable at all.
+
+### Changed
+
+- Activation is serialized and supersession-aware. A request duplicating the
+  newest intent returns immediately; a queued request the platform has already
+  satisfied makes no platform call; and `isAudioSessionActive` is written only
+  from a completed platform transition, so it mirrors the platform rather than
+  the request. A superseded request drops its follow-on input reconciliation
+  and lets the newer request perform it.
+- Both engine-managed fallback sites now use the shared activator, so exactly
+  one code path in the package touches activation. This closes a latent
+  overlap: `AIOEngine.setAudioSessionDemand` previously called
+  `AVAudioSession.setActive` raw — no options, and outside the session-access
+  gate — where it could interleave with controller-driven activation.
+- `RecordingLifecycle.configureAudioSession(for:sessionConfiguration:)` and the
+  graph preparation that calls it are now `async`, because activation is.
+  Engine-managed activation keeps its position in the configuration sequence:
+  after category, mode, sample rate, and buffer duration, before preferred
+  input and channel count.
+- `InterruptionPolicy` deduplicates the two channels an iOS 27 interruption can
+  arrive on. Interruption events remain the recovery trigger; a system
+  deactivation stages recovery only when nothing is staged, and an
+  app-requested deactivation never stages any. A resumption recommendation is
+  advice about playback only: a positive one may resume pending playback and
+  never restarts a recording, and a negative one suppresses the automatic
+  playback restart that `interruptionEnded(shouldResume: true)` would perform.
+
 ## 0.12.1 - 2026-07-27
 
 ### Fixed

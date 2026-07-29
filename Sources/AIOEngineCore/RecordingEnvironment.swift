@@ -39,6 +39,18 @@
     package var attemptRecordingStart:
       (@Sendable (RecordingConfiguration) async throws(RecordingError) -> URL)?
 
+    #if os(iOS)
+      /// Replaces the engine-managed platform activation path used when
+      /// ``AIOEngine/audioSessionAuthority`` is `nil`. `nil` selects
+      /// ``PlatformAudioSessionActivator/make()``.
+      ///
+      /// Set after initialization rather than through the memberwise
+      /// initializer: the field only exists on iOS, and `#if` cannot gate a
+      /// single function parameter. The environment is still immutable for the
+      /// engine's lifetime — it is a value copied at engine init.
+      package var sessionActivator: (any AudioSessionActivating)?
+    #endif
+
     package init(
       makeCaptureBackend: (
         @Sendable (RecordingInput, AIOEngine) -> any RecordingCaptureBackend

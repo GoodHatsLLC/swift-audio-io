@@ -22,18 +22,37 @@
 
     @MainActor
     package func setAudioSessionDemand(active: Bool) async throws(SessionError) {
-      do {
-        if let audioSessionAuthority {
+      if let audioSessionAuthority {
+        do {
           try await audioSessionAuthority.setAudioSessionActive(active)
-        } else {
-          #if os(iOS)
-            try AVAudioSession.sharedInstance().setActive(active)
-          #endif
+        } catch {
+          throw .operationFailed(operation: .setActive, error: ErrorContext(error))
         }
-      } catch {
-        throw .operationFailed(operation: .setActive, error: ErrorContext(error))
+        return
       }
+      #if os(iOS)
+        // Engine-managed mode. This used to call `AVAudioSession.setActive`
+        // raw — no options, and outside `AudioSessionAccess` — which could
+        // interleave with controller-driven activation and dropped
+        // `.notifyOthersOnDeactivation` on the way down. It now shares the one
+        // activation path.
+        try await activateSharedSession(active: active)
+      #endif
     }
+
+    #if os(iOS)
+      /// The single engine-managed activation call. Both engine fallback sites
+      /// funnel through here so exactly one code path touches activation.
+      package nonisolated func activateSharedSession(
+        active: Bool,
+      ) async throws(SessionError) {
+        do throws(AudioSessionActivationError) {
+          try await sessionActivator.setActive(active, session: AVAudioSession.sharedInstance())
+        } catch {
+          throw .operationFailed(operation: .setActive, error: ErrorContext(error))
+        }
+      }
+    #endif
 
     #if os(iOS)
       package nonisolated func applyAudioSessionConfiguration(

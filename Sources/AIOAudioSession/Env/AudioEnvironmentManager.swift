@@ -126,10 +126,29 @@
       }.get()
     }
 
-    public init(
+    public convenience init(
       env: AudioEnvironment,
       errorManager: any ErrorManaging,
       defaults: UserDefaults = UserDefaults(),
+    ) {
+      self.init(
+        env: env,
+        errorManager: errorManager,
+        defaults: defaults,
+        sessionActivator: PlatformAudioSessionActivator.make(),
+      )
+    }
+
+    /// Creates a manager with a replaceable activation path.
+    ///
+    /// The activator is chosen once here rather than per request, so the
+    /// `#available(iOS 27, *)` check happens exactly once per manager. Tests
+    /// substitute a fake to assert ordering without a live `AVAudioSession`.
+    package init(
+      env: AudioEnvironment,
+      errorManager: any ErrorManaging,
+      defaults: UserDefaults = UserDefaults(),
+      sessionActivator: any AudioSessionActivating,
     ) {
       let queue = SerialAsyncWorkQueue()
       let adapter = IOSAudioInputConfigurationAdapter(
@@ -142,6 +161,7 @@
       )
       self.env = env
       self.errorManager = errorManager
+      self.sessionActivator = sessionActivator
       inputWriteQueue = queue
       platformInputAdapter = adapter
       inputConfigurationCoordinator = coordinator
@@ -154,6 +174,24 @@
     let env: AudioEnvironment
     let errorManager: any ErrorManaging
     @ObservationIgnored let inputWriteQueue: SerialAsyncWorkQueue
+
+    /// The single activation path for this manager, fixed at initialization.
+    @ObservationIgnored let sessionActivator: any AudioSessionActivating
+
+    /// Serializes activation requests so two platform transitions are never in
+    /// flight at once. Distinct from ``inputWriteQueue``, which serializes
+    /// input-preference writes.
+    @ObservationIgnored let audioSessionActivationQueue = SerialAsyncWorkQueue()
+
+    /// Monotonically increasing id for accepted activation requests. A
+    /// completion whose generation is stale has been superseded and must not
+    /// write applied state.
+    @ObservationIgnored var audioSessionActivationGeneration: UInt64 = 0
+
+    /// The newest *requested* activation state, which can differ from
+    /// ``isAudioSessionActive`` while a request is in flight. `nil` means no
+    /// request has been made, so applied state is the current intent.
+    @ObservationIgnored var requestedAudioSessionActive: Bool?
     @ObservationIgnored private let platformInputAdapter: IOSAudioInputConfigurationAdapter
     @ObservationIgnored private let inputConfigurationCoordinator:
       AudioInputConfigurationCoordinator

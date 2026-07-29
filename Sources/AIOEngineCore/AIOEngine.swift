@@ -395,6 +395,13 @@
     /// built-in production path"; tests supply fakes at initialization.
     package let recordingEnvironment: RecordingEnvironment
 
+    #if os(iOS)
+      /// The engine's own activation path, used only when
+      /// ``audioSessionAuthority`` is `nil`. Chosen once here so the
+      /// `#available(iOS 27, *)` check is not repeated per request.
+      package let sessionActivator: any AudioSessionActivating
+    #endif
+
     /// Maximum wall-clock time allowed for transient recording readiness to settle.
     public let recordingStartTimeout: Duration
 
@@ -519,6 +526,10 @@
       self.audioSessionAuthority = audioSessionAuthority
       self.recordingStartTimeout = max(.zero, recordingStartTimeout)
       self.recordingEnvironment = recordingEnvironment
+      #if os(iOS)
+        sessionActivator =
+          recordingEnvironment.sessionActivator ?? PlatformAudioSessionActivator.make()
+      #endif
       audioRecoveryState = AudioRecoveryState()
       // Every stored property is initialized, so `self` can be handed over.
       recording.owner = self
