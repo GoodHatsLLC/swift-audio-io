@@ -373,16 +373,35 @@
     case rms
   }
 
+  /// Describes how LOD buckets map onto their source timeline.
+  public enum LODTimelineLayout: Sendable, Equatable {
+    /// A live ring buffer whose write index advances and wraps.
+    case liveCircular
+
+    /// An immutable, zero-based file timeline.
+    ///
+    /// `availableRawSampleCount` is the prefix represented by committed LOD
+    /// buckets. `totalRawSampleCount` excludes any allocation padding in
+    /// ``LODSnapshot/rawBufferLength``.
+    case staticLinear(
+      availableRawSampleCount: Int,
+      totalRawSampleCount: Int,
+    )
+  }
+
   /// Protocol defining the interface for LOD snapshot data sources.
   ///
-  /// This protocol is implemented by both `LODSnapshotRef` (for live streaming data)
-  /// and `StaticLODSnapshot` (for pre-computed/file-based data), allowing
-  /// `MetalWaveformView` to render either type uniformly.
+  /// This protocol is implemented by both `LODSnapshotRef` (for live streaming
+  /// data) and `MultiBandLODSnapshot` (for copied or pre-computed file data),
+  /// allowing renderers to consume either type uniformly.
   public protocol LODSnapshot: Sendable {
     /// Number of frequency bands.
     var bandCount: Int { get }
 
-    /// Current write position in circular buffers.
+    /// Next write position in LOD storage.
+    ///
+    /// Consult ``timelineLayout`` to determine whether this position wraps or
+    /// represents the end of a linear prefix.
     var writeIndex: Int { get }
 
     /// LOD reduction ratio used.
@@ -393,6 +412,9 @@
 
     /// LOD buffer length per band.
     var lodBufferLength: Int { get }
+
+    /// Mapping between LOD storage and its source timeline.
+    var timelineLayout: LODTimelineLayout { get }
 
     /// Direct access to one channel for a specific band.
     ///
@@ -418,6 +440,12 @@
   }
 
   extension LODSnapshot {
+    /// Existing conformers represent live circular storage unless they opt in
+    /// to static timeline metadata.
+    public var timelineLayout: LODTimelineLayout {
+      .liveCircular
+    }
+
     /// Returns `true` when `band` is within `0..<bandCount`.
     public func isValidBand(_ band: Int) -> Bool {
       band >= 0 && band < bandCount
@@ -544,6 +572,9 @@
     /// Raw buffer length (for shader calculations).
     public let rawBufferLength: Int
 
+    /// Mapping between LOD storage and its source timeline.
+    public let timelineLayout: LODTimelineLayout
+
     /// Number of bands.
     public var bandCount: Int {
       bands.count
@@ -560,11 +591,13 @@
       writeIndex: Int,
       lodRatio: Int,
       rawBufferLength: Int,
+      timelineLayout: LODTimelineLayout = .liveCircular,
     ) {
       self.bands = bands
       self.writeIndex = writeIndex
       self.lodRatio = lodRatio
       self.rawBufferLength = rawBufferLength
+      self.timelineLayout = Self.normalizedTimelineLayout(timelineLayout)
     }
 
     /// Empty snapshot with no data.
@@ -574,6 +607,23 @@
       lodRatio: 128,
       rawBufferLength: 0,
     )
+
+    private static func normalizedTimelineLayout(
+      _ timelineLayout: LODTimelineLayout,
+    ) -> LODTimelineLayout {
+      switch timelineLayout {
+      case .liveCircular:
+        .liveCircular
+      case .staticLinear(let availableRawSampleCount, let totalRawSampleCount):
+        .staticLinear(
+          availableRawSampleCount: min(
+            max(availableRawSampleCount, 0),
+            max(totalRawSampleCount, 0),
+          ),
+          totalRawSampleCount: max(totalRawSampleCount, 0),
+        )
+      }
+    }
 
     public func toSnapshot() -> MultiBandLODSnapshot? {
       self

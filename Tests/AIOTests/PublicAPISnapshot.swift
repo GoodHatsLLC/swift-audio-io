@@ -184,6 +184,7 @@ func publicAPISnapshot_AudioSignals() throws {
   _ = LODChannel.self
   _ = (any LODSnapshot).self
   _ = LODSnapshotRef.self
+  _ = LODTimelineLayout.self
   _ = LODWork.self
   _ = AnalysisWork.self
   _ = MultiBandLODConfiguration.self
@@ -196,6 +197,11 @@ func publicAPISnapshot_AudioSignals() throws {
   // Pinned here so a rename or access-level drop fails the snapshot.
   _ = MultiBandLODProcessor.LODGenerationError.self
   _ = MultiBandLODSnapshot.self
+  // These types intentionally rely on AudioIO's exported AudioSignals import
+  // instead of duplicate typealiases in Exports.swift.
+  _ = OfflineLODExtractor.self
+  _ = OfflineLODProgress.self
+  _ = OfflineLODResult.self
   _ = (any SnapshotProvider).self
   _ = SpectrumData.self
   _ = StandardBands.self

@@ -810,6 +810,7 @@
   extension MultiBandLODProcessor {
     /// Errors that can occur during LOD generation.
     public enum LODGenerationError: AudioError, LocalizedError {
+      case cancelled
       case bufferCreationFailed
       case invalidAudioFormat
       case audioFileOpenFailed(url: URL, error: ErrorContext)
@@ -817,6 +818,8 @@
 
       public var errorDescription: String? {
         switch self {
+        case .cancelled:
+          "LOD generation was cancelled"
         case .bufferCreationFailed:
           "Failed to create audio buffer for processing"
         case .invalidAudioFormat:

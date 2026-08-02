@@ -7,6 +7,34 @@
 
   struct MultiBandLODContractTests {
     @Test
+    func `existing snapshot conformers default to the live circular timeline`() {
+      let snapshot: any LODSnapshot = LegacyLODSnapshot()
+
+      #expect(snapshot.timelineLayout == .liveCircular)
+    }
+
+    @Test
+    func `static timeline availability is clamped to its total length`() {
+      let snapshot = MultiBandLODSnapshot(
+        bands: [BandLODData(bandIndex: 0, capacity: 5)],
+        writeIndex: 5,
+        lodRatio: 2,
+        rawBufferLength: 12,
+        timelineLayout: .staticLinear(
+          availableRawSampleCount: 12,
+          totalRawSampleCount: 10,
+        ),
+      )
+
+      #expect(
+        snapshot.timelineLayout
+          == .staticLinear(
+            availableRawSampleCount: 10,
+            totalRawSampleCount: 10,
+          ))
+    }
+
+    @Test
     func `lodBufferLength uses ceil(raw/lodRatio)`() {
       let config = MultiBandLODConfiguration(
         bandCount: 3,
@@ -74,6 +102,38 @@
       #expect(validCount == 4)
       #expect(invalidNegative == nil)
       #expect(invalidUpper == nil)
+    }
+  }
+
+  private struct LegacyLODSnapshot: LODSnapshot {
+    let bandCount = 0
+    let writeIndex = 0
+    let lodRatio = 1
+    let rawBufferLength = 0
+    let lodBufferLength = 0
+
+    func withContiguousLODChannel<R>(
+      band _: Int,
+      channel _: LODChannel,
+      _ body: (UnsafeBufferPointer<Float>) -> R,
+    ) -> R {
+      unsafe body(UnsafeBufferPointer(start: nil, count: 0))
+    }
+
+    func withMinBuffer<R>(band _: Int, _ body: (UnsafeBufferPointer<Float>) -> R) -> R {
+      unsafe body(UnsafeBufferPointer(start: nil, count: 0))
+    }
+
+    func withMaxBuffer<R>(band _: Int, _ body: (UnsafeBufferPointer<Float>) -> R) -> R {
+      unsafe body(UnsafeBufferPointer(start: nil, count: 0))
+    }
+
+    func withRMSBuffer<R>(band _: Int, _ body: (UnsafeBufferPointer<Float>) -> R) -> R {
+      unsafe body(UnsafeBufferPointer(start: nil, count: 0))
+    }
+
+    func withRawBuffer<R>(band _: Int, _ body: (UnsafeBufferPointer<Float>) -> R) -> R {
+      unsafe body(UnsafeBufferPointer(start: nil, count: 0))
     }
   }
 

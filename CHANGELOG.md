@@ -7,8 +7,14 @@ releases follow the versioning policy in `README.md` and `ROADMAP.md`.
 
 ## Unreleased
 
+## 0.14.0 - 2026-08-01
+
 ### Added
 
+- Progressive offline LOD extraction for long files. The new progress
+  overloads publish ordered, throttled snapshots with static timeline metadata,
+  an available-prefix boundary, a guaranteed terminal snapshot, and typed task
+  cancellation.
 - A complete requested/applied microphone input model. Durable
   `AudioInputConfigurationRequest` values cover input, source and polar
   pattern, channels, sample rate, and processing mode;

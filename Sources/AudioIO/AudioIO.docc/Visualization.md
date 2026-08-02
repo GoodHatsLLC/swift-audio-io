@@ -64,6 +64,29 @@ let snapshot = result.snapshot
 
 Offline extraction is independent of the live ``AudioVisualizationEngine`` — it produces the same ``MultiBandLODSnapshot`` shape from a file with explicit channel-strategy control. ``OfflineLODExtractor`` lives in the `AudioSignals` library product and can be used standalone without recording/playback.
 
+For long files, use the progress overload to display the waveform before the
+entire file has been decoded:
+
+```swift
+let result = try await extractor.extract(from: audioURL) { progress in
+  await waveformStore.update(
+    snapshot: progress.snapshot,
+    isComplete: progress.isComplete
+  )
+}
+```
+
+Each ``OfflineLODProgress/snapshot`` has a
+``LODTimelineLayout/staticLinear(availableRawSampleCount:totalRawSampleCount:)``
+layout. `totalRawSampleCount` fixes the full timeline immediately, while
+`availableRawSampleCount` identifies the contiguous prefix ready to draw. The
+handler is awaited, so updates are delivered in order and remain part of the
+extraction task. Intermediate updates are time-throttled; the final update is
+always delivered and matches the returned ``OfflineLODResult``. Cancelling the
+extraction task stops file reads and throws
+``MultiBandLODProcessor/LODGenerationError/cancelled`` without publishing a
+completion update.
+
 ## Frequency analysis details
 
 The frequency analyzer uses an FFT (``FrequencyAnalyzer``) followed by bucketing (``FrequencyBucketer``) into perceptually-weighted bands:
@@ -110,7 +133,10 @@ Output arrives as ``FrequencyDomainData`` with smoothed magnitudes plus peak-hol
 - ``MultiBandLODConfiguration``
 - ``MultiBandLODSnapshot``
 - ``LODSnapshotRef``
+- ``LODTimelineLayout``
 - ``OfflineLODExtractor``
+- ``OfflineLODProgress``
+- ``OfflineLODResult``
 
 ### Analyzer types
 
