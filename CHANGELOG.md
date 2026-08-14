@@ -7,6 +7,90 @@ releases follow the versioning policy in `README.md` and `ROADMAP.md`.
 
 ## Unreleased
 
+### Fixed
+
+- The iOS input-configuration feedback loop. An exact sample rate the route
+  refused left reconciliation stably `.unsatisfied`, and the only guard against
+  reissuing platform preferences tested for `.satisfied` — so every 15-second
+  poll and every route notification re-ran the platform apply, whose
+  `setCategory` write posted another `.categoryChange` route notification, which
+  reconciled again. With a recording live, each turn of the loop also stopped
+  the engine and reinstalled the tap.
+
+  Three independent gaps closed:
+
+  - **Reconciliation is single-flight and coalesced.** `reconcile` suspends at
+    the platform apply and is driven from several tasks (route notifications,
+    input-availability notifications, the periodic poll), so main-actor
+    isolation alone did not serialize it. At most one run is now in flight, and
+    every request arriving during one is merged into a single follow-up run.
+    That follow-up still re-discovers, so a genuine route change arriving
+    mid-apply is not lost.
+  - **A platform write barrier replaces the `.satisfied`-only guard.** A
+    reconciliation writes to the platform only when something nameable changed:
+    a new requested generation, a different resolved plan, different observed
+    platform facts, a deliberate forced apply (activation, orientation,
+    media-services recovery), or remaining budget after a *thrown* write. A
+    settled rejection is not a reason to write again. Requested and applied
+    state stay distinct — exact intent is never rewritten to the platform's
+    fallback.
+  - **Platform writes are idempotent where readback permits.** `setCategory`,
+    `setPreferredInput`, `setPreferredSampleRate`,
+    `setPreferredInputNumberOfChannels`, `setPreferredInputOrientation`,
+    `setPreferredIOBufferDuration`, and the data-source and polar-pattern
+    setters now compare against the session's own readback first, on both the
+    input-configuration and recording-bring-up paths.
+
+- Route recovery no longer tears down a live recording tap for a self-induced
+  route notification. The decision is made on ``AudioInputFacts`` — input
+  endpoints, availability, sample rate, channel count, and session mode — rather
+  than on the existence of a notification. The tap survives only when the
+  reported facts match the last observed ones *and* the installed tap already
+  runs at those facts; unknown facts, a changed route, or a graph that needs
+  rebuilding all still reconfigure.
+
+### Changed
+
+- **Source-breaking.** `OutputConfiguration.bitDepth` is now `BitDepth?`, and
+  `FileFormat.supportedBitDepths` is empty for `aac` and `adts`. AAC is a lossy
+  transform codec with no PCM sample width to choose: its file settings carry no
+  bit-depth key and the capture pipeline is Float32 regardless, so the previous
+  `[.pcmFloat32, .pcmInt16]` put a control in front of users that changed
+  nothing. Pass `nil` for the AAC family; `FileFormat.usesBitDepth` and
+  `FileFormat.defaultBitDepth` report which formats need a value.
+- **Source-breaking.** `FileFormat.requiresQuality` is renamed
+  `FileFormat.usesEncodingQuality`, and `EncodingQuality` is documented as what
+  it is: an `AVAudioQuality` *level* written as `AVEncoderAudioQualityKey`, not
+  a bitrate. AudioIO does not set `AVEncoderBitRateKey`, so two recordings at
+  the same level are not promised the same bitrate.
+- `RecordingConfiguration.fileSettings` and its output format now share one
+  validation gate instead of re-deriving sample-rate and channel checks per
+  format arm — the AAC arm ran the same sample-rate check twice, and the PCM and
+  FLAC arms carried hard-coded bounds that could drift from
+  `FileFormat.supportsEncodedSampleRate(_:)`.
+- Media-services recovery performs its reconciliation as an explicit forced
+  apply, which the write barrier then absorbs so the resulting notification does
+  not recur.
+
+### Added
+
+- `RecordingConfiguration.validate()` and `OutputConfiguration.validate(against:)`,
+  returning `CaptureConfigurationValidation` — a side-effect-free check of the
+  complete capture configuration (input format plus file format, channel count,
+  and bit depth) that needs no audio session, route, or activation. Input and
+  output are selected through independent APIs, so combinations such as a 96 kHz
+  capture written to `m4a` were only discoverable when the writer refused.
+  `CaptureConfigurationIssue` names each defect.
+- `OutputConfigurationManager.validate(against:)` and
+  `availableOutputFormats(for:)`, plus `usesBitDepth` and `usesEncodingQuality`,
+  for building pickers that only offer writable combinations. The output
+  selection is remembered per input device while the requested input sample rate
+  is a single global intent, so the two can drift apart across a route change.
+- `AudioInputFacts`, the capture-relevant subset of a route transition, and
+  `AudioRouteChange.inputFacts`.
+- `AudioInputReconciliationPolicy`, which bounds retries after a thrown platform
+  write.
+
 ## 0.14.0 - 2026-08-01
 
 ### Added

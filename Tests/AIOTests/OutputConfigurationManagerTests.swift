@@ -27,13 +27,19 @@ struct OutputConfigurationManagerTests {
     )
 
     #expect(manager.outputFormat == .adts)
-    #expect(manager.bitDepth == .pcmFloat32)
+    // ADTS is lossy: it has no PCM sample width to select, so there is no bit
+    // depth to report and no control for a UI to draw.
+    #expect(manager.bitDepth == nil)
+    #expect(manager.availableBitDepths.isEmpty)
+    #expect(manager.usesBitDepth == false)
+    #expect(manager.usesEncodingQuality)
     #expect(manager.encodingQuality == .high)
 
     let config = try #require(manager.outputConfiguration)
     #expect(config.fileFormat == .adts)
-    #expect(config.bitDepth == .pcmFloat32)
+    #expect(config.bitDepth == nil)
     #expect(config.quality == .high)
+    #expect(config.isSupported)
   }
 
   @Test

@@ -101,6 +101,9 @@
     }
 
     private func handleRouteChange(_ change: AudioRouteChange) async {
+      let previousFacts = owner.audioRecoveryState.observedInputFacts
+      owner.audioRecoveryState.observedInputFacts = change.inputFacts
+
       guard owner.isRecording else {
         await recoverPlaybackAfterRouteChange(change)
         return
@@ -109,6 +112,27 @@
       interruptionPolicyLog.info(
         "Handling route change: \(change.reason.userLabel, privacy: .public)",
       )
+
+      // A route notification is not by itself a reason to stop the engine and
+      // reinstall the tap. Two conditions have to hold together before this can
+      // be treated as a no-op: the reported facts must match the last ones
+      // observed (nothing about the route moved), *and* the live tap must
+      // already be running at those facts (the graph does not need rebuilding).
+      // Either alone is insufficient — matching facts with a stale or absent
+      // tap still needs a rebuild, and a healthy tap says nothing about a
+      // route that has since changed underneath it.
+      if let facts = change.inputFacts,
+        facts == previousFacts,
+        liveTapMatches(facts)
+      {
+        interruptionPolicyLog.info(
+          """
+          Route change (\(change.reason.userLabel, privacy: .public)) reports unchanged input \
+          facts and the live tap already matches them; keeping the tap installed.
+          """,
+        )
+        return
+      }
 
       guard
         let (configuration, processingFormat): (RecordingConfiguration, AVAudioFormat) =
@@ -182,6 +206,25 @@
         )
         await stopRecordingForInterruption(reason: "Route change reconfiguration failed")
       }
+    }
+
+    /// Whether a tap is installed and its converter input format is the one
+    /// these facts describe.
+    ///
+    /// This is the "does the graph need rebuilding?" half of the no-op test. It
+    /// reads the staged tap state rather than `engine.isRunning`, because the
+    /// converter input format is the thing a rate or channel change actually
+    /// invalidates.
+    private func liveTapMatches(_ facts: AudioInputFacts) -> Bool {
+      let tapFormat: AVAudioFormat? = owner.state.withLock { state in
+        guard state.installedTapBus != nil else { return nil }
+        return state.tapConverterInputFormat
+      }
+      guard let tapFormat else { return false }
+      return facts.matchesCaptureFormat(
+        sampleRate: tapFormat.sampleRate,
+        channelCount: Int(tapFormat.channelCount),
+      )
     }
 
     private func recoverPlaybackAfterRouteChange(_ change: AudioRouteChange) async {

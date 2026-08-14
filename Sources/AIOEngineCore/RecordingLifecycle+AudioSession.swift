@@ -79,8 +79,14 @@
           () throws(SessionError) -> Void in
           try owner.applyAudioSessionConfiguration(session, configuration: sessionConfiguration)
 
+          // Idempotent, like the category block above it: a redundant
+          // preference write posts a route-change notification, which this
+          // package reconciles on and — mid-recording — reconsiders the tap on.
           do {
-            try session.setPreferredSampleRate(configuration.format.sampleRate.hz)
+            try AudioSessionPreferenceWrite.perform(
+              configuration.format.sampleRate.hz,
+              whenNot: session.preferredSampleRate,
+            ) { try session.setPreferredSampleRate($0) }
           } catch {
             throw .operationFailed(operation: .setPreferredSampleRate, error: ErrorContext(error))
           }
@@ -89,7 +95,10 @@
             sampleRate: configuration.format.sampleRate.hz,
           )
           do {
-            try session.setPreferredIOBufferDuration(preferredDuration)
+            try AudioSessionPreferenceWrite.perform(
+              preferredDuration,
+              whenNot: session.preferredIOBufferDuration,
+            ) { try session.setPreferredIOBufferDuration($0) }
           } catch {
             throw .operationFailed(
               operation: .setPreferredIOBufferDuration, error: ErrorContext(error),
@@ -114,7 +123,10 @@
             maximum: session.maximumInputNumberOfChannels,
           )
           do {
-            try session.setPreferredInputNumberOfChannels(desiredChannels)
+            try AudioSessionPreferenceWrite.perform(
+              desiredChannels,
+              whenNot: session.preferredInputNumberOfChannels,
+            ) { try session.setPreferredInputNumberOfChannels($0) }
           } catch {
             throw .operationFailed(
               operation: .setPreferredInputNumberOfChannels,
@@ -150,7 +162,9 @@
         }
 
         do {
-          try session.setPreferredInput(port)
+          try AudioSessionPreferenceWrite.performPreferredInput(port, on: session) {
+            try session.setPreferredInput($0)
+          }
         } catch {
           throw .operationFailed(operation: .setPreferredInput, error: ErrorContext(error))
         }

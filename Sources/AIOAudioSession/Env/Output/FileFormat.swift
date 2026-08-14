@@ -52,11 +52,22 @@ public enum FileFormat: String, CaseIterable, CustomStringConvertible, Sendable,
     }
   }
 
+  /// The bit depths this format's writer can actually use, in ascending order.
+  ///
+  /// Empty for the AAC family. AAC is a lossy transform codec: it has no PCM
+  /// sample width to choose, its file settings carry no bit-depth key, and the
+  /// capture pipeline feeding it is Float32 either way. Reporting depths here
+  /// would put a control in front of a user that changes nothing about the
+  /// file — which is what this property used to do.
+  ///
+  /// For FLAC the values are a lossless *encoder hint*
+  /// (`AVEncoderBitDepthHintKey`), not a container sample width; for the PCM
+  /// containers they are the written sample width exactly. Either way the
+  /// choice reaches the file, which is the line this property draws.
   public var supportedBitDepths: [BitDepth] {
     switch self {
     case .aac, .adts:
-      // Compressed formats should use 16-bit or Float32, not 24-bit
-      [BitDepth.pcmFloat32, BitDepth.pcmInt16]
+      []
     case .flac:
       // FLAC supports 16-bit and 24-bit PCM
       [BitDepth.pcmInt16, BitDepth.pcmInt24]
@@ -66,7 +77,18 @@ public enum FileFormat: String, CaseIterable, CustomStringConvertible, Sendable,
     }
   }
 
-  public var requiresQuality: Bool {
+  /// Whether ``BitDepth`` means anything for this format. `false` for the AAC
+  /// family; a caller should leave ``OutputConfiguration/bitDepth`` `nil`, and
+  /// a UI should offer no control.
+  public var usesBitDepth: Bool {
+    !supportedBitDepths.isEmpty
+  }
+
+  /// Whether ``EncodingQuality`` reaches this format's writer.
+  ///
+  /// `true` only for the lossy AAC family, whose settings carry
+  /// `AVEncoderAudioQualityKey`. The lossless formats ignore it entirely.
+  public var usesEncodingQuality: Bool {
     switch self {
     case .aac, .adts: true
     case .wav, .caf, .flac, .aiff: false

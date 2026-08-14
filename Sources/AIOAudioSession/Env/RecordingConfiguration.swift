@@ -128,10 +128,29 @@
       }
     }
 
+    /// Whether this configuration can be written as described, checked without
+    /// touching an audio session.
+    ///
+    /// The capture format and the output encoding are chosen independently, so
+    /// this is where the pair is checked: a 96 kHz microphone request and an
+    /// `m4a` output are each individually reasonable and jointly impossible.
+    /// ``fileSettings`` and the writer both refuse an invalid configuration, so
+    /// calling this first turns a silent `nil` into a nameable reason.
+    public func validate() -> CaptureConfigurationValidation {
+      outputConfiguration.validate(against: format)
+    }
+
     public var description: String {
       let fileFormat = outputConfiguration.fileFormat
+      var encoding: [String] = []
+      if let bitDepth = outputConfiguration.bitDepth {
+        encoding.append("\(bitDepth)")
+      }
+      if fileFormat.usesEncodingQuality {
+        encoding.append("\(outputConfiguration.quality)")
+      }
       return
-        "\(fileFormat): \(format.channels) \(format.sampleRate), \(outputConfiguration.bitDepth) \(fileFormat.requiresQuality ? "\(outputConfiguration.quality)" : "") (destination: \(outputDestination))"
+        "\(fileFormat): \(format.channels) \(format.sampleRate), \(encoding.joined(separator: " ")) (destination: \(outputDestination))"
     }
 
     public var summary: String {
@@ -146,8 +165,8 @@
         fileFormat: \(outputConfiguration.fileFormat.description)
         sampleRate: \(format.sampleRate)
         channels: \(format.channels)
-        bitDepth: \(outputConfiguration.bitDepth)
-        quality: \(outputConfiguration.quality)
+        bitDepth: \(outputConfiguration.bitDepth.map(String.init(describing:)) ?? "n/a")
+        quality: \(outputConfiguration.fileFormat.usesEncodingQuality ? "\(outputConfiguration.quality)" : "n/a")
         outputDestination: \(outputDestination)
       """
     }
@@ -169,11 +188,15 @@
       )
     }
 
+    /// The `AVAudioCommonFormat` for the configured PCM sample width.
+    ///
+    /// Only reached on the PCM container paths, which validation guarantees
+    /// carry a bit depth; the `nil` arm keeps the mapping total.
     var commonFormat: AVAudioCommonFormat {
       switch outputConfiguration.bitDepth {
       case .pcmInt16: .pcmFormatInt16
       case .pcmInt24: .pcmFormatInt32
-      case .pcmFloat32: .pcmFormatFloat32
+      case .pcmFloat32, .none: .pcmFormatFloat32
       }
     }
 
@@ -214,12 +237,17 @@
       return settings
     }
 
-    private func validatesRecordingChannelCount() -> Bool {
-      let fileFormat = outputConfiguration.fileFormat
-      let channelCount = format.channels.count
-      guard fileFormat.supportsRecordingChannelCount(channelCount) else {
+    /// The single gate both ``fileSettings`` and ``fileFormat`` pass through.
+    ///
+    /// The sample-rate, channel-count, and bit-depth checks used to be
+    /// duplicated inline per format arm, some of them twice in the same
+    /// property. They now live in ``validate()``, which callers can also run
+    /// themselves without producing a format.
+    private func passesValidation() -> Bool {
+      let validation = validate()
+      guard validation.isValid else {
         log.error(
-          "invalid \(fileFormat.description, privacy: .public) channel count: \(channelCount, privacy: .public)",
+          "invalid capture configuration: \(validation.description, privacy: .public)",
         )
         return false
       }
@@ -238,20 +266,18 @@
     /// `AVAudioFormat` may normalize/strip encoder-specific keys that must be preserved
     /// (example: `AVEncoderBitDepthHintKey`).
     package var fileSettings: [String: Any]? {
-      guard validatesRecordingChannelCount() else { return nil }
+      guard passesValidation() else { return nil }
       switch outputConfiguration.fileFormat {
       case .aac, .adts:
-        let sampleRate = format.sampleRate.hz
-        guard outputConfiguration.fileFormat.supportsEncodedSampleRate(sampleRate) else {
-          log.error("invalid sample rate: \(sampleRate, privacy: .public)")
-          return nil
-        }
-        let qualityRawValue = Int(outputConfiguration.quality.avAudio.rawValue)
+        // No bit-depth key: AAC is a transform codec with no PCM sample width
+        // to declare. `AVEncoderAudioQualityKey` is the only encoding control
+        // that reaches the file, which is what `usesEncodingQuality` reports
+        // and `usesBitDepth` denies.
         let settings: [String: Any] = [
           AVFormatIDKey: kAudioFormatMPEG4AAC,
-          AVSampleRateKey: sampleRate,
+          AVSampleRateKey: format.sampleRate.hz,
           AVNumberOfChannelsKey: format.channels.platform,
-          AVEncoderAudioQualityKey: qualityRawValue,
+          AVEncoderAudioQualityKey: Int(outputConfiguration.quality.avAudio.rawValue),
         ]
         var settingsWithLayout = settings
         if let channelLayout = multichannelLayoutDataForFileSettings {
@@ -261,18 +287,12 @@
         return settingsWithLayout
 
       case .flac:
-        let encoderBitDepthHint =
-          switch outputConfiguration.bitDepth {
-          case .pcmInt16: 16
-          case .pcmInt24: 24
-          case .pcmFloat32: 16
-          }
-
+        guard let bitDepth = outputConfiguration.bitDepth else { return nil }
         let settings: [String: Any] = [
           AVFormatIDKey: kAudioFormatFLAC,
           AVSampleRateKey: format.sampleRate.hz,
           AVNumberOfChannelsKey: format.channels.platform,
-          AVEncoderBitDepthHintKey: encoderBitDepthHint,
+          AVEncoderBitDepthHintKey: bitDepth.rawValue,
         ]
         var settingsWithLayout = settings
         if let channelLayout = multichannelLayoutDataForFileSettings {
@@ -297,7 +317,7 @@
           switch outputConfiguration.bitDepth {
           case .pcmInt16: (16, false)
           case .pcmInt24: (24, false)
-          case .pcmFloat32: (32, true)
+          case .pcmFloat32, .none: (32, true)
           }
 
         return makeLinearPCMSettings(
@@ -309,73 +329,25 @@
       }
     }
 
-    /// Output format for file writing
+    /// Output format for file writing.
+    ///
+    /// Sample-rate and channel-count admissibility is decided once, by
+    /// ``validate()``, rather than re-derived per format arm — the AAC arm used
+    /// to run the same sample-rate check twice, and the PCM and FLAC arms
+    /// carried their own hard-coded bounds that could drift from
+    /// ``FileFormat/supportsEncodedSampleRate(_:)``.
     var fileFormat: AVAudioFormat? {
-      guard validatesRecordingChannelCount() else { return nil }
+      guard passesValidation() else { return nil }
       switch outputConfiguration.fileFormat {
-      case .aac, .adts:
-        let sampleRate = format.sampleRate.hz
-        guard outputConfiguration.fileFormat.supportsEncodedSampleRate(sampleRate) else {
-          log.error("invalid sample rate: \(sampleRate, privacy: .public)")
-          return nil
-        }
-        let qualityRawValue = Int(outputConfiguration.quality.avAudio.rawValue)
-        let settings: [String: Any] = [
-          AVFormatIDKey: kAudioFormatMPEG4AAC,
-          AVSampleRateKey: sampleRate,
-          AVNumberOfChannelsKey: format.channels.platform,
-          AVEncoderAudioQualityKey: qualityRawValue,
-        ]
-        var settingsWithLayout = settings
-        if let channelLayout = multichannelLayoutDataForFileSettings {
-          settingsWithLayout[AVChannelLayoutKey] = channelLayout
-        }
-
-        // Validate AAC format settings before creating
-        guard let format = AVAudioFormat(settings: settingsWithLayout) else {
-          log.error("could not make format for settings: \(settingsWithLayout, privacy: .public)")
-          return nil
-        }
-
-        // AAC supports limited sample rates and channel configurations
-        guard outputConfiguration.fileFormat.supportsEncodedSampleRate(sampleRate) else {
-          log.error("invalid sample rate: \(sampleRate, privacy: .public)")
-          return nil
-        }
-
-        return format
-
-      case .flac:
-        let settings: [String: Any] = [
-          AVFormatIDKey: kAudioFormatFLAC,
-          AVSampleRateKey: format.sampleRate.hz,
-          AVNumberOfChannelsKey: format.channels.platform,
-          AVEncoderBitDepthHintKey: fileSettings?[AVEncoderBitDepthHintKey] ?? 16,
-        ]
-        var settingsWithLayout = settings
-        if let channelLayout = multichannelLayoutDataForFileSettings {
-          settingsWithLayout[AVChannelLayoutKey] = channelLayout
-        }
-
-        // Validate FLAC format settings before creating
-        guard let format = AVAudioFormat(settings: settingsWithLayout) else {
-          log.error("could not make format for settings: \(settingsWithLayout, privacy: .public)")
-          return nil
-        }
-
-        // FLAC validation
-        let sampleRate = input.format.sampleRate.hz
-
-        // FLAC supports wide range of sample rates
-        guard sampleRate <= 655_350,  // FLAC max sample rate
-          sampleRate >= 8000  // Reasonable minimum
+      case .aac, .adts, .flac:
+        guard let settings = fileSettings,
+          let format = AVAudioFormat(settings: settings)
         else {
           log.error(
-            "invalid FLAC configuration: \(sampleRate, privacy: .public)Hz, \(input.format.channels.count, privacy: .public)ch",
+            "could not make format for \(outputConfiguration.fileFormat.description, privacy: .public) settings",
           )
           return nil
         }
-
         return format
 
       case .wav, .caf:
@@ -402,23 +374,10 @@
             }
           }
 
-        // Validate PCM format constraints
         guard let validFormat = format else {
           log.error("invalid pcm format: \(format, privacy: .public)")
           return nil
         }
-
-        // Additional validation for extreme configurations
-        let sampleRate = input.format.sampleRate.hz
-
-        // Check for reasonable limits
-        guard sampleRate <= 192_000,  // 192kHz max
-          sampleRate >= 8000  // 8kHz min
-        else {
-          log.error("unreasonable sample rate: \(sampleRate, privacy: .public)")
-          return nil
-        }
-
         log.info("using valid format: \(validFormat, privacy: .public)")
         return validFormat
 
@@ -427,7 +386,7 @@
           switch outputConfiguration.bitDepth {
           case .pcmInt16: (16, false)
           case .pcmInt24: (24, false)
-          case .pcmFloat32: (32, true)
+          case .pcmFloat32, .none: (32, true)
           }
 
         let format = makeLinearPCMFormat(

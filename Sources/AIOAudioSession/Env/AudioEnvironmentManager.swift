@@ -78,25 +78,39 @@
       }
     }
 
+    /// Applies the session category and its companion preferences, skipping
+    /// every write the session already reads back.
+    ///
+    /// This is called on every input-configuration apply. Writing `setCategory`
+    /// unconditionally posts an `AVAudioSession.routeChangeNotification` with
+    /// `.categoryChange`, which reconciles input configuration again and, if a
+    /// recording is live, reconsiders its tap — so an unconditional write here
+    /// is the first link in a self-sustaining loop.
     public nonisolated static func configureAudioSessionCategory(
       _ session: AVAudioSession,
       configuration: AudioSessionConfiguration,
     ) throws(ManagerError) {
       try AudioSessionAccess.result(catching: ManagerError.self) {
         () throws(ManagerError) -> Void in
-        do {
-          try session.setCategory(
-            configuration.category,
-            mode: configuration.mode,
-            options: configuration.options,
-          )
-        } catch {
-          throw .audioSessionFailed(operation: .setCategory, error: ErrorContext(error))
+        if session.category != configuration.category
+          || session.mode != configuration.mode
+          || session.categoryOptions != configuration.options
+        {
+          do {
+            try session.setCategory(
+              configuration.category,
+              mode: configuration.mode,
+              options: configuration.options,
+            )
+          } catch {
+            throw .audioSessionFailed(operation: .setCategory, error: ErrorContext(error))
+          }
         }
         do {
-          try session.setAllowHapticsAndSystemSoundsDuringRecording(
+          try AudioSessionPreferenceWrite.perform(
             configuration.allowsHapticsAndSystemSoundsDuringRecording,
-          )
+            whenNot: session.allowHapticsAndSystemSoundsDuringRecording,
+          ) { try session.setAllowHapticsAndSystemSoundsDuringRecording($0) }
         } catch {
           throw .audioSessionFailed(
             operation: .setAllowHapticsAndSystemSoundsDuringRecording,
@@ -104,9 +118,10 @@
           )
         }
         do {
-          try session.setPrefersNoInterruptionsFromSystemAlerts(
+          try AudioSessionPreferenceWrite.perform(
             configuration.prefersNoInterruptionsFromSystemAlerts,
-          )
+            whenNot: session.prefersNoInterruptionsFromSystemAlerts,
+          ) { try session.setPrefersNoInterruptionsFromSystemAlerts($0) }
         } catch {
           throw .audioSessionFailed(
             operation: .setPrefersNoInterruptionsFromSystemAlerts,
@@ -114,9 +129,10 @@
           )
         }
         do {
-          try session.setPrefersInterruptionOnRouteDisconnect(
+          try AudioSessionPreferenceWrite.perform(
             configuration.prefersInterruptionOnRouteDisconnect,
-          )
+            whenNot: session.prefersInterruptionOnRouteDisconnect,
+          ) { try session.setPrefersInterruptionOnRouteDisconnect($0) }
         } catch {
           throw .audioSessionFailed(
             operation: .setPrefersInterruptionOnRouteDisconnect,

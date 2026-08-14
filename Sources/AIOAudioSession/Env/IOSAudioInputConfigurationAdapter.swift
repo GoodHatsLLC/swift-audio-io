@@ -88,9 +88,10 @@
             }
 
             do {
-              try environment.session.setPreferredInputNumberOfChannels(
+              try AudioSessionPreferenceWrite.perform(
                 plan.format.channels.count,
-              )
+                whenNot: environment.session.preferredInputNumberOfChannels,
+              ) { try environment.session.setPreferredInputNumberOfChannels($0) }
             } catch {
               return .failure(
                 .audioSessionFailed(
@@ -104,7 +105,10 @@
 
             if plan.format.channels >= .stereo, orientation != .none {
               do {
-                try environment.session.setPreferredInputOrientation(orientation)
+                try AudioSessionPreferenceWrite.perform(
+                  orientation,
+                  whenNot: environment.session.preferredInputOrientation,
+                ) { try environment.session.setPreferredInputOrientation($0) }
               } catch {
                 return .failure(
                   .audioSessionFailed(

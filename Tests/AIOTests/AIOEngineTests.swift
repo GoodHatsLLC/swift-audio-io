@@ -13,7 +13,7 @@
     func `configuration creates format`() throws {
       let config = RecordingConfiguration(
         inputConfiguration: InputConfiguration(sampleRate: .dvd, channels: .stereo),
-        outputConfiguration: .init(fileFormat: .aac, bitDepth: .pcmFloat32, quality: .high),
+        outputConfiguration: .init(fileFormat: .aac, bitDepth: nil, quality: .high),
       )
       #expect(config.fileFormat?.sampleRate == 48000)
       try #require(config.fileFormat?.channelCount == 2)
@@ -23,7 +23,7 @@
     func `AAC rejects unsupported encoder sample rate`() throws {
       let config = RecordingConfiguration(
         inputConfiguration: InputConfiguration(sampleRate: .hiRes96, channels: .mono),
-        outputConfiguration: .init(fileFormat: .aac, bitDepth: .pcmFloat32, quality: .high),
+        outputConfiguration: .init(fileFormat: .aac, bitDepth: nil, quality: .high),
       )
 
       #expect(config.fileFormat == nil)
@@ -34,7 +34,7 @@
     func `ADTS rejects unsupported encoder sample rate`() throws {
       let config = RecordingConfiguration(
         inputConfiguration: InputConfiguration(sampleRate: .hiRes96, channels: .mono),
-        outputConfiguration: .init(fileFormat: .adts, bitDepth: .pcmFloat32, quality: .high),
+        outputConfiguration: .init(fileFormat: .adts, bitDepth: nil, quality: .high),
       )
 
       #expect(config.fileFormat == nil)

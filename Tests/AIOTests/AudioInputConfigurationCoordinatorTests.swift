@@ -52,24 +52,35 @@ struct AudioInputConfigurationCoordinatorTests {
     private let applyStarted = AsyncContinuation<Void>()
     private let releaseFirstApply = AsyncContinuation<Void>()
     private var blocksNextApply = true
+    private var appliedChannels: ChannelCount?
+    private var applyCount = 0
 
     init(input: AudioInputSelection) {
       self.input = input
     }
 
+    /// Discovery reflects what has already been applied, the way a real
+    /// platform readback does. Without that the write barrier could never
+    /// recognise a settled state.
     func discover() async -> PlatformAudioInputSnapshot {
-      snapshot(appliedChannels: nil)
+      snapshot(appliedChannels: appliedChannels)
     }
 
     func apply(
       _ plan: PlatformAudioInputConfigurationPlan,
     ) async throws -> PlatformAudioInputSnapshot {
+      applyCount += 1
       if blocksNextApply {
         blocksNextApply = false
         try? applyStarted.yield()
         await releaseFirstApply()
       }
-      return snapshot(appliedChannels: plan.format.channels)
+      appliedChannels = plan.format.channels
+      return snapshot(appliedChannels: appliedChannels)
+    }
+
+    func applies() -> Int {
+      applyCount
     }
 
     func waitForFirstApply() async {
@@ -533,13 +544,215 @@ struct AudioInputConfigurationCoordinatorTests {
     let second = MainActorOwnedWork {
       _ = await coordinator.submit(mono, isRunning: true, isActive: true)
     }
-    await second.value
+    // Reconciliation is single-flight, so the newer request is coalesced behind
+    // the uninterruptible apply rather than racing it. Releasing first is what
+    // lets both settle; the contract being asserted is which request *wins*,
+    // not which one gets to interleave with the platform.
     await adapter.release()
     await first.value
+    await second.value
 
     #expect(coordinator.state.requested.channels == .mono)
     #expect(coordinator.state.applied?.format.channels == .mono)
     #expect(coordinator.state.reconciliation == .satisfied)
+  }
+
+  // MARK: - Platform write barrier
+
+  /// The reported feedback loop, in miniature. An exact sample rate the route
+  /// refuses leaves reconciliation stably `.unsatisfied`, and the old guard —
+  /// "skip the write only when already `.satisfied`" — rewrote the preferences
+  /// on every refresh. Each rewrite posts a `.categoryChange` route
+  /// notification, which triggers the next refresh.
+  @Test
+  @MainActor
+  func `a rejected exact sample rate is not rewritten on repeated route refreshes`() async throws {
+    let defaults = try isolatedDefaults()
+    let adapter = ScriptedAdapter(snapshot: rejectedSampleRateSnapshot())
+    let coordinator = AudioInputConfigurationCoordinator(defaults: defaults, adapter: adapter)
+    var request = AudioInputConfigurationRequest.automatic
+    request.channels = .stereo
+    request.sampleRate = .exact(.dvd)
+
+    let submitted = await coordinator.submit(request, isRunning: true, isActive: true)
+    #expect(submitted.reconciliation == .unsatisfied(.rejectedSampleRate(requested: .dvd, applied: .cd)))
+    #expect(await adapter.plans().count == 1)
+
+    for _ in 0..<8 {
+      let refreshed = await coordinator.reconcile(isRunning: true, isActive: true)
+      #expect(
+        refreshed.reconciliation
+          == .unsatisfied(.rejectedSampleRate(requested: .dvd, applied: .cd)),
+      )
+      #expect(refreshed.requested.sampleRate == .exact(.dvd))
+    }
+
+    let plans = await adapter.plans()
+    #expect(
+      plans.count == 1,
+      "A stably unsatisfied sample rate was rewritten \(plans.count) times.",
+    )
+  }
+
+  @Test
+  @MainActor
+  func `a route notification during an in-flight apply does not queue a second apply`()
+    async throws
+  {
+    let defaults = try isolatedDefaults()
+    let input = AudioInputSelection(id: "mic", name: "Mic", channelCount: .stereo)
+    let adapter = BlockingAdapter(input: input)
+    let coordinator = AudioInputConfigurationCoordinator(defaults: defaults, adapter: adapter)
+    var request = AudioInputConfigurationRequest.automatic
+    request.channels = .stereo
+
+    let submit = MainActorOwnedWork {
+      _ = await coordinator.submit(request, isRunning: true, isActive: true)
+    }
+    await adapter.waitForFirstApply()
+
+    // Three route notifications land while the apply is suspended. They must
+    // collapse into one follow-up run, and that run must find nothing changed.
+    let refreshes = (0..<3).map { _ in
+      MainActorOwnedWork {
+        _ = await coordinator.reconcile(isRunning: true, isActive: true)
+      }
+    }
+
+    await adapter.release()
+    await submit.value
+    for refresh in refreshes { await refresh.value }
+
+    let applies = await adapter.applies()
+    #expect(applies == 1, "A mid-apply route notification produced \(applies) platform applies.")
+    #expect(coordinator.state.reconciliation == .satisfied)
+  }
+
+  @Test
+  @MainActor
+  func `a new request after an unsatisfied state performs exactly one new apply`() async throws {
+    let defaults = try isolatedDefaults()
+    let adapter = ScriptedAdapter(snapshot: rejectedSampleRateSnapshot())
+    let coordinator = AudioInputConfigurationCoordinator(defaults: defaults, adapter: adapter)
+    var rejected = AudioInputConfigurationRequest.automatic
+    rejected.channels = .stereo
+    rejected.sampleRate = .exact(.dvd)
+
+    _ = await coordinator.submit(rejected, isRunning: true, isActive: true)
+    _ = await coordinator.reconcile(isRunning: true, isActive: true)
+    #expect(await adapter.plans().count == 1)
+
+    // New user intent is the canonical reason to write again — the requested
+    // generation is stamped into the plan, so the barrier cannot hold.
+    var accepted = rejected
+    accepted.sampleRate = .exact(.cd)
+    let settled = await coordinator.submit(accepted, isRunning: true, isActive: true)
+
+    #expect(settled.reconciliation == .satisfied)
+    let plans = await adapter.plans()
+    #expect(plans.count == 2, "A new request produced \(plans.count) platform applies in total.")
+    #expect(plans.last?.format.sampleRate == .cd)
+  }
+
+  @Test
+  @MainActor
+  func `a forced apply writes once and its own notification does not recur`() async throws {
+    let defaults = try isolatedDefaults()
+    let adapter = ScriptedAdapter(snapshot: rejectedSampleRateSnapshot())
+    let coordinator = AudioInputConfigurationCoordinator(defaults: defaults, adapter: adapter)
+    var request = AudioInputConfigurationRequest.automatic
+    request.channels = .stereo
+    request.sampleRate = .exact(.dvd)
+
+    _ = await coordinator.submit(request, isRunning: true, isActive: true)
+    #expect(await adapter.plans().count == 1)
+
+    // Activation, orientation, and media-services recovery all opt into one
+    // write because the platform may have discarded state the readback cannot
+    // describe.
+    _ = await coordinator.reconcile(isRunning: true, isActive: true, forcePlatformApply: true)
+    #expect(await adapter.plans().count == 2)
+
+    // The forced write posts its own route notification. Reconciling on it must
+    // not start the loop over.
+    for _ in 0..<5 {
+      _ = await coordinator.reconcile(isRunning: true, isActive: true)
+    }
+
+    let plans = await adapter.plans()
+    #expect(plans.count == 2, "A forced apply recursed into \(plans.count) platform applies.")
+  }
+
+  @Test
+  @MainActor
+  func `media-services loss re-authorises exactly one write on recovery`() async throws {
+    let defaults = try isolatedDefaults()
+    let adapter = ScriptedAdapter(snapshot: rejectedSampleRateSnapshot())
+    let coordinator = AudioInputConfigurationCoordinator(defaults: defaults, adapter: adapter)
+    var request = AudioInputConfigurationRequest.automatic
+    request.channels = .stereo
+    request.sampleRate = .exact(.dvd)
+
+    _ = await coordinator.submit(request, isRunning: true, isActive: true)
+    _ = coordinator.markUnavailable(.mediaServicesUnavailable)
+
+    _ = await coordinator.reconcile(isRunning: true, isActive: true)
+    #expect(await adapter.plans().count == 2)
+
+    for _ in 0..<3 {
+      _ = await coordinator.reconcile(isRunning: true, isActive: true)
+    }
+    #expect(await adapter.plans().count == 2)
+  }
+
+  /// The barrier is not a permanent lockout: a genuine external change — a new
+  /// route offering a different rate — is exactly what re-authorises a write.
+  @Test
+  @MainActor
+  func `a changed route re-authorises the platform write`() async throws {
+    let defaults = try isolatedDefaults()
+    let adapter = ScriptedAdapter(snapshot: rejectedSampleRateSnapshot())
+    let coordinator = AudioInputConfigurationCoordinator(defaults: defaults, adapter: adapter)
+    var request = AudioInputConfigurationRequest.automatic
+    request.channels = .stereo
+    request.sampleRate = .exact(.dvd)
+
+    _ = await coordinator.submit(request, isRunning: true, isActive: true)
+    _ = await coordinator.reconcile(isRunning: true, isActive: true)
+    #expect(await adapter.plans().count == 1)
+
+    await adapter.setSnapshot(rejectedSampleRateSnapshot(appliedSampleRate: .dvd))
+    let recovered = await coordinator.reconcile(isRunning: true, isActive: true)
+
+    #expect(recovered.reconciliation == .satisfied)
+    #expect(await adapter.plans().count == 2)
+  }
+
+  @Test
+  @MainActor
+  func `a thrown platform write retries within its budget and then stops`() async throws {
+    let defaults = try isolatedDefaults()
+    let adapter = ScriptedAdapter(
+      snapshot: stereoSnapshot(appliedChannels: .mono),
+      throwsOnApply: true,
+    )
+    let coordinator = AudioInputConfigurationCoordinator(
+      defaults: defaults,
+      adapter: adapter,
+      policy: AudioInputReconciliationPolicy(platformFailureRetryBudget: 2),
+    )
+    var request = AudioInputConfigurationRequest.automatic
+    request.channels = .stereo
+
+    _ = await coordinator.submit(request, isRunning: true, isActive: true)
+    for _ in 0..<6 {
+      _ = await coordinator.reconcile(isRunning: true, isActive: true)
+    }
+
+    // One write for the submit, then the budget's two retries, then the barrier
+    // holds. A thrown write is the only failure mode that gets a budget.
+    let plans = await adapter.plans()
+    #expect(plans.count == 3, "A failing write was retried \(plans.count) times.")
   }
 
   @Test
@@ -624,6 +837,26 @@ struct AudioInputConfigurationCoordinatorTests {
           processing: .processed,
         )
       },
+    )
+  }
+
+  /// A stereo route that answers a 48 kHz request with 44.1 kHz, unless
+  /// `appliedSampleRate` says the route has meanwhile changed its mind.
+  private func rejectedSampleRateSnapshot(
+    appliedSampleRate: SampleRate = .cd,
+  ) -> PlatformAudioInputSnapshot {
+    let input = AudioInputSelection(id: "mic", name: "Mic", channelCount: .stereo)
+    return snapshot(
+      input: input,
+      options: [
+        AudioSourceConfigurationOption(inputID: input.id, source: nil, channels: .stereo)
+      ],
+      applied: AppliedAudioInputConfiguration(
+        input: input,
+        source: nil,
+        format: InputConfiguration(sampleRate: appliedSampleRate, channels: .stereo),
+        processing: .processed,
+      ),
     )
   }
 

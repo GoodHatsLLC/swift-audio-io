@@ -80,7 +80,11 @@
   public typealias AudioSource = AIOAudioSession.AudioSource
   public typealias AnyErrorManager = AIOAudioSession.AnyErrorManager
   public typealias AudioIOError = AIOAudioSession.AudioIOError
+  public typealias AudioInputFacts = AIOAudioSession.AudioInputFacts
   public typealias BitDepth = AIOAudioSession.BitDepth
+  public typealias CaptureConfigurationIssue = AIOAudioSession.CaptureConfigurationIssue
+  public typealias CaptureConfigurationValidation =
+    AIOAudioSession.CaptureConfigurationValidation
   public typealias ChannelCount = AIOAudioSession.ChannelCount
   public typealias EncodingQuality = AIOAudioSession.EncodingQuality
   public typealias ErrorManager = AIOAudioSession.ErrorManager

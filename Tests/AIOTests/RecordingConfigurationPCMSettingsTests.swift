@@ -141,7 +141,8 @@
         ),
         outputConfiguration: .init(
           fileFormat: fileFormat,
-          bitDepth: .pcmInt16,
+          // `nil` for the AAC family: its writer has no sample width to set.
+          bitDepth: fileFormat.defaultBitDepth,
           quality: .maximum,
         ),
       )

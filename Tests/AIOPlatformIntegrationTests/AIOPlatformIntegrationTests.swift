@@ -364,14 +364,17 @@
       )
     }
 
-    private func bitDepth(for fileFormat: FileFormat) -> BitDepth {
+    /// `nil` for the AAC family, which has no selectable sample width.
+    private func bitDepth(for fileFormat: FileFormat) -> BitDepth? {
       switch fileFormat {
       case .flac:
         .pcmInt24
       case .aiff:
         .pcmInt16
-      case .aac, .adts, .caf, .wav:
+      case .caf, .wav:
         .pcmFloat32
+      case .aac, .adts:
+        nil
       }
     }
 

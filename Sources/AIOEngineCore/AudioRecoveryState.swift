@@ -17,6 +17,20 @@
     /// restarted through the pending-recording flow.
     package var playbackResumptionSuppressed = false
 
+    /// The route facts the last route notification reported.
+    ///
+    /// Route recovery compares against this to tell a self-induced event — the
+    /// `.categoryChange` an `AVAudioSession` preference write posts back at the
+    /// process that made it — from a transition that actually changed what the
+    /// microphone delivers.
+    ///
+    /// `nil` means "no baseline", which is deliberately *not* treated as
+    /// "unchanged": the first route notification of a recording cannot prove
+    /// anything, so it reconfigures. Only the second and later identical ones
+    /// are recognised as no-ops, and that is enough to break a feedback loop,
+    /// which is by definition repetition.
+    package var observedInputFacts: AudioInputFacts?
+
     package nonisolated init() {}
 
     package func clear() {

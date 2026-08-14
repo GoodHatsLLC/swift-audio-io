@@ -109,6 +109,23 @@ public struct AudioRouteChange: Sendable, Hashable {
     session?.isInputAvailable ?? !currentRoute.inputs.isEmpty
   }
 
+  /// The capture-relevant facts this transition reports, or `nil` when the
+  /// event carries no session snapshot to read them from.
+  ///
+  /// `nil` means "unknown", which is not the same as "unchanged": a consumer
+  /// that cannot observe the facts cannot prove nothing moved, and must
+  /// reconfigure.
+  public var inputFacts: AudioInputFacts? {
+    guard let session else { return nil }
+    return AudioInputFacts(
+      inputs: currentRoute.inputs,
+      isInputAvailable: session.isInputAvailable,
+      sampleRate: session.sampleRate,
+      inputChannelCount: session.inputNumberOfChannels,
+      mode: session.mode,
+    )
+  }
+
   public var userMessage: String {
     var lines = ["Audio route changed: \(reason.userLabel)"]
 
@@ -137,6 +154,54 @@ public struct AudioRouteChange: Sendable, Hashable {
     }
 
     return lines.joined(separator: "\n")
+  }
+}
+
+/// The facts about a route that a live capture graph actually depends on.
+///
+/// Two route notifications carrying equal facts describe the same capture
+/// reality: the same input endpoints, the same availability, and the same
+/// format the engine's input node will report. Notifications that differ only
+/// in ``AudioRouteChangeReason`` — most importantly the `.categoryChanged` that
+/// an `AVAudioSession` preference write posts back at the process that made it
+/// — carry no new fact, and are not grounds to tear down a running tap.
+///
+/// Deliberately excluded: the session's category and options, and the I/O
+/// buffer duration. None of them changes what the input node produces, and
+/// including the category would make the very event this type exists to
+/// discount look material.
+public struct AudioInputFacts: Hashable, Sendable {
+  public init(
+    inputs: [AudioPortSnapshot],
+    isInputAvailable: Bool,
+    sampleRate: Double,
+    inputChannelCount: Int,
+    mode: String,
+  ) {
+    self.inputs = inputs
+    self.isInputAvailable = isInputAvailable
+    self.sampleRate = sampleRate
+    self.inputChannelCount = inputChannelCount
+    self.mode = mode
+  }
+
+  /// The route's input endpoints, by identity and channel count. A swap
+  /// between two endpoints that happen to share a format is still a swap.
+  public let inputs: [AudioPortSnapshot]
+  public let isInputAvailable: Bool
+  public let sampleRate: Double
+  public let inputChannelCount: Int
+  /// The session mode, which selects the input processing chain — measurement
+  /// versus the default processed path — and so changes the samples captured.
+  public let mode: String
+
+  /// Whether an audio format could serve as the capture format for these facts.
+  ///
+  /// Used to tell "nothing changed" apart from "nothing changed *and* the graph
+  /// already reflects it". A tap built against a different rate or channel
+  /// count needs rebuilding even when the route itself has been still.
+  public func matchesCaptureFormat(sampleRate: Double, channelCount: Int) -> Bool {
+    abs(self.sampleRate - sampleRate) < 0.5 && inputChannelCount == channelCount
   }
 }
 

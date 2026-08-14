@@ -54,9 +54,15 @@
         ].joined(separator: " ")
       }
 
+      /// Selects the source's polar pattern, skipping the write when the same
+      /// pattern is already preferred. See ``AudioSessionPreferenceWrite`` for
+      /// why an unconditional write is not free.
       public func set(preferredPolarPattern: PolarPattern) throws(PreferenceError) {
         do {
-          try avAudio.setPreferredPolarPattern(preferredPolarPattern.avAudio)
+          try AudioSessionPreferenceWrite.perform(
+            AVAudioSession.PolarPattern?.some(preferredPolarPattern.avAudio),
+            whenNot: avAudio.preferredPolarPattern,
+          ) { _ in try avAudio.setPreferredPolarPattern(preferredPolarPattern.avAudio) }
         } catch {
           throw .setPreferredPolarPatternFailed(
             sourceID: id,

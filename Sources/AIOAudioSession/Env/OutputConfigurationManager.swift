@@ -15,7 +15,10 @@
 
     private struct PersistedOutputConfiguration: Codable {
       var outputFormatRawValue: String
-      var bitDepthRawValue: Int
+      /// Absent for formats with no selectable bit depth — the AAC family. A
+      /// value persisted by an older build simply fails to match the format's
+      /// supported depths on restore and is dropped.
+      var bitDepthRawValue: Int?
       var encodingQualityRawValue: Int
     }
 
@@ -89,9 +92,18 @@
     }
 
     private var _bitDepth: BitDepth? = .pcmFloat32
-    /// The available bit depths for the selected file format.
+    /// The bit depths the selected file format's writer can actually use.
+    ///
+    /// Empty when the format has none to choose — the AAC family — in which
+    /// case ``bitDepth`` is `nil` and a UI should show no control. This used to
+    /// report two depths for AAC that changed nothing about the file.
     public var availableBitDepths: [BitDepth] {
       (outputFormat?.supportedBitDepths ?? BitDepth.allCases).sorted()
+    }
+
+    /// Whether the selected file format uses a bit depth at all.
+    public var usesBitDepth: Bool {
+      outputFormat?.usesBitDepth ?? true
     }
 
     private var _encodingQuality: EncodingQuality? = .high
@@ -112,25 +124,62 @@
     }
 
     /// The available encoding qualities for the selected file format.
+    ///
+    /// A single fixed value for formats whose writer ignores quality, so a UI
+    /// binding stays total without implying a choice exists.
     public var availableEncodingQualities: [EncodingQuality] {
-      if outputFormat?.requiresQuality == true {
+      if outputFormat?.usesEncodingQuality == true {
         EncodingQuality.allCases
       } else {
         [EncodingQuality.maximum]
       }
     }
 
+    /// Whether the selected file format's writer uses the encoding quality.
+    public var usesEncodingQuality: Bool {
+      outputFormat?.usesEncodingQuality ?? false
+    }
+
     /// The current output configuration.
+    ///
+    /// The bit depth is `nil` — legitimately, not for want of a value — when
+    /// the selected format has none to choose.
     public var outputConfiguration: OutputConfiguration? {
       restoreFromDefaultsForCurrentInputIfNeeded()
       guard let of = outputFormat ?? availableOutputFormats.first,
-        let bd = resolveBitDepth(for: of) ?? of.supportedBitDepths.first,
         let eq = encodingQuality ?? availableEncodingQualities.first
       else {
         return nil
       }
+      let bd = resolveBitDepth(for: of) ?? of.defaultBitDepth
+      guard bd != nil || !of.usesBitDepth else { return nil }
 
       return OutputConfiguration(fileFormat: of, bitDepth: bd, quality: eq)
+    }
+
+    /// Validates the current selection against the format a capture will
+    /// deliver, without touching the audio session.
+    ///
+    /// The output selection is stored per input device while the requested
+    /// input sample rate is a single global intent, so the two can drift into a
+    /// combination neither side rejected on its own — a 96 kHz request against
+    /// a remembered `m4a` output, say. This is how a caller finds out before
+    /// activation rather than at the writer.
+    public func validate(
+      against inputFormat: InputConfiguration,
+    ) -> CaptureConfigurationValidation {
+      guard let outputConfiguration else { return .valid }
+      return outputConfiguration.validate(against: inputFormat)
+    }
+
+    /// The output formats whose writer can encode the given capture format.
+    public func availableOutputFormats(
+      for inputFormat: InputConfiguration,
+    ) -> [FileFormat] {
+      availableOutputFormats.filter { fileFormat in
+        fileFormat.supports(sampleRate: inputFormat.sampleRate)
+          && fileFormat.supportsRecordingChannelCount(inputFormat.channels.count)
+      }
     }
 
     private func resolveBitDepth(for fileFormat: FileFormat) -> BitDepth? {
@@ -143,13 +192,15 @@
     private func alignBitDepthWithFormat() {
       guard let format = outputFormat else { return }
 
+      // `defaultBitDepth` is `nil` for formats with no selectable depth, which
+      // is the value those formats must carry — not a failure to resolve one.
       if let bitDepth, !format.supportedBitDepths.contains(bitDepth) {
-        self.bitDepth = format.supportedBitDepths.first
-      } else if bitDepth == nil {
-        bitDepth = format.supportedBitDepths.first
+        self.bitDepth = format.defaultBitDepth
+      } else if bitDepth == nil, format.usesBitDepth {
+        bitDepth = format.defaultBitDepth
       }
 
-      if format.requiresQuality == false {
+      if format.usesEncodingQuality == false {
         _encodingQuality = .maximum
       }
     }
@@ -168,11 +219,12 @@
 
       if let config = readConfig(forInputId: inputId) ?? readLastConfig() {
         _outputFormat = FileFormat(rawValue: config.outputFormatRawValue)
-        _bitDepth = BitDepth(rawValue: config.bitDepthRawValue)
+        _bitDepth = config.bitDepthRawValue.flatMap(BitDepth.init(rawValue:))
         _encodingQuality = EncodingQuality(rawValue: config.encodingQualityRawValue)
       } else {
+        // ADTS has no selectable bit depth, so the default carries none.
         _outputFormat = .adts
-        _bitDepth = .pcmFloat32
+        _bitDepth = nil
         _encodingQuality = .high
       }
 
@@ -186,7 +238,7 @@
 
       let persisted = PersistedOutputConfiguration(
         outputFormatRawValue: config.fileFormat.rawValue,
-        bitDepthRawValue: config.bitDepth.rawValue,
+        bitDepthRawValue: config.bitDepth?.rawValue,
         encodingQualityRawValue: config.quality.rawValue,
       )
 

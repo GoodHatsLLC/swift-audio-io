@@ -253,7 +253,11 @@
         } catch {
           owner.errorManager.enqueue(error)
         }
-        await owner.reconcileInputConfiguration()
+        // Media services came back with the session rebuilt from scratch, so
+        // nothing the coordinator previously observed still describes the
+        // platform. This is one of the deliberate forced writes; the write
+        // barrier absorbs the route notification it produces.
+        await owner.reconcileInputConfiguration(forcePlatformApply: true)
         await owner.dispatchAudioSystemEvent(.mediaServicesReset)
       }
     }

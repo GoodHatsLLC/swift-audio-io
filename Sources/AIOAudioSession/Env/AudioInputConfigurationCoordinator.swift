@@ -192,21 +192,85 @@ package final class AudioInputConfigurationRequestStore {
   }
 }
 
+/// How long the coordinator keeps retrying a platform write that failed
+/// outright, before the write barrier holds and waits for a fresh trigger.
+///
+/// A *rejected* write — one the platform accepted but answered with a different
+/// sample rate — is never retried on its own; the barrier holds immediately.
+/// Only a thrown platform error gets a budget, because those are the ones that
+/// are plausibly transient (a preferred input that vanished for the length of
+/// one route transition, say).
+package struct AudioInputReconciliationPolicy: Hashable, Sendable {
+  /// Extra platform applies allowed after a thrown apply, before the barrier
+  /// holds. Zero disables retrying entirely.
+  package var platformFailureRetryBudget: Int
+
+  package init(platformFailureRetryBudget: Int) {
+    self.platformFailureRetryBudget = platformFailureRetryBudget
+  }
+
+  package static let `default` = AudioInputReconciliationPolicy(
+    platformFailureRetryBudget: 2,
+  )
+}
+
 /// Owns requested state, persistence, serialized reconciliation, and readback
 /// classification for one audio environment.
+///
+/// ## Why reconciliation is coalesced and barriered
+///
+/// On iOS every `AVAudioSession` preference write — `setCategory`,
+/// `setPreferredInput`, `setPreferredSampleRate`, and friends — may post
+/// `AVAudioSession.routeChangeNotification` back at the process, usually with
+/// `.categoryChange`. ``AudioEnvironmentManager/AudioRouteObserver`` reconciles
+/// on every such notification. Two properties therefore have to hold or the
+/// environment drives itself in circles, and takes a live recording tap with
+/// it:
+///
+/// 1. **Single-flight.** At most one reconciliation runs at a time, and every
+///    request that arrives during one is merged into a single follow-up run.
+///    `reconcile` suspends at `adapter.apply`, and it is called from several
+///    independent tasks (route notifications, input-availability notifications,
+///    the periodic poll), so main-actor isolation alone does not serialize it.
+/// 2. **A platform write barrier.** A reconciliation only writes to the
+///    platform when something it can name has changed: a new requested
+///    generation, a different resolved plan, different observed platform facts,
+///    a deliberate forced apply, or a bounded retry after a thrown write.
+///    Everything else is a *refresh*, and a refresh must not touch the
+///    platform. This is what stops a stably unsatisfied state — an exact sample
+///    rate the route refuses — from rewriting its preferences forever.
 @MainActor
 package final class AudioInputConfigurationCoordinator {
   package private(set) var state: AudioInputConfigurationState
 
   private let adapter: any PlatformAudioInputConfigurationAdapter
   private let store: AudioInputConfigurationRequestStore
+  private let policy: AudioInputReconciliationPolicy
   private var generation: UInt64
+
+  /// The last platform write and the facts observed immediately after it.
+  ///
+  /// `nil` means "nothing is known about the platform", which always authorises
+  /// a write.
+  private var writeBarrier: PlatformWriteBarrier?
+
+  /// The reconciliation currently in flight, if any.
+  private var activeRun: ReconcileRun?
+
+  /// The single follow-up run standing for every request that arrived while
+  /// ``activeRun`` was in flight, and its merged parameters.
+  private var queuedRequest: ReconcileParameters?
+  private var queuedTask: Task<AudioInputConfigurationState, Never>?
+
+  private var nextRunID: UInt64 = 0
 
   package init(
     defaults: UserDefaults,
     adapter: any PlatformAudioInputConfigurationAdapter,
+    policy: AudioInputReconciliationPolicy = .default,
   ) {
     self.adapter = adapter
+    self.policy = policy
     store = AudioInputConfigurationRequestStore(defaults: defaults)
     let requested = store.load()
     generation = 0
@@ -233,11 +297,82 @@ package final class AudioInputConfigurationCoordinator {
     return await reconcile(isRunning: true, isActive: true)
   }
 
+  /// Reconciles requested state against the platform, coalescing concurrent
+  /// callers.
+  ///
+  /// Callers that arrive while a reconciliation is in flight do not start a
+  /// second one. They are merged into a single follow-up run — one that still
+  /// re-discovers, so a genuine route change arriving mid-apply is not lost,
+  /// but that will not reissue platform preferences unless the write barrier
+  /// authorises it.
   package func reconcile(
     isRunning: Bool,
     isActive: Bool,
     forcePlatformApply: Bool = false,
   ) async -> AudioInputConfigurationState {
+    let parameters = ReconcileParameters(
+      isRunning: isRunning,
+      isActive: isActive,
+      forcePlatformApply: forcePlatformApply,
+    )
+
+    guard activeRun != nil else {
+      return await beginRun(parameters).value
+    }
+
+    // One follow-up run stands for every request that arrives during an
+    // in-flight one. Merging rather than queueing keeps the work bounded at
+    // "one running, one pending" no matter how many notifications land.
+    queuedRequest = queuedRequest?.merging(parameters) ?? parameters
+    if let queuedTask {
+      return await queuedTask.value
+    }
+    let task = Task { @MainActor [weak self] in
+      guard let self else { return AudioInputConfigurationState.initial() }
+      return await drainQueuedRun()
+    }
+    queuedTask = task
+    return await task.value
+  }
+
+  /// Waits out every in-flight run, then performs the merged follow-up.
+  @MainActor
+  private func drainQueuedRun() async -> AudioInputConfigurationState {
+    while let activeRun {
+      _ = await activeRun.task.value
+    }
+    guard let parameters = queuedRequest else { return state }
+    queuedRequest = nil
+    queuedTask = nil
+    return await beginRun(parameters).value
+  }
+
+  /// Starts a run and publishes it as ``activeRun`` *before* returning, so a
+  /// caller that arrives at the next suspension point sees it and queues.
+  @MainActor
+  private func beginRun(
+    _ parameters: ReconcileParameters,
+  ) -> Task<AudioInputConfigurationState, Never> {
+    nextRunID &+= 1
+    let id = nextRunID
+    let task = Task { @MainActor [weak self] in
+      guard let self else { return AudioInputConfigurationState.initial() }
+      defer {
+        if activeRun?.id == id { activeRun = nil }
+      }
+      return await performReconcile(parameters)
+    }
+    activeRun = ReconcileRun(id: id, task: task)
+    return task
+  }
+
+  @MainActor
+  private func performReconcile(
+    _ parameters: ReconcileParameters,
+  ) async -> AudioInputConfigurationState {
+    let isRunning = parameters.isRunning
+    let isActive = parameters.isActive
+    let forcePlatformApply = parameters.forcePlatformApply
     while true {
       let requested = state.requested
       let requestedGeneration = generation
@@ -288,22 +423,20 @@ package final class AudioInputConfigurationCoordinator {
         )
       case .apply(let plan):
         // Route notifications and periodic discovery are refreshes, not new
-        // configuration intent. Reissuing satisfied AVAudioSession preferences
-        // can generate another route notification and keep the recording tap
-        // in a stop/reinstall loop. Activation and orientation changes opt into
-        // one forced write because the platform may have discarded state that
-        // is not fully represented by the semantic readback.
-        if !forcePlatformApply,
-          state.requestedGeneration == requestedGeneration,
-          state.reconciliation == .satisfied,
-          Self.classify(readback: applied, expected: plan) == .satisfied
-        {
+        // configuration intent. Reissuing AVAudioSession preferences generates
+        // another route notification, which drives another reconciliation — and
+        // if a recording is live, another tap teardown. The barrier answers the
+        // only question that matters: has anything changed since the write that
+        // produced the state we are already publishing?
+        guard authorisePlatformApply(plan: plan, snapshot: snapshot, force: forcePlatformApply)
+        else {
           return publish(
             requested: requested,
             generation: requestedGeneration,
             snapshot: snapshot,
             applied: applied,
-            reconciliation: .satisfied,
+            reconciliation: writeBarrier?.outcome
+              ?? Self.classify(readback: applied, expected: plan),
           )
         }
         _ = publish(
@@ -315,6 +448,17 @@ package final class AudioInputConfigurationCoordinator {
         )
         do {
           let readback = try await adapter.apply(plan)
+          let reconciliation = Self.classify(readback: readback.applied, expected: plan)
+          // The barrier records the facts observed *after* the write, so the
+          // next discovery compares like with like. A rejected preference
+          // settles here: the plan and the observed snapshot both stay put, so
+          // no later refresh writes again.
+          writeBarrier = PlatformWriteBarrier(
+            plan: plan,
+            observed: readback,
+            outcome: reconciliation,
+            retryBudget: 0,
+          )
           guard requestedGeneration == generation else {
             state = AudioInputConfigurationState(
               requested: state.requested,
@@ -325,7 +469,6 @@ package final class AudioInputConfigurationCoordinator {
             )
             continue
           }
-          let reconciliation = Self.classify(readback: readback.applied, expected: plan)
           return publish(
             requested: requested,
             generation: requestedGeneration,
@@ -335,13 +478,27 @@ package final class AudioInputConfigurationCoordinator {
           )
         } catch {
           let readback = await adapter.discover()
+          let failure = AudioInputConfigurationReconciliation.unsatisfied(
+            .platformOperationFailed(String(describing: error)),
+          )
+          // A thrown write is the one failure mode that may be transient, so it
+          // is the one that gets a bounded retry budget rather than an
+          // immediate barrier. The budget is *carried*, not reissued: a run of
+          // identical failures has to exhaust it, or the retry would be
+          // unbounded.
+          writeBarrier = PlatformWriteBarrier(
+            plan: plan,
+            observed: readback,
+            outcome: failure,
+            retryBudget: carriedFailureRetryBudget(plan: plan, observed: readback),
+          )
           guard requestedGeneration == generation else { continue }
           return publish(
             requested: requested,
             generation: requestedGeneration,
             snapshot: readback,
             applied: readback.applied,
-            reconciliation: .unsatisfied(.platformOperationFailed(String(describing: error))),
+            reconciliation: failure,
           )
         }
       }
@@ -351,6 +508,10 @@ package final class AudioInputConfigurationCoordinator {
   package func markUnavailable(
     _ deferral: AudioInputConfigurationDeferral,
   ) -> AudioInputConfigurationState {
+    // Deactivation and media-services loss both discard platform state that the
+    // barrier was describing, so nothing is known any more and recovery is free
+    // to write once.
+    writeBarrier = nil
     state = AudioInputConfigurationState(
       requested: state.requested,
       requestedGeneration: generation,
@@ -359,6 +520,45 @@ package final class AudioInputConfigurationCoordinator {
       reconciliation: .deferred(deferral),
     )
     return state
+  }
+
+  /// Decides whether this reconciliation may write to the platform, and
+  /// consumes one unit of retry budget when it does so on a failure's account.
+  ///
+  /// The authorised triggers are exactly: a deliberate forced apply, no known
+  /// platform state, a changed plan (which subsumes a changed requested
+  /// generation, because the generation is stamped into the plan), changed
+  /// observed platform facts, or remaining retry budget after a thrown write.
+  private func authorisePlatformApply(
+    plan: PlatformAudioInputConfigurationPlan,
+    snapshot: PlatformAudioInputSnapshot,
+    force: Bool,
+  ) -> Bool {
+    if force { return true }
+    guard var barrier = writeBarrier else { return true }
+    guard barrier.plan == plan, barrier.observed == snapshot else { return true }
+    guard barrier.retryBudget > 0 else { return false }
+    barrier.retryBudget -= 1
+    writeBarrier = barrier
+    return true
+  }
+
+  /// The retry budget a fresh failure barrier inherits.
+  ///
+  /// A repeat of the same failure, under the same observed facts, keeps
+  /// spending the budget the previous attempt left behind. Anything else — a
+  /// different plan, or facts that moved — is a new situation and starts over.
+  private func carriedFailureRetryBudget(
+    plan: PlatformAudioInputConfigurationPlan,
+    observed: PlatformAudioInputSnapshot,
+  ) -> Int {
+    guard let barrier = writeBarrier,
+      barrier.plan == plan,
+      barrier.observed == observed
+    else {
+      return policy.platformFailureRetryBudget
+    }
+    return barrier.retryBudget
   }
 
   private func publish(
@@ -403,6 +603,39 @@ package final class AudioInputConfigurationCoordinator {
       )
     }
     return .satisfied
+  }
+
+  /// One reconciliation's parameters, as supplied by its caller.
+  private struct ReconcileParameters: Hashable {
+    var isRunning: Bool
+    var isActive: Bool
+    var forcePlatformApply: Bool
+
+    /// Folds a later request into a pending one. The newest lifecycle facts
+    /// win; a forced apply is sticky, because dropping it would lose the one
+    /// trigger that exists to re-establish platform state the session may have
+    /// silently discarded.
+    func merging(_ other: ReconcileParameters) -> ReconcileParameters {
+      ReconcileParameters(
+        isRunning: other.isRunning,
+        isActive: other.isActive,
+        forcePlatformApply: forcePlatformApply || other.forcePlatformApply,
+      )
+    }
+  }
+
+  private struct ReconcileRun {
+    let id: UInt64
+    let task: Task<AudioInputConfigurationState, Never>
+  }
+
+  /// What the coordinator last asked the platform for, and the facts it read
+  /// back immediately afterwards.
+  private struct PlatformWriteBarrier {
+    let plan: PlatformAudioInputConfigurationPlan
+    let observed: PlatformAudioInputSnapshot
+    let outcome: AudioInputConfigurationReconciliation
+    var retryBudget: Int
   }
 
   private static func sourceMatches(

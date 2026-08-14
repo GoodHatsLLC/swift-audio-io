@@ -2,6 +2,17 @@
 
 public import AVFAudio
 
+/// An encoder quality *level*, not a bitrate.
+///
+/// This maps one-to-one onto `AVAudioQuality` and is written as
+/// `AVEncoderAudioQualityKey`. AudioIO never emits `AVEncoderBitRateKey`, so the
+/// encoder is free to choose whatever bitrate serves the requested level at the
+/// configured sample rate and channel count: two recordings at
+/// ``EncodingQuality/high`` are not promised the same bitrate, and the resulting
+/// file size is not predictable from this value alone.
+///
+/// It reaches the file only for formats whose ``FileFormat/usesEncodingQuality``
+/// is `true` — today, the AAC family. The lossless formats ignore it.
 public enum EncodingQuality: Int, CaseIterable, Hashable, CustomStringConvertible, TypeDescribable,
   Identifiable, Sendable
 {

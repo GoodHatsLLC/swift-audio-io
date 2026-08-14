@@ -29,6 +29,44 @@ which builds a ``MicrophoneRecordingInput`` for you.
 - ``OutputConfiguration`` chooses the ``FileFormat``, ``BitDepth``, and ``EncodingQuality``.
 - `outputDestination` selects a temporary file, a directory, or an explicit file URL.
 
+Bit depth and encoding quality are not universal. Each format reports which of
+them reaches its writer, and a value the writer ignores is rejected rather than
+silently accepted:
+
+| Format | ``FileFormat/usesBitDepth`` | ``FileFormat/usesEncodingQuality`` |
+|---|---|---|
+| WAV, CAF, AIFF | yes — the written sample width | no |
+| FLAC | yes — `AVEncoderBitDepthHintKey` | no |
+| AAC (`m4a`), ADTS | **no** — pass `nil` | yes |
+
+AAC is a lossy transform codec with no PCM sample width to choose, so
+``OutputConfiguration/bitDepth`` must be `nil` for it. ``EncodingQuality`` is an
+`AVAudioQuality` *level*, not a bitrate — AudioIO does not set
+`AVEncoderBitRateKey`, so the encoder picks whatever bitrate serves the level.
+
+### Validating a configuration
+
+The capture format and the output encoding are chosen through independent APIs,
+so a combination that is reasonable on each side can still be impossible — a
+96 kHz microphone request written to `m4a`, for instance, since AAC tops out at
+48 kHz. ``RecordingConfiguration/validate()`` decides this without touching an
+audio session, so a caller can reject or grey out the combination before
+activation rather than at the writer:
+
+```swift
+let validation = configuration.validate()
+guard validation.isValid else {
+  // Each issue describes exactly what cannot be written.
+  throw MyError.badConfiguration(validation.description)
+}
+```
+
+``OutputConfigurationManager`` exposes the same check against a capture format
+with `validate(against:)`, plus `availableOutputFormats(for:)` for building a
+picker that only offers writable combinations. This matters because the output
+selection is remembered per input device while the requested input sample rate
+is a single global intent, so the two can drift apart across a route change.
+
 The engine enforces the declared channel matrix:
 
 | Source / format | Max channels |
@@ -130,6 +168,9 @@ See <doc:Events> for the full subscription pattern.
 - ``FileFormat``
 - ``BitDepth``
 - ``EncodingQuality``
+- ``RecordingConfiguration/validate()``
+- ``CaptureConfigurationValidation``
+- ``CaptureConfigurationIssue``
 
 ### System audio (macOS)
 

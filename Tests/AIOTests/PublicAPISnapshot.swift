@@ -48,7 +48,10 @@ func publicAPISnapshot_AIOAudioSession() throws {
   _ = AudioSourcePreference.self
   _ = AudioSourceSelection.self
   _ = AnyErrorManager.self
+  _ = AudioInputFacts.self
   _ = BitDepth.self
+  _ = CaptureConfigurationIssue.self
+  _ = CaptureConfigurationValidation.self
   _ = ChannelCount.self
   _ = EncodingQuality.self
   _ = ErrorManager.self

@@ -62,13 +62,20 @@
 
     /// Requests a specific audio input.
     ///
+    /// Idempotent: the platform is only written when `session.preferredInput`
+    /// does not already name this port. Rewriting it can post a route-change
+    /// notification, which this package treats as a reason to reconcile.
+    ///
     /// - Parameter input: The audio input to request.
     /// - Throws: An error if the input cannot be set.
     public func request(input: AudioInput?) throws(RequestError) {
       try AudioSessionAccess.result(catching: RequestError.self) {
         () throws(RequestError) -> Void in
         do {
-          try session.setPreferredInput(input?.avAudio)
+          try AudioSessionPreferenceWrite.performPreferredInput(
+            input?.avAudio,
+            on: session,
+          ) { try session.setPreferredInput($0) }
         } catch {
           throw .operationFailed(operation: .setPreferredInput, error: ErrorContext(error))
         }
@@ -100,16 +107,23 @@
 
     /// Requests a specific sample rate.
     ///
-    /// The requested sample rate may not be honored. The actual sample rate is returned.
+    /// The requested sample rate may not be honored; read ``sampleRate`` back to
+    /// see what the route actually settled on. The *preference* is what this
+    /// writes, and it is only written when it differs from
+    /// `session.preferredSampleRate` — a route that refuses 48 kHz still stores
+    /// 48 kHz as the preference, so a rejected request is idempotent too, and
+    /// re-requesting it costs nothing.
     ///
     /// - Parameter sampleRate: The sample rate to request.
-    /// - Returns: The actual sample rate after the request.
     /// - Throws: An error if the sample rate cannot be set.
     public func request(sampleRate: SampleRate) throws(RequestError) {
       try AudioSessionAccess.result(catching: RequestError.self) {
         () throws(RequestError) -> Void in
         do {
-          try session.setPreferredSampleRate(sampleRate.hz)
+          try AudioSessionPreferenceWrite.perform(
+            sampleRate.hz,
+            whenNot: session.preferredSampleRate,
+          ) { try session.setPreferredSampleRate($0) }
         } catch {
           throw .operationFailed(operation: .setPreferredSampleRate, error: ErrorContext(error))
         }

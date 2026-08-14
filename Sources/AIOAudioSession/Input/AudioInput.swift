@@ -50,9 +50,15 @@
       (port.dataSources ?? []).map(AudioSource.init(avAudio:))
     }
 
+    /// Selects the input's data source, skipping the write when the port
+    /// already reports it as preferred. See ``AudioSessionPreferenceWrite`` for
+    /// why an unconditional write is not free.
     public func set(preferredSource source: AudioSource?) throws(PreferenceError) {
       do {
-        try port.setPreferredDataSource(source?.avAudio)
+        try AudioSessionPreferenceWrite.perform(
+          source?.avAudio.dataSourceID,
+          whenNot: port.preferredDataSource?.dataSourceID,
+        ) { _ in try port.setPreferredDataSource(source?.avAudio) }
       } catch {
         throw .setPreferredSourceFailed(inputID: port.uid, error: ErrorContext(error))
       }
