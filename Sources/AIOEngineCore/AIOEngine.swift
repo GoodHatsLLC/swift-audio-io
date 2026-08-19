@@ -202,11 +202,24 @@
     // the full thread topology. Swift's type system cannot model dispatch
     // queue serialization, so the `nonisolated(unsafe)` annotation tells it
     // "trust me, this is covered by the queue invariant."
-    package let engine = AVAudioEngine()
-    // SAFETY: Same queue invariant as `engine` above — player is an
-    // AVAudioPlayerNode attached to the engine graph and mutated only from
-    // engineControlQueue.
-    package let player = AVAudioPlayerNode()
+    //
+    // The Xcode 27 SDK marks both types `Sendable`, which makes the
+    // annotation redundant there and a warning; the shipping Xcode 26 SDK
+    // does not, and rejects the class outright without it. Collapse this
+    // back to the unannotated form once Xcode 26 support is dropped.
+    #if compiler(>=6.4)
+      package let engine = AVAudioEngine()
+      // SAFETY: Same queue invariant as `engine` above — player is an
+      // AVAudioPlayerNode attached to the engine graph and mutated only from
+      // engineControlQueue.
+      package let player = AVAudioPlayerNode()
+    #else
+      package nonisolated(unsafe) let engine = AVAudioEngine()
+      // SAFETY: Same queue invariant as `engine` above — player is an
+      // AVAudioPlayerNode attached to the engine graph and mutated only from
+      // engineControlQueue.
+      package nonisolated(unsafe) let player = AVAudioPlayerNode()
+    #endif
     // SAFETY: Same queue invariant as `engine` above. The jog source/time-pitch
     // nodes are attached, connected, disconnected, and detached only on
     // engineControlQueue; the source render block communicates with control
