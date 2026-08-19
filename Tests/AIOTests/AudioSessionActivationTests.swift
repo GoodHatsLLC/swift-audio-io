@@ -280,8 +280,12 @@
       let appDeactivation = AudioSessionDeactivation(source: .app)
       #expect(appDeactivation.interruptionReason == nil)
 
-      #expect(AudioSessionDeactivationSource(.app) == .app)
-      #expect(AudioSessionDeactivationSource(.system) == .system)
+      // The platform-source adapter only exists when built against the
+      // iOS 27 SDK — see `AudioSystemEvent+iOS`.
+      #if compiler(>=6.4)
+        #expect(AudioSessionDeactivationSource(.app) == .app)
+        #expect(AudioSessionDeactivationSource(.system) == .system)
+      #endif
       #expect(AudioInterruptionReason(.default) == .default)
       #expect(AudioInterruptionReason(.builtInMicMuted) == .builtInMicMuted)
       #expect(AudioInterruptionReason(.routeDisconnected) == .routeDisconnected)
