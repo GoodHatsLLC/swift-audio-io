@@ -431,6 +431,23 @@
       private let clock = ContinuousClock()
       private var lastReportInstant: ContinuousClock.Instant?
 
+      // Spelled out rather than left to the memberwise initializer. Swift
+      // synthesizes that one at the *lowest* access level among the stored
+      // properties, so `private let clock` scopes it to this struct's own
+      // body and the extractor can't call it. Swift 6.4 lets it slide;
+      // 6.3 — the toolchain CI pins — rejects it.
+      init(
+        handler: (@Sendable (OfflineLODProgress) async -> Void)?,
+        totalFrameCount: Int,
+        sampleRate: Double,
+        lodRatio: Int,
+      ) {
+        self.handler = handler
+        self.totalFrameCount = totalFrameCount
+        self.sampleRate = sampleRate
+        self.lodRatio = lodRatio
+      }
+
       mutating func reportIfNeeded(
         processor: MultiBandLODProcessor,
         processedFrameCount: Int,
