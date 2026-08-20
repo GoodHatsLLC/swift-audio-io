@@ -8,14 +8,18 @@
   actor IOSAudioInputConfigurationAdapter: PlatformAudioInputConfigurationAdapter {
     private let environment: AudioEnvironment
     private let inputWriteQueue: SerialAsyncWorkQueue
+    private let bluetoothMicrophonePolicy: Synchronized<BluetoothMicrophonePolicy>
     private var orientation: AVAudioSession.StereoOrientation = .none
 
     init(
       environment: AudioEnvironment,
       inputWriteQueue: SerialAsyncWorkQueue,
+      bluetoothMicrophonePolicy: Synchronized<BluetoothMicrophonePolicy> =
+        Synchronized(.handsFree),
     ) {
       self.environment = environment
       self.inputWriteQueue = inputWriteQueue
+      self.bluetoothMicrophonePolicy = bluetoothMicrophonePolicy
     }
 
     func updateOrientation(_ orientation: AVAudioSession.StereoOrientation) {
@@ -31,6 +35,7 @@
     ) async throws -> PlatformAudioInputSnapshot {
       let orientation = orientation
       let environment = environment
+      let bluetoothMicrophone = bluetoothMicrophonePolicy.withLock { $0 }
       let result: Result<Void, AudioEnvironmentManager.ManagerError>? =
         await inputWriteQueue.submit {
           () -> Result<Void, AudioEnvironmentManager.ManagerError> in
@@ -39,6 +44,7 @@
               environment.session,
               configuration: .recordingConfiguration(
                 useMeasurement: plan.processing == .measurement,
+                bluetoothMicrophone: bluetoothMicrophone,
               ),
             )
 

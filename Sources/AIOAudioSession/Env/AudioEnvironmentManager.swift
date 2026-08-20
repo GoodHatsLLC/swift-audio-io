@@ -167,9 +167,11 @@
       sessionActivator: any AudioSessionActivating,
     ) {
       let queue = SerialAsyncWorkQueue()
+      let bluetoothPolicyStorage = Synchronized(BluetoothMicrophonePolicy.handsFree)
       let adapter = IOSAudioInputConfigurationAdapter(
         environment: env,
         inputWriteQueue: queue,
+        bluetoothMicrophonePolicy: bluetoothPolicyStorage,
       )
       let coordinator = AudioInputConfigurationCoordinator(
         defaults: defaults,
@@ -182,9 +184,34 @@
       platformInputAdapter = adapter
       inputConfigurationCoordinator = coordinator
       inputConfigurationState = coordinator.state
+      bluetoothMicrophonePolicyStorage = bluetoothPolicyStorage
       sessionConfiguration = .recordingConfiguration(
         useMeasurement: coordinator.state.requested.processing == .measurement,
       )
+    }
+
+    /// Shared with the input-configuration adapter so its category
+    /// reconfigurations honor the app's Bluetooth-microphone choice instead of
+    /// silently reverting to `.handsFree`.
+    @ObservationIgnored private let bluetoothMicrophonePolicyStorage:
+      Synchronized<BluetoothMicrophonePolicy>
+
+    /// How recording sessions treat Bluetooth microphones. Defaults to
+    /// ``BluetoothMicrophonePolicy/handsFree``, the platform's historical
+    /// behavior.
+    ///
+    /// Setting this also rebuilds ``sessionConfiguration`` from the recording
+    /// factory, so the bootstrap path and input-configuration reconciliation
+    /// stay in agreement about the category options.
+    public var recordingBluetoothMicrophonePolicy: BluetoothMicrophonePolicy {
+      get { bluetoothMicrophonePolicyStorage.withLock { $0 } }
+      set {
+        bluetoothMicrophonePolicyStorage.withLock { $0 = newValue }
+        sessionConfiguration = .recordingConfiguration(
+          useMeasurement: recordingUsesMeasurementMode,
+          bluetoothMicrophone: newValue,
+        )
+      }
     }
 
     let env: AudioEnvironment

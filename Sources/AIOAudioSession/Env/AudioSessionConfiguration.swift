@@ -1,5 +1,37 @@
 // © GoodHatsLLC
 
+/// How a recording session treats Bluetooth microphones.
+///
+/// On iOS this decision *is* a sample-rate decision: routing input through a
+/// classic Bluetooth (HFP) microphone collapses the whole session to the HFP
+/// codec rate — 8–16 kHz for headsets, 24 kHz for modern AirPods — while the
+/// A2DP output path has no microphone at all. Making the choice a named policy
+/// keeps the biggest silent quality downgrade on the platform explicit.
+///
+/// macOS has no `AVAudioSession`; the policy is accepted and ignored there.
+public enum BluetoothMicrophonePolicy: Hashable, Sendable {
+  /// Use high-quality Bluetooth capture where the route supports it — iOS 26
+  /// with H2-class AirPods records at 48 kHz — falling back to classic HFP
+  /// everywhere else.
+  ///
+  /// High-quality Bluetooth recording adds input latency and requires the
+  /// session's default mode, so it is not applied to measurement-mode
+  /// configurations; it is also unavailable in some regions, where the route
+  /// silently falls back to HFP. ``ResolvedCaptureFormat`` reports the rate
+  /// that was actually delivered either way.
+  case highQualityWhenAvailable
+
+  /// Classic HFP duplex: Bluetooth microphones work, and the session runs at
+  /// the HFP codec rate while one is routed. The default, matching the
+  /// behavior this package has always had.
+  case handsFree
+
+  /// Never capture from a Bluetooth microphone: output stays on high-quality
+  /// A2DP and input stays on the built-in (or wired) microphone at the full
+  /// hardware rate.
+  case never
+}
+
 #if os(iOS)
   public import AVFoundation
 
@@ -28,15 +60,28 @@
     }
 
     public static func recordingConfiguration(
-      useMeasurement: Bool
+      useMeasurement: Bool,
+      bluetoothMicrophone: BluetoothMicrophonePolicy = .handsFree,
     ) -> AudioSessionConfiguration {
-      let options: AVAudioSession.CategoryOptions = [
+      var options: AVAudioSession.CategoryOptions = [
         .defaultToSpeaker,
         .allowBluetoothA2DP,
         .allowAirPlay,
-        .allowBluetoothHFP,
         .overrideMutedMicrophoneInterruption,
       ]
+      switch bluetoothMicrophone {
+      case .never:
+        break
+      case .handsFree:
+        options.insert(.allowBluetoothHFP)
+      case .highQualityWhenAvailable:
+        options.insert(.allowBluetoothHFP)
+        // High-quality Bluetooth recording is default-mode only; combining it
+        // with measurement mode would be rejected at category set.
+        if #available(iOS 26.0, *), !useMeasurement {
+          options.insert(.bluetoothHighQualityRecording)
+        }
+      }
 
       return AudioSessionConfiguration(
         category: .playAndRecord,
@@ -148,10 +193,14 @@
       self.prefersInterruptionOnRouteDisconnect = prefersInterruptionOnRouteDisconnect
     }
 
+    /// `bluetoothMicrophone` is accepted for call-site parity with iOS and
+    /// ignored — macOS has no `AVAudioSession` to apply it to.
     public static func recordingConfiguration(
-      useMeasurement: Bool
+      useMeasurement: Bool,
+      bluetoothMicrophone: BluetoothMicrophonePolicy = .handsFree,
     ) -> AudioSessionConfiguration {
-      AudioSessionConfiguration(
+      _ = bluetoothMicrophone
+      return AudioSessionConfiguration(
         category: .playAndRecord,
         mode: useMeasurement ? .measurement : .default,
         options: [],
