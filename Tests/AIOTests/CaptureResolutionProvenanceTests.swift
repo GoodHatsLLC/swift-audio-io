@@ -129,6 +129,38 @@
       _ = try await engine.stopRecording()
     }
 
+    @Test
+    func `tap-interval reinstall refreshes the observable provenance`() async throws {
+      // Install 0: 48 kHz. The interval-change reinstall (install 1) catches a
+      // route that moved to 24 kHz; the observable must follow the staged
+      // provenance, exactly like the route-change path.
+      let first = try #require(AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1))
+      let second = try #require(AVAudioFormat(standardFormatWithSampleRate: 24_000, channels: 1))
+      let (engine, _, _) = AIOEngine.fakeRecording(
+        tapInstaller: FakeTapInstaller(
+          tapFormatForInstall: { $0 == 0 ? first : second },
+        ),
+      )
+
+      let url = try await engine.startRecording(
+        configuration: makeConfiguration(sampleRate: .exact(.dvd)),
+      )
+      defer { try? FileManager.default.removeItem(at: url) }
+      #expect(engine.activeCaptureFormat?.hardware.sampleRate == SampleRate(48_000))
+
+      let updated = try #require(engine.state.withLock { $0.recordingConfiguration })
+      try await engine.recording.capture.reconfigureTapForIntervalChange(
+        configuration: updated,
+      )
+
+      let capture = try #require(engine.activeCaptureFormat)
+      #expect(capture.hardware.sampleRate == SampleRate(24_000))
+      #expect(capture.processing.sampleRate == .dvd)
+      #expect(capture.isResampling)
+
+      _ = try await engine.stopRecording()
+    }
+
     // MARK: - Helpers
 
     private func makeConfiguration(sampleRate: RecordingSampleRate) -> RecordingConfiguration {

@@ -653,6 +653,10 @@
           return
         }
         owner.applyTapInstallResult(result, processingFormat: processingFormat)
+        // The reinstall refreshed the staged provenance; mirror it into the
+        // observable, exactly like the route-change handler — the live format
+        // read can surface a hardware change this reinstall happened to catch.
+        owner.activeCaptureFormat = owner.state[locked: \.captureResolution]
 
         log.info(
           "Updated tap interval to \(configuration.tapInterval, privacy: .public) (bufferSize: \(result.tapConfiguration.bufferSize, privacy: .public) frames)",
