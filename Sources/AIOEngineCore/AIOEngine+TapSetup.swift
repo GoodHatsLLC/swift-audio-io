@@ -273,18 +273,12 @@
         throw RecordingError.invalidConfiguration(details: "Tap bufferSize is 0")
       }
 
-      // 6. Install tap with format: nil to match the node's current format
-      engine.inputNode.installTap(
-        onBus: tapConfig.bus,
+      // 6. Install tap at the node's current format
+      try installNodeTap(
+        bus: tapConfig.bus,
         bufferSize: tapConfig.bufferSize,
         format: inputFormat,
-        block: { @Sendable [self] buffer, time in
-          self.recording.capture.processAudio(
-            buffer: buffer,
-            time: time,
-            to: processingFormat,
-          )
-        },
+        processingFormat: processingFormat,
       )
 
       // 7. Prepare post-install, read actual format
@@ -327,6 +321,69 @@
       }
 
       return result
+    }
+
+    /// Installs the node-level input tap, preferring the OS 27
+    /// `installAudioTap(onBus:bufferSize:format:tapProvider:)` — the throwing,
+    /// `Sendable` replacement for `installTap`, whose provider receives an
+    /// `AVReadOnlyAudioPCMBuffer` — and falling back to the legacy call on
+    /// earlier systems. Removal is unchanged either way: `removeTap(onBus:)`
+    /// is not deprecated.
+    ///
+    /// The OS 27 path bridges via `AVAudioPCMBuffer(copying:)`. The copy is
+    /// bounded by the tap cadence (~100 ms buffers on a non-realtime queue);
+    /// a zero-copy wrap of the read-only buffer's audio buffer list is a
+    /// follow-up gated on re-verifying that `processAudio` never retains its
+    /// input past return.
+    ///
+    /// Must run on the engine-control queue, like every other graph mutation
+    /// in this file.
+    private nonisolated func installNodeTap(
+      bus: Int,
+      bufferSize: AVAudioFrameCount,
+      format: AVAudioFormat,
+      processingFormat: AVAudioFormat,
+    ) throws {
+      #if compiler(>=6.4)
+        // `installAudioTap` and AVReadOnlyAudioPCMBuffer are OS 27 SDK
+        // symbols: `#available` gates them at run time, but naming them at
+        // all requires Xcode 27.
+        if #available(iOS 27.0, macOS 27.0, tvOS 27.0, *) {
+          tapSetupLog.info("Installing input tap via installAudioTap (OS 27 path)")
+          do {
+            try engine.inputNode.installAudioTap(
+              onBus: bus,
+              bufferSize: bufferSize,
+              format: format,
+            ) { @Sendable [self] readOnlyBuffer, time in
+              let buffer = AVAudioPCMBuffer(copying: readOnlyBuffer)
+              self.recording.capture.processAudio(
+                buffer: buffer,
+                time: time,
+                to: processingFormat,
+              )
+            }
+          } catch {
+            throw RecordingError.invalidConfiguration(
+              details: "installAudioTap failed: \(error.localizedDescription)",
+            )
+          }
+          return
+        }
+      #endif
+      tapSetupLog.info("Installing input tap via installTap (pre-OS 27 path)")
+      engine.inputNode.installTap(
+        onBus: bus,
+        bufferSize: bufferSize,
+        format: format,
+        block: { @Sendable [self] buffer, time in
+          self.recording.capture.processAudio(
+            buffer: buffer,
+            time: time,
+            to: processingFormat,
+          )
+        },
+      )
     }
 
     /// Applies tap install results to engine state.
@@ -383,7 +440,19 @@
           name: preferredInput.name,
         )
         do {
-          try unsafe engine.inputNode.auAudioUnit.setDeviceID(deviceID)
+          // `auAudioUnit` is deprecated in the OS 27 SDKs in favor of the
+          // scoped `withAUAudioUnit`; same double gate as the tap install.
+          #if compiler(>=6.4)
+            if #available(macOS 27.0, *) {
+              try engine.inputNode.withAUAudioUnit { audioUnit in
+                try audioUnit.setDeviceID(deviceID)
+              }
+            } else {
+              try unsafe engine.inputNode.auAudioUnit.setDeviceID(deviceID)
+            }
+          #else
+            try unsafe engine.inputNode.auAudioUnit.setDeviceID(deviceID)
+          #endif
         } catch {
           throw .captureSourceFailed(
             sourceDescription: preferredInput.description,
