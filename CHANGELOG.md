@@ -7,6 +7,54 @@ releases follow the versioning policy in `README.md` and `ROADMAP.md`.
 
 ## Unreleased
 
+### Added
+
+- **Sample rate as intent.** Recording inputs now carry a `CaptureFormat` —
+  a `RecordingSampleRate` intent (`.hardware` or `.exact(SampleRate)`) plus a
+  `ChannelCount`. `.hardware` records at whatever rate the active route
+  actually runs, resolved once at bring-up (input node on the microphone path,
+  process-tap stream format for system audio) with no resampling and no
+  `setPreferredSampleRate` write; `.exact` keeps today's convert-to-target
+  behavior. Rates the output encoder cannot write clamp to the nearest
+  encodable value (AAC tops out at 48 kHz). Interruption restarts re-resolve
+  against the route that exists at restart. See the new "Sample Rates" DocC
+  article.
+- **Capture provenance.** `ResolvedCaptureFormat` reports the hardware format
+  feeding the file vs the file's own format, with `isResampling` and
+  `effectiveSampleRate` (the honest bandwidth ceiling — a 48 kHz file fed by a
+  16 kHz Bluetooth mic reports 16 kHz). Carried on every
+  `recordingStarted(url:format:capture:)` event, observable as
+  `AIOEngine.activeCaptureFormat`, and refreshed on route-change reinstalls.
+- **`BluetoothMicrophonePolicy`.** The recording session's Bluetooth decision
+  is a named policy — `.handsFree` (default, today's behavior), `.never`
+  (built-in mic at full rate, A2DP output), or `.highQualityWhenAvailable`
+  (iOS 26 high-quality Bluetooth recording, 48 kHz on H2 AirPods, HFP
+  fallback) — on `recordingConfiguration(useMeasurement:bluetoothMicrophone:)`
+  and `AudioEnvironmentManager.recordingBluetoothMicrophonePolicy`.
+- **Honest capabilities.** `AudioInputConfigurationCapabilities.activeSampleRate`
+  is the platform's actual rate (from the applied configuration);
+  `likelySampleRates` is documented as the picker guess-list it always was.
+  An `.automatic` sample-rate request writes no preference and can no longer
+  land in `.unsatisfied(.rejectedSampleRate)`.
+- **OS 27 tap API.** The input tap installs through
+  `installAudioTap(onBus:bufferSize:format:tapProvider:)` on OS 27 hosts
+  (bridging `AVReadOnlyAudioPCMBuffer` into the existing capture path) and
+  macOS device selection uses `withAUAudioUnit`, both behind the project's
+  compiler + availability double gate; earlier systems keep the legacy calls.
+- `SampleRate.speech` (16 kHz), the standard speech-to-text target.
+
+### Changed
+
+- **Breaking:** `RecordingConfiguration.format` is now
+  `requestedFormat: CaptureFormat`, with `exactFormat: InputConfiguration?` as
+  the resolved accessor; `MicrophoneRecordingInput.format` and
+  `SystemAudioRecordingInput.format` changed type from `InputConfiguration` to
+  `CaptureFormat` (wrap an existing value in `CaptureFormat(_:)`).
+- **Breaking:** `recordingStarted(url:format:)` is now
+  `recordingStarted(url:format:capture:)`.
+- **Breaking:** `AudioInputConfigurationCapabilities`' memberwise initializer
+  gains `activeSampleRate:`.
+
 ### Fixed
 
 - The iOS input-configuration feedback loop. An exact sample rate the route

@@ -151,7 +151,13 @@ final class AudioIODemoViewModel {
     switch selectedSource {
     case .microphone:
       configuration = RecordingConfiguration(
-        inputConfiguration: InputConfiguration(sampleRate: .cd, channels: .mono),
+        input: .microphone(
+          // .hardware records at whatever rate the route actually runs — no
+          // resampling. Request .exact(.speech) instead for STT pipelines.
+          MicrophoneRecordingInput(
+            format: CaptureFormat(sampleRate: .hardware, channels: .mono),
+          ),
+        ),
         outputConfiguration: OutputConfiguration(
           fileFormat: .caf,
           bitDepth: .pcmFloat32,
@@ -212,8 +218,8 @@ final class AudioIODemoViewModel {
         )
       }
       let input = SystemAudioRecordingInput(
-        // System audio is mixed to stereo; 48 kHz matches the typical system mix.
-        format: InputConfiguration(sampleRate: .dvd, channels: .stereo),
+        // System audio is mixed to stereo; .hardware adopts the tap's rate.
+        format: CaptureFormat(sampleRate: .hardware, channels: .stereo),
         processSelection: selection,
         excludesCurrentProcess: true,
       )
@@ -244,10 +250,17 @@ final class AudioIODemoViewModel {
 
   private func handle(_ event: AudioIOEvent) {
     switch event {
-    case .recordingStarted(let url, let format):
+    case .recordingStarted(let url, let format, let capture):
       isRecording = true
       lastRecordingURL = url
-      statusLine = "Recording \(selectedSource.label) → \(url.lastPathComponent) (\(format))"
+      // The provenance makes an active resample visible: a 48 kHz file fed by
+      // a 16 kHz Bluetooth mic reports 16 kHz as its effective rate.
+      let quality =
+        capture.isResampling
+        ? "\(capture.processing.sampleRate) ← \(capture.hardware.sampleRate) hardware"
+        : "\(capture.processing.sampleRate) native"
+      statusLine =
+        "Recording \(selectedSource.label) → \(url.lastPathComponent) (\(format), \(quality))"
     case .recordingCompleted:
       isRecording = false
       statusLine = "Saved \(lastRecordingURL?.lastPathComponent ?? "")"
@@ -259,7 +272,7 @@ final class AudioIODemoViewModel {
     case .playbackStateChanged(let playback):
       isPlaying = playback?.isPlaying == true
       statusLine = isPlaying ? "Playing \(playback?.file.lastPathComponent ?? "")" : "Stopped"
-    case .playbackUpdated:
+    case .playbackUpdated, .playbackJogUpdated:
       // Tick-rate updates. WaveformView already redraws on its own clock.
       break
     case .error(let error):

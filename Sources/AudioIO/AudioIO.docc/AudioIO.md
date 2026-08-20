@@ -32,6 +32,7 @@ AudioIO is pre-`0.1.0`. The public API can change between minor versions. Pin to
 ### API surfaces
 
 - <doc:Recording>
+- <doc:SampleRates>
 - <doc:SystemAudioCapture>
 - <doc:Playback>
 - <doc:AudioSession>

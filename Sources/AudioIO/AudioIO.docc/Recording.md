@@ -17,10 +17,15 @@ its source-specific options:
 - `SystemAudioRecordingInput` — a macOS Core Audio process tap that records what
   other apps are playing. See <doc:SystemAudioCapture>.
 
-Each input carries an ``InputConfiguration`` (its ``SampleRate`` and
-``ChannelCount``), which you read source-agnostically via
-``RecordingConfiguration/format``. For microphone recording you can use the
-convenience initializer
+Each input carries a ``CaptureFormat`` — a ``RecordingSampleRate`` intent plus
+a ``ChannelCount`` — which you read source-agnostically via
+``RecordingConfiguration/requestedFormat``. ``RecordingSampleRate/hardware``
+records at whatever rate the route actually runs (no resampling);
+``RecordingSampleRate/exact(_:)`` names a rate the file always gets, by
+conversion when the route differs. See <doc:SampleRates> for the whole story,
+including the ``ResolvedCaptureFormat`` provenance reported at start. For
+microphone recording with an exact rate you can use the convenience
+initializer
 ``RecordingConfiguration/init(inputConfiguration:outputConfiguration:tapInterval:outputDestination:)``,
 which builds a ``MicrophoneRecordingInput`` for you.
 
@@ -146,7 +151,7 @@ Subscribe to ``AIOEngine/events`` for every recording lifecycle transition:
 
 | Event | When |
 |---|---|
-| ``AudioIOEvent/recordingStarted(url:format:)`` | Initial start or segment rotation. |
+| ``AudioIOEvent/recordingStarted(url:format:capture:)`` | Initial start or segment rotation; carries the ``ResolvedCaptureFormat`` provenance. |
 | ``AudioIOEvent/recordingCompleted`` | User-initiated stop completed cleanly. |
 | ``AudioIOEvent/recordingFailed`` | Engine-side failure stopped recording. |
 | ``AudioIOEvent/recordingInterruption(_:)`` | Route change continuation, or an interruption-driven stop. |
@@ -161,10 +166,14 @@ See <doc:Events> for the full subscription pattern.
 - ``RecordingConfiguration``
 - ``RecordingInput``
 - ``MicrophoneRecordingInput``
+- ``CaptureFormat``
+- ``RecordingSampleRate``
+- ``ResolvedCaptureFormat``
 - ``InputConfiguration``
 - ``OutputConfiguration``
 - ``SampleRate``
 - ``ChannelCount``
+- <doc:SampleRates>
 - ``FileFormat``
 - ``BitDepth``
 - ``EncodingQuality``

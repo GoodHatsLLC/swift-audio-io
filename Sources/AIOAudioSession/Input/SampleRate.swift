@@ -40,9 +40,16 @@ public struct SampleRate: ExpressibleByIntegerLiteral, Hashable, Codable,
 }
 
 extension SampleRate {
+  /// Speech processing — 16 kHz.
+  ///
+  /// The de-facto speech-to-text target: Whisper's frontend requires it, and
+  /// the major cloud STT services document it as optimal. Rates above 16 kHz
+  /// add compute and noise bandwidth to a speech pipeline, not accuracy.
+  public static let speech: SampleRate = 16_000
   /// Audio CD — 44.1 kHz.
   public static let cd: SampleRate = 44_100
-  /// DVD audio / pro audio standard — 48 kHz.
+  /// DVD audio / pro audio standard — 48 kHz. The rate modern iPhone
+  /// built-in routes actually run at.
   public static let dvd: SampleRate = 48_000
   /// High-resolution audio — 96 kHz.
   public static let hiRes96: SampleRate = 96_000

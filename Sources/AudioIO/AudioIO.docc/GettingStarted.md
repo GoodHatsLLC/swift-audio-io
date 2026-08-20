@@ -28,8 +28,8 @@ func runRecording() async throws {
   let subscriber = Task { @MainActor in
     for await event in engine.events {
       switch event {
-      case .recordingStarted(let url, let format):
-        print("started \(url.lastPathComponent) in \(format)")
+      case .recordingStarted(let url, let format, let capture):
+        print("started \(url.lastPathComponent) in \(format) at \(capture.processing.sampleRate)")
       case .recordingCompleted:
         print("completed cleanly")
       case .recordingFailed:
@@ -43,8 +43,13 @@ func runRecording() async throws {
   }
   defer { subscriber.cancel() }
 
+  // `.hardware` records at whatever rate the route actually runs — the
+  // recommended default. See <doc:SampleRates> for why an exact rate is a
+  // conversion target on iOS, never a hardware setting.
   let configuration = RecordingConfiguration(
-    inputConfiguration: InputConfiguration(sampleRate: .cd, channels: .mono),
+    input: .microphone(
+      MicrophoneRecordingInput(format: CaptureFormat(sampleRate: .hardware, channels: .mono)),
+    ),
     outputConfiguration: OutputConfiguration(
       fileFormat: .caf,
       bitDepth: .pcmFloat32,
@@ -69,6 +74,7 @@ The five concept topics describe the package's shape and the contracts you'll bu
 - <doc:ThreadingModel> — which APIs are `@MainActor`, which are `nonisolated`, and where the realtime callback runs.
 - <doc:ErrorHandling> — typed-throws domain errors and the events stream's `.error(_)` case.
 - <doc:Events> — the unified ``AudioIOEvent`` lifecycle stream.
+- <doc:SampleRates> — why sample rates are intents on Apple platforms, and how AudioIO resolves them.
 
 When you need depth on a specific API:
 

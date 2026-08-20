@@ -20,7 +20,7 @@ The stream emits ``AudioIOEvent``, an enum with cases for every lifecycle transi
 
 ### Recording lifecycle
 
-- ``AudioIOEvent/recordingStarted(url:format:)`` — initial recording start, or a segment rotation (the rotated segment fires `recordingStarted` for the new URL).
+- ``AudioIOEvent/recordingStarted(url:format:capture:)`` — initial recording start, or a segment rotation (the rotated segment fires `recordingStarted` for the new URL). `capture` is the ``ResolvedCaptureFormat`` provenance: the hardware format feeding the file vs the file's own format.
 - ``AudioIOEvent/recordingCompleted`` — a user-initiated stop completed cleanly.
 - ``AudioIOEvent/recordingFailed`` — recording stopped due to an engine-side failure. Usually paired with an ``AudioIOEvent/error(_:)`` event describing the cause.
 - ``AudioIOEvent/recordingInterruption(_:)`` — a route-change continuation, or an interruption-driven stop. Carries an ``AIOEngine/RecordingInterruption`` payload describing the variant. A user-initiated stop is reported by ``AudioIOEvent/recordingCompleted`` instead.
@@ -48,7 +48,7 @@ engine.onRecordingFailed = { handleFailure() }
 let task = Task { @MainActor in
   for await event in engine.events {
     switch event {
-    case .recordingStarted(let url, let format): handle(url, format)
+    case .recordingStarted(let url, let format, let capture): handle(url, format, capture)
     case .recordingFailed: handleFailure()
     default: break
     }
