@@ -18,7 +18,7 @@
       let configuration = RecordingConfiguration(
         input: .systemAudio(
           SystemAudioRecordingInput(
-            format: InputConfiguration(sampleRate: .dvd, channels: .init(platform: 6)),
+            format: CaptureFormat(sampleRate: .exact(.dvd), channels: .init(platform: 6)),
           ),
         ),
         outputConfiguration: OutputConfiguration(

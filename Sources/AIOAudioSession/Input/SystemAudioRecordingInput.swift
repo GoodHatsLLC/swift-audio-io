@@ -12,9 +12,12 @@
   /// Available only on macOS. Global process taps are mono or stereo mixdowns,
   /// so `format.channels` must be 1 or 2 (enforced during recording start).
   public struct SystemAudioRecordingInput: Hashable, Sendable {
-    /// The requested processing format (sample rate + channel count). Mono or
-    /// stereo only for system audio.
-    public var format: InputConfiguration
+    /// The requested capture format (sample-rate intent + channel count).
+    /// Mono or stereo only for system audio.
+    ///
+    /// A ``RecordingSampleRate/hardware`` request resolves against the process
+    /// tap's stream format at recording bring-up.
+    public var format: CaptureFormat
 
     /// Which processes to capture (include-only or exclude), by audio object ID
     /// and/or bundle identifier.
@@ -34,7 +37,7 @@
     public var aggregateDeviceUIDPrefix: String
 
     public init(
-      format: InputConfiguration,
+      format: CaptureFormat,
       processSelection: SystemAudioProcessSelection = SystemAudioProcessSelection(),
       excludesCurrentProcess: Bool = true,
       tapName: String = "AudioIO System Audio",

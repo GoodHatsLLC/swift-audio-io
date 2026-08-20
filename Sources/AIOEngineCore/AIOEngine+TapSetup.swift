@@ -14,6 +14,25 @@
   private let tapSetupLog = SystemLog.make()
 
   extension AIOEngine {
+    /// The input node's current hardware sample rate, read on the
+    /// engine-control queue.
+    ///
+    /// This is the resolution read for a ``RecordingSampleRate/hardware``
+    /// request: `prepare()` refreshes the node's cached format from the
+    /// current route (the same call ``reinstallTap`` makes before its own
+    /// format read), and the rate observed here becomes the recording's exact
+    /// processing/file rate. A subsequent route change is absorbed the same
+    /// way it is for an exact request — the tap reinstalls and the converter
+    /// bridges into the pinned rate.
+    package nonisolated func readHardwareInputSampleRate() -> Double? {
+      runOnEngineControlQueue { [weak self] in
+        guard let self else { return nil }
+        self.engine.prepare()
+        let sampleRate = self.engine.inputNode.inputFormat(forBus: 0).sampleRate
+        return sampleRate > 0 ? sampleRate : nil
+      }
+    }
+
     nonisolated func makeTapConversionArtifacts(
       inputFormat: AVAudioFormat,
       processingFormat: AVAudioFormat,

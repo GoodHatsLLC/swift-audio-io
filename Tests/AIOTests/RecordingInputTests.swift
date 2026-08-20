@@ -6,7 +6,11 @@
   @testable import AIOAudioSession
 
   struct RecordingInputTests {
-    private func microphoneFormat() -> InputConfiguration {
+    private func microphoneFormat() -> CaptureFormat {
+      CaptureFormat(sampleRate: .exact(.dvd), channels: .init(platform: 1))
+    }
+
+    private func exactConfiguration() -> InputConfiguration {
       InputConfiguration(sampleRate: .dvd, channels: .init(platform: 1))
     }
 
@@ -16,7 +20,7 @@
 
     @Test
     func `convenience init builds a microphone source`() {
-      let format = microphoneFormat()
+      let format = exactConfiguration()
       let configuration = RecordingConfiguration(
         inputConfiguration: format,
         outputConfiguration: output(),
@@ -27,7 +31,7 @@
         Issue.record("Expected a .microphone input, got \(configuration.input)")
         return
       }
-      #expect(microphone.format == format)
+      #expect(microphone.format == CaptureFormat(format))
       #expect(microphone.tapInterval == .milliseconds(50))
     }
 
@@ -39,8 +43,9 @@
           MicrophoneRecordingInput(format: format, tapInterval: .milliseconds(100))),
         outputConfiguration: output(),
       )
-      #expect(configuration.format == format)
-      #expect(configuration.input.format == format)
+      #expect(configuration.requestedFormat == format)
+      #expect(configuration.input.requestedFormat == format)
+      #expect(configuration.exactFormat == exactConfiguration())
     }
 
     @Test
@@ -74,7 +79,7 @@
 
     @Test
     func `convenience and explicit inits produce equal, equally-hashing configurations`() {
-      let format = microphoneFormat()
+      let format = exactConfiguration()
       let viaConvenience = RecordingConfiguration(
         inputConfiguration: format,
         outputConfiguration: output(),
@@ -82,7 +87,7 @@
       )
       let viaExplicit = RecordingConfiguration(
         input: .microphone(
-          MicrophoneRecordingInput(format: format, tapInterval: .milliseconds(100))),
+          MicrophoneRecordingInput(format: CaptureFormat(format), tapInterval: .milliseconds(100))),
         outputConfiguration: output(),
       )
       #expect(viaConvenience == viaExplicit)
@@ -116,7 +121,7 @@
 
     @Test
     func `different tap intervals are not equal`() {
-      let format = microphoneFormat()
+      let format = exactConfiguration()
       let a = RecordingConfiguration(
         inputConfiguration: format, outputConfiguration: output(), tapInterval: .milliseconds(50))
       let b = RecordingConfiguration(

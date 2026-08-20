@@ -82,17 +82,28 @@
           // Idempotent, like the category block above it: a redundant
           // preference write posts a route-change notification, which this
           // package reconciles on and — mid-recording — reconsiders the tap on.
-          do {
-            try AudioSessionPreferenceWrite.perform(
-              configuration.format.sampleRate.hz,
-              whenNot: session.preferredSampleRate,
-            ) { try session.setPreferredSampleRate($0) }
-          } catch {
-            throw .operationFailed(operation: .setPreferredSampleRate, error: ErrorContext(error))
+          //
+          // A `.hardware` request writes no preference at all: there is
+          // nothing to prefer, and not writing avoids a needless route-change
+          // notification. The buffer-duration hint falls back to the session's
+          // live rate in that case (48 kHz when the session reports nothing —
+          // the modern built-in-route rate).
+          if let requestedSampleRate = configuration.requestedFormat.exactSampleRate {
+            do {
+              try AudioSessionPreferenceWrite.perform(
+                requestedSampleRate.hz,
+                whenNot: session.preferredSampleRate,
+              ) { try session.setPreferredSampleRate($0) }
+            } catch {
+              throw .operationFailed(operation: .setPreferredSampleRate, error: ErrorContext(error))
+            }
           }
 
+          let bufferDurationSampleRate =
+            configuration.requestedFormat.exactSampleRate?.hz
+            ?? (session.sampleRate > 0 ? session.sampleRate : 48_000)
           let preferredDuration = calculatePreferredBufferDuration(
-            sampleRate: configuration.format.sampleRate.hz,
+            sampleRate: bufferDurationSampleRate,
           )
           do {
             try AudioSessionPreferenceWrite.perform(
@@ -117,7 +128,7 @@
           () throws(SessionError) -> Void in
           try applyPreferredInputIfNeeded(for: configuration, session: session)
 
-          let desiredChannels = Int(configuration.format.channels.platform)
+          let desiredChannels = configuration.requestedFormat.channels.count
           try RecordingInputChannelContract.validateRouteCapacity(
             requested: desiredChannels,
             maximum: session.maximumInputNumberOfChannels,

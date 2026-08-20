@@ -48,10 +48,10 @@ public enum RecordingInput: Hashable, Sendable {
     case systemAudio(SystemAudioRecordingInput)
   #endif
 
-  /// The requested processing format (sample rate + channel count), common to
-  /// every source. The file/encoder pipeline reads this rather than unwrapping
-  /// the source-specific case.
-  public var format: InputConfiguration {
+  /// The requested capture format (sample-rate intent + channel count),
+  /// common to every source. The file/encoder pipeline reads this rather than
+  /// unwrapping the source-specific case.
+  public var requestedFormat: CaptureFormat {
     switch self {
     case .microphone(let microphone): microphone.format
     #if os(macOS)
@@ -63,8 +63,12 @@ public enum RecordingInput: Hashable, Sendable {
 
 /// Microphone capture options (the `AVAudioEngine` input-node tap path).
 public struct MicrophoneRecordingInput: Hashable, Sendable {
-  /// The requested processing format (sample rate + channel count).
-  public var format: InputConfiguration
+  /// The requested capture format (sample-rate intent + channel count).
+  ///
+  /// A ``RecordingSampleRate/hardware`` request resolves against the active
+  /// route at recording bring-up; ``RecordingSampleRate/exact(_:)`` is
+  /// delivered by conversion when the route runs elsewhere.
+  public var format: CaptureFormat
 
   /// The cadence at which the input-node tap delivers buffers to the pipeline.
   ///
@@ -77,11 +81,11 @@ public struct MicrophoneRecordingInput: Hashable, Sendable {
   public var preferredInput: AudioInputSelection?
 
   /// - Parameters:
-  ///   - format: The requested sample rate + channel count.
+  ///   - format: The requested sample-rate intent + channel count.
   ///   - tapInterval: The input-node tap delivery cadence. Defaults to 100 ms.
   ///   - preferredInput: Optional input endpoint to select before recording.
   public init(
-    format: InputConfiguration,
+    format: CaptureFormat,
     tapInterval: Duration = .seconds(0.1),
     preferredInput: AudioInputSelection? = nil,
   ) {

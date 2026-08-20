@@ -172,6 +172,27 @@ public enum FileFormat: String, CaseIterable, CustomStringConvertible, Sendable,
     SampleRate.common.filter { supports(sampleRate: $0) }
   }
 
+  /// The encodable rate nearest to `sampleRate`.
+  ///
+  /// Used to resolve a ``RecordingSampleRate/hardware`` request against a
+  /// route whose rate this format cannot encode — the AAC family tops out at
+  /// 48 kHz, so a 96 kHz interface resolves to 48 kHz. Rates the format
+  /// already supports return unchanged.
+  public func nearestSupportedSampleRate(to sampleRate: SampleRate) -> SampleRate {
+    guard !supports(sampleRate: sampleRate) else { return sampleRate }
+    switch self {
+    case .aac, .adts:
+      let nearest = Self.aacCompatibleSampleRates.min {
+        abs($0 - sampleRate.hz) < abs($1 - sampleRate.hz)
+      }
+      return SampleRate(nearest ?? 48_000)
+    case .wav, .caf, .aiff:
+      return SampleRate(min(max(sampleRate.hz, 8000), 192_000))
+    case .flac:
+      return SampleRate(min(max(sampleRate.hz, 8000), 655_350))
+    }
+  }
+
   package func recordingChannelLayout(
     for channelCount: Int,
   ) -> AVAudioChannelLayout? {

@@ -289,7 +289,15 @@
     /// Whether the current output path did not exist before this start attempt
     /// opened it. Failed/cancelled startup removes only such newly-created files.
     package var recordingOutputWasCreatedByStart = false
+    /// The staged configuration with an exact sample rate — a `.hardware`
+    /// request after resolution against the live route. All format math
+    /// (processing format, file settings, tap reinstalls) reads this.
     package var recordingConfiguration: RecordingConfiguration?
+    /// The configuration exactly as the caller supplied it. Identity checks
+    /// and interruption restarts use this so a `.hardware` request
+    /// re-resolves against whatever route exists at restart. Written and
+    /// cleared together with ``recordingConfiguration``.
+    package var requestedRecordingConfiguration: RecordingConfiguration?
     package var installedTapBus: Int?
     package var audioBuffers: [SPSCRingBuffer<Float>]?
     package var receiverBuffers: [SPSCRingBuffer<Float>]?
@@ -345,6 +353,19 @@
       configuration: RecordingConfiguration,
       processingFormat: AVAudioFormat,
     ) throws(RecordingError) -> TapInstallResult
+
+    /// The input format a ``RecordingSampleRate/hardware`` request resolves
+    /// against when the installer can answer without a live graph. `nil`
+    /// defers to the engine's hardware read. The fake reports the tap format
+    /// it would advertise on its next install, so `.hardware` bring-up is
+    /// deterministic in tests.
+    @MainActor
+    var hardwareInputFormat: AVAudioFormat? { get }
+  }
+
+  extension TapInstalling {
+    @MainActor
+    package var hardwareInputFormat: AVAudioFormat? { nil }
   }
 
   package struct TapSnapshot {

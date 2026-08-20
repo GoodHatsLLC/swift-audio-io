@@ -256,8 +256,11 @@
       guard hasRecording || hasPlayback else { return }
 
       if owner.isRecording {
+        // Stash the *request*, not the resolved copy: a `.hardware` recording
+        // restarted after an interruption must re-resolve against whatever
+        // route exists then, not the one that existed before.
         owner.audioRecoveryState.pendingRecording =
-          owner.state[locked: \.recordingConfiguration]
+          owner.state.withLock { $0.requestedRecordingConfiguration ?? $0.recordingConfiguration }
           ?? owner.recordingLifecycleState.lastRecordingConfiguration
         await stopRecordingForInterruption(reason: "Audio session interrupted")
       } else if owner.recordingLifecycleState.isStartingRecording {
@@ -311,8 +314,10 @@
       }
 
       if owner.isRecording {
+        // Same as the interruption path: restart from the request so
+        // `.hardware` re-resolves against the post-reset route.
         owner.audioRecoveryState.pendingRecording =
-          owner.state[locked: \.recordingConfiguration]
+          owner.state.withLock { $0.requestedRecordingConfiguration ?? $0.recordingConfiguration }
           ?? owner.recordingLifecycleState.lastRecordingConfiguration
         await stopRecordingForInterruption(reason: "Media services lost")
       } else {

@@ -51,6 +51,14 @@
       installCountStorage.load(ordering: .relaxed)
     }
 
+    /// The format the next install would advertise — what a `.hardware`
+    /// request resolves against, keeping seam-driven bring-up deterministic.
+    /// `nil` (the default closure) defers to the engine's live hardware read.
+    @MainActor
+    package var hardwareInputFormat: AVAudioFormat? {
+      tapFormatForInstall(installCount())
+    }
+
     @MainActor
     package func installTap(
       configuration: RecordingConfiguration,

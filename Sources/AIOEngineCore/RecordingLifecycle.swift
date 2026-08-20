@@ -262,14 +262,17 @@
             return .failure(.cancelled)
           }
 
-          let (buffers, recordingWriter, url, receiverBuffers, receiverTiming) = owner.state {
-            (
-              $0.audioBuffers, $0.recordingWriter, $0.recordingURL, $0.receiverBuffers,
-              $0.receiverTiming
-            )
-          }
+          let (buffers, recordingWriter, url, receiverBuffers, receiverTiming, stagedConfiguration) =
+            owner.state {
+              (
+                $0.audioBuffers, $0.recordingWriter, $0.recordingURL, $0.receiverBuffers,
+                $0.receiverTiming, $0.recordingConfiguration
+              )
+            }
+          // The staged configuration is the resolved one — a `.hardware`
+          // request has a concrete rate only there, never on the request.
           guard let buffers,
-            let processingFormat = configuration.processingFormat,
+            let processingFormat = (stagedConfiguration ?? configuration).processingFormat,
             let writeWriter = recordingWriter,
             let url
           else {
@@ -367,7 +370,12 @@
 
       // If a *different* configuration is already prepared, tear it down here on
       // the main actor so nonisolated graph preparation never needs `hardStop()`.
-      if let existing = owner.state[locked: \.recordingConfiguration],
+      // Identity is the *request*: the staged resolved copy of a `.hardware`
+      // request never equals the request itself, and comparing it would tear
+      // down a graph the same request should reuse.
+      if let existing = owner.state.withLock({
+        $0.requestedRecordingConfiguration ?? $0.recordingConfiguration
+      }),
         existing != configuration
       {
         capture.hardStop()
@@ -437,8 +445,17 @@
 
       guard let updated = withUpdatedInterval(currentConfig) else { return }
 
-      owner.state.withLock { $0.recordingConfiguration = updated }
-      owner.recordingLifecycleState.lastRecordingConfiguration = updated
+      // Both staged configurations carry the interval: the resolved one feeds
+      // the reinstall below, and the request must keep matching future
+      // identity checks for the same caller intent.
+      let updatedRequest = owner.state.withLock { state -> RecordingConfiguration? in
+        state.recordingConfiguration = updated
+        guard let requested = state.requestedRecordingConfiguration else { return nil }
+        let newRequest = withUpdatedInterval(requested) ?? requested
+        state.requestedRecordingConfiguration = newRequest
+        return newRequest
+      }
+      owner.recordingLifecycleState.lastRecordingConfiguration = updatedRequest ?? updated
 
       guard owner.isRecording else { return }
 

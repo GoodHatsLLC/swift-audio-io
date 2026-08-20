@@ -64,7 +64,7 @@
       RecordingConfiguration(
         input: .systemAudio(
           SystemAudioRecordingInput(
-            format: InputConfiguration(sampleRate: .dvd, channels: .stereo),
+            format: CaptureFormat(sampleRate: .exact(.dvd), channels: .stereo),
           ),
         ),
         outputConfiguration: OutputConfiguration(

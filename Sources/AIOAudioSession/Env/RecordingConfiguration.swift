@@ -20,9 +20,11 @@
   /// and `outputDestination` are source-agnostic.
   ///
   /// ```swift
-  /// // Microphone (works on iOS and macOS):
+  /// // Microphone (works on iOS and macOS). `.hardware` records at whatever
+  /// // rate the route actually runs — no resampling; `.exact(.cd)` names a
+  /// // target that AudioIO delivers by conversion when the route differs.
   /// let mic = RecordingConfiguration(
-  ///   input: .microphone(MicrophoneRecordingInput(format: InputConfiguration(sampleRate: .cd, channels: .mono))),
+  ///   input: .microphone(MicrophoneRecordingInput(format: CaptureFormat(sampleRate: .hardware, channels: .mono))),
   ///   outputConfiguration: OutputConfiguration(fileFormat: .caf, bitDepth: .pcmFloat32, quality: .maximum))
   /// ```
   ///
@@ -103,16 +105,76 @@
     ) {
       self.init(
         input: .microphone(
-          MicrophoneRecordingInput(format: inputConfiguration, tapInterval: tapInterval),
+          MicrophoneRecordingInput(
+            format: CaptureFormat(inputConfiguration),
+            tapInterval: tapInterval,
+          ),
         ),
         outputConfiguration: outputConfiguration,
         outputDestination: outputDestination,
       )
     }
 
-    /// The requested processing format (sample rate + channel count) for the
-    /// selected source. Replaces the former stored `inputConfiguration`.
-    public var format: InputConfiguration { input.format }
+    /// The requested capture format (sample-rate intent + channel count) for
+    /// the selected source. Replaces the former exact-only `format`.
+    public var requestedFormat: CaptureFormat { input.requestedFormat }
+
+    /// The exact processing format, or `nil` while a
+    /// ``RecordingSampleRate/hardware`` request has not been resolved against
+    /// a live route.
+    ///
+    /// Everything that derives concrete formats — ``processingFormat``,
+    /// `fileSettings`, the writer — reads this, so an unresolved configuration
+    /// produces `nil` there exactly like an invalid one. Recording bring-up
+    /// resolves via ``resolved(hardwareSampleRate:)`` before any of those are
+    /// consulted.
+    public var exactFormat: InputConfiguration? { requestedFormat.exactConfiguration }
+
+    /// Whether recording bring-up must observe the route before this
+    /// configuration has a concrete sample rate.
+    package var requiresSampleRateResolution: Bool {
+      requestedFormat.exactSampleRate == nil
+    }
+
+    /// Materializes an exact configuration from an observed hardware rate.
+    ///
+    /// ``RecordingSampleRate/exact(_:)`` requests return `self` unchanged.
+    /// ``RecordingSampleRate/hardware`` adopts the observed rate when the
+    /// output encoder can write it, otherwise the nearest encodable rate (the
+    /// AAC family tops out at 48 kHz); the substitution is visible in the
+    /// recording's ``ResolvedCaptureFormat``.
+    package func resolved(hardwareSampleRate: SampleRate) -> RecordingConfiguration {
+      guard requiresSampleRateResolution else { return self }
+      let fileFormat = outputConfiguration.fileFormat
+      let adopted =
+        fileFormat.supports(sampleRate: hardwareSampleRate)
+        ? hardwareSampleRate
+        : fileFormat.nearestSupportedSampleRate(to: hardwareSampleRate)
+      return replacingSampleRate(with: .exact(adopted))
+    }
+
+    /// Rebuilds the configuration with a different sample-rate intent,
+    /// preserving every source-specific option.
+    private func replacingSampleRate(
+      with sampleRate: RecordingSampleRate,
+    ) -> RecordingConfiguration {
+      let newInput: RecordingInput
+      switch input {
+      case .microphone(var microphone):
+        microphone.format.sampleRate = sampleRate
+        newInput = .microphone(microphone)
+      #if os(macOS)
+        case .systemAudio(var systemAudio):
+          systemAudio.format.sampleRate = sampleRate
+          newInput = .systemAudio(systemAudio)
+      #endif
+      }
+      return RecordingConfiguration(
+        input: newInput,
+        outputConfiguration: outputConfiguration,
+        outputDestination: outputDestination,
+      )
+    }
 
     /// Microphone input-node tap cadence. Package-internal: the value lives on
     /// `MicrophoneRecordingInput`; system audio has no tap interval, so the
@@ -136,8 +198,15 @@
     /// `m4a` output are each individually reasonable and jointly impossible.
     /// ``fileSettings`` and the writer both refuse an invalid configuration, so
     /// calling this first turns a silent `nil` into a nameable reason.
+    ///
+    /// A ``RecordingSampleRate/hardware`` request has no rate to check — it is
+    /// resolved to an encodable rate at bring-up by construction — so only the
+    /// output encoding and channel count are validated for it.
     public func validate() -> CaptureConfigurationValidation {
-      outputConfiguration.validate(against: format)
+      if let exactFormat {
+        return outputConfiguration.validate(against: exactFormat)
+      }
+      return outputConfiguration.validate(againstChannels: requestedFormat.channels)
     }
 
     public var description: String {
@@ -150,21 +219,21 @@
         encoding.append("\(outputConfiguration.quality)")
       }
       return
-        "\(fileFormat): \(format.channels) \(format.sampleRate), \(encoding.joined(separator: " ")) (destination: \(outputDestination))"
+        "\(fileFormat): \(requestedFormat.channels) \(requestedFormat.sampleRate), \(encoding.joined(separator: " ")) (destination: \(outputDestination))"
     }
 
     public var summary: String {
       let fileFormat = outputConfiguration.fileFormat.description
-      let channels = format.channels.description
-      let sampleRate = format.sampleRate.description
+      let channels = requestedFormat.channels.description
+      let sampleRate = requestedFormat.sampleRate.description
       return "\(fileFormat) • \(channels) • \(sampleRate)"
     }
 
     public var debugDescription: String {
       """
         fileFormat: \(outputConfiguration.fileFormat.description)
-        sampleRate: \(format.sampleRate)
-        channels: \(format.channels)
+        sampleRate: \(requestedFormat.sampleRate)
+        channels: \(requestedFormat.channels)
         bitDepth: \(outputConfiguration.bitDepth.map(String.init(describing:)) ?? "n/a")
         quality: \(outputConfiguration.fileFormat.usesEncodingQuality ? "\(outputConfiguration.quality)" : "n/a")
         outputDestination: \(outputDestination)
@@ -172,17 +241,21 @@
     }
 
     /// Processing format for the audio engine pipeline.
+    ///
+    /// `nil` while a ``RecordingSampleRate/hardware`` request is unresolved —
+    /// recording bring-up resolves before reading this.
     package var processingFormat: AVAudioFormat? {
       guard
+        let exactFormat,
         let channelLayout = outputConfiguration.fileFormat.recordingChannelLayout(
-          for: format.channels.count,
+          for: exactFormat.channels.count,
         )
       else {
         return nil
       }
       return AVAudioFormat(
         commonFormat: .pcmFormatFloat32,
-        sampleRate: format.sampleRate.hz,
+        sampleRate: exactFormat.sampleRate.hz,
         interleaved: false,
         channelLayout: channelLayout,
       )
@@ -201,6 +274,7 @@
     }
 
     private func makeLinearPCMFormat(
+      exactFormat: InputConfiguration,
       bitDepth: Int,
       isFloat: Bool,
       isBigEndian: Bool,
@@ -208,6 +282,7 @@
     ) -> AVAudioFormat? {
       AVAudioFormat(
         settings: makeLinearPCMSettings(
+          exactFormat: exactFormat,
           bitDepth: bitDepth,
           isFloat: isFloat,
           isBigEndian: isBigEndian,
@@ -217,6 +292,7 @@
     }
 
     private func makeLinearPCMSettings(
+      exactFormat: InputConfiguration,
       bitDepth: Int,
       isFloat: Bool,
       isBigEndian: Bool,
@@ -224,8 +300,8 @@
     ) -> [String: Any] {
       var settings: [String: Any] = [
         AVFormatIDKey: kAudioFormatLinearPCM,
-        AVSampleRateKey: format.sampleRate.hz,
-        AVNumberOfChannelsKey: format.channels.platform,
+        AVSampleRateKey: exactFormat.sampleRate.hz,
+        AVNumberOfChannelsKey: exactFormat.channels.platform,
         AVLinearPCMBitDepthKey: bitDepth,
         AVLinearPCMIsFloatKey: isFloat,
         AVLinearPCMIsBigEndianKey: isBigEndian,
@@ -255,7 +331,7 @@
     }
 
     private var multichannelLayoutDataForFileSettings: Data? {
-      let channelCount = format.channels.count
+      let channelCount = requestedFormat.channels.count
       guard channelCount > 2 else { return nil }
       return outputConfiguration.fileFormat.recordingChannelLayoutData(for: channelCount)
     }
@@ -266,7 +342,7 @@
     /// `AVAudioFormat` may normalize/strip encoder-specific keys that must be preserved
     /// (example: `AVEncoderBitDepthHintKey`).
     package var fileSettings: [String: Any]? {
-      guard passesValidation() else { return nil }
+      guard let exactFormat, passesValidation() else { return nil }
       switch outputConfiguration.fileFormat {
       case .aac, .adts:
         // No bit-depth key: AAC is a transform codec with no PCM sample width
@@ -275,8 +351,8 @@
         // and `usesBitDepth` denies.
         let settings: [String: Any] = [
           AVFormatIDKey: kAudioFormatMPEG4AAC,
-          AVSampleRateKey: format.sampleRate.hz,
-          AVNumberOfChannelsKey: format.channels.platform,
+          AVSampleRateKey: exactFormat.sampleRate.hz,
+          AVNumberOfChannelsKey: exactFormat.channels.platform,
           AVEncoderAudioQualityKey: Int(outputConfiguration.quality.avAudio.rawValue),
         ]
         var settingsWithLayout = settings
@@ -290,8 +366,8 @@
         guard let bitDepth = outputConfiguration.bitDepth else { return nil }
         let settings: [String: Any] = [
           AVFormatIDKey: kAudioFormatFLAC,
-          AVSampleRateKey: format.sampleRate.hz,
-          AVNumberOfChannelsKey: format.channels.platform,
+          AVSampleRateKey: exactFormat.sampleRate.hz,
+          AVNumberOfChannelsKey: exactFormat.channels.platform,
           AVEncoderBitDepthHintKey: bitDepth.rawValue,
         ]
         var settingsWithLayout = settings
@@ -304,6 +380,7 @@
       case .wav, .caf:
         if outputConfiguration.bitDepth == .pcmInt24 {
           return makeLinearPCMSettings(
+            exactFormat: exactFormat,
             bitDepth: 24,
             isFloat: false,
             isBigEndian: false,
@@ -321,6 +398,7 @@
           }
 
         return makeLinearPCMSettings(
+          exactFormat: exactFormat,
           bitDepth: bitDepth,
           isFloat: isFloat,
           isBigEndian: true,
@@ -337,7 +415,7 @@
     /// carried their own hard-coded bounds that could drift from
     /// ``FileFormat/supportsEncodedSampleRate(_:)``.
     var fileFormat: AVAudioFormat? {
-      guard passesValidation() else { return nil }
+      guard let exactFormat, passesValidation() else { return nil }
       switch outputConfiguration.fileFormat {
       case .aac, .adts, .flac:
         guard let settings = fileSettings,
@@ -356,6 +434,7 @@
             // 24-bit PCM should be truly packed 24-bit container samples, not 32-bit container
             // samples created via the .pcmFormatInt32 fallback.
             makeLinearPCMFormat(
+              exactFormat: exactFormat,
               bitDepth: 24,
               isFloat: false,
               isBigEndian: false,
@@ -363,11 +442,11 @@
             )
           } else {
             outputConfiguration.fileFormat.recordingChannelLayout(
-              for: input.format.channels.count,
+              for: exactFormat.channels.count,
             ).map {
               AVAudioFormat(
                 commonFormat: commonFormat,
-                sampleRate: input.format.sampleRate.hz,
+                sampleRate: exactFormat.sampleRate.hz,
                 interleaved: outputConfiguration.fileFormat.requiresInterleaved,
                 channelLayout: $0,
               )
@@ -390,6 +469,7 @@
           }
 
         let format = makeLinearPCMFormat(
+          exactFormat: exactFormat,
           bitDepth: bitDepth,
           isFloat: isFloat,
           isBigEndian: true,
@@ -414,7 +494,7 @@
       guard let fileFormat else { return nil }
       return .init(
         bus: bus,
-        channelCount: format.channels.count,
+        channelCount: requestedFormat.channels.count,
         inputFormat: input,
         outputFormat: fileFormat,
         tapReadSeconds: tapInterval.seconds,

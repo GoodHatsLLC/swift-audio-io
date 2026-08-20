@@ -41,8 +41,12 @@
             throw RecordingError.unsupportedChannelCount(requested: requestedChannels, maximum: 2)
           }
           try validateEncoderCompatibility(for: configuration)
-          guard let processingFormat = configuration.processingFormat else {
-            throw RecordingError.invalidConfiguration(details: "(processing format)")
+          if configuration.requiresSampleRateResolution {
+            try validateUnresolvedConfiguration(configuration)
+          } else {
+            guard configuration.processingFormat != nil else {
+              throw RecordingError.invalidConfiguration(details: "(processing format)")
+            }
           }
 
           owner.runOnEngineControlQueue { [weak owner] in
@@ -68,6 +72,22 @@
           }
 
           do throws(RecordingError) {
+            // Resolve a `.hardware` request against the process tap's stream
+            // format — the system-audio equivalent of the input node's route
+            // read. `.exact` requests resolve to themselves.
+            let sourceSampleRate = session.sourceFormat.sampleRate
+            guard sourceSampleRate > 0 else {
+              throw RecordingError.session(
+                .notReady(details: "System-audio tap reported no sample rate"),
+              )
+            }
+            let resolvedConfiguration = configuration.resolved(
+              hardwareSampleRate: SampleRate(sourceSampleRate),
+            )
+            guard let processingFormat = resolvedConfiguration.processingFormat else {
+              throw RecordingError.invalidConfiguration(details: "(processing format)")
+            }
+
             let sampleRate = Int(processingFormat.sampleRate)
             let channelCount = Int(processingFormat.channelCount)
             let artifacts = try owner.makeTapConversionArtifacts(
@@ -94,7 +114,7 @@
             do throws(RecordingError) {
               writer = try owner.makeRecordingWriter(
                 url: url,
-                configuration: configuration,
+                configuration: resolvedConfiguration,
                 writerBackend: inputs.writerBackend,
               )
             } catch {
@@ -134,7 +154,8 @@
               state.audioBuffers = audioBuffers
               state.receiverBuffers = receiverBuffers
               state.receiverTiming = receiverTiming
-              state.recordingConfiguration = configuration
+              state.recordingConfiguration = resolvedConfiguration
+              state.requestedRecordingConfiguration = configuration
               state.tapConverter = artifacts.converter
               state.tapConverterInputFormat = artifacts.inputFormat
               state.tapConverterOutputFormat = processingFormat
@@ -177,17 +198,24 @@
         /// invoking a `@MainActor` method off-main. `nil` whenever the engine
         /// uses the real `AVAudioEngine` graph, which is every production path.
         let reinstallTapOverrideResult: Transferring<Result<TapInstallResult, RecordingError>>?
+        /// A `.hardware` request resolved against the injected installer's
+        /// advertised format, pre-computed on the main actor for the same
+        /// reason as `reinstallTapOverrideResult`. `nil` on every production
+        /// path — bring-up then resolves against the live engine instead.
+        let seamResolvedConfiguration: RecordingConfiguration?
 
         init(
           sessionConfiguration: AudioSessionConfiguration,
           writerBackend: WriterBackend,
           alreadyActive: Bool,
           reinstallTapOverrideResult: Transferring<Result<TapInstallResult, RecordingError>>? = nil,
+          seamResolvedConfiguration: RecordingConfiguration? = nil,
         ) {
           self.sessionConfiguration = sessionConfiguration
           self.writerBackend = writerBackend
           self.alreadyActive = alreadyActive
           self.reinstallTapOverrideResult = reinstallTapOverrideResult
+          self.seamResolvedConfiguration = seamResolvedConfiguration
         }
       }
 
@@ -198,9 +226,26 @@
         configuration: RecordingConfiguration,
         alreadyActive: Bool,
       ) -> PreparationInputs {
-        let overrideResult = configuration.processingFormat.flatMap { processingFormat in
+        // A `.hardware` request resolves against the injected installer when
+        // one is present and knows its format, so the seam's install result —
+        // which needs a concrete processing format — can be pre-computed
+        // exactly like the exact-rate path.
+        var effectiveConfiguration = configuration
+        var seamResolvedConfiguration: RecordingConfiguration?
+        if configuration.requiresSampleRateResolution,
+          let installer = owner.recordingEnvironment.tapInstaller,
+          let hardwareFormat = installer.hardwareInputFormat,
+          hardwareFormat.sampleRate > 0
+        {
+          let resolved = configuration.resolved(
+            hardwareSampleRate: SampleRate(hardwareFormat.sampleRate),
+          )
+          effectiveConfiguration = resolved
+          seamResolvedConfiguration = resolved
+        }
+        let overrideResult = effectiveConfiguration.processingFormat.flatMap { processingFormat in
           owner.reinstallTapOverrideResult(
-            configuration: configuration,
+            configuration: effectiveConfiguration,
             processingFormat: processingFormat,
           )
         }
@@ -214,6 +259,7 @@
           writerBackend: owner.recordingLifecycleState.writerBackend,
           alreadyActive: alreadyActive,
           reinstallTapOverrideResult: overrideResult,
+          seamResolvedConfiguration: overrideResult != nil ? seamResolvedConfiguration : nil,
         )
       }
 
@@ -235,6 +281,10 @@
               throw RecordingError.unsupportedChannelCount(requested: requestedChannels, maximum: 2)
             }
             try validateEncoderCompatibility(for: configuration)
+            if configuration.requiresSampleRateResolution {
+              try validateUnresolvedConfiguration(configuration)
+              return
+            }
             guard configuration.processingFormat != nil else {
               throw RecordingError.invalidConfiguration(details: "(processing format)")
             }
@@ -243,6 +293,14 @@
         #endif
         try validateRecordingChannelCapacity(for: configuration)
         try validateEncoderCompatibility(for: configuration)
+
+        if configuration.requiresSampleRateResolution {
+          // The rate arrives when bring-up observes the route; check
+          // everything decidable without it. The resolved configuration
+          // re-runs the full checks below inside `prepareRecordingGraph`.
+          try validateUnresolvedConfiguration(configuration)
+          return
+        }
 
         guard let processingFormat = configuration.processingFormat else {
           throw RecordingError.invalidConfiguration(details: "(processing format)")
@@ -259,6 +317,46 @@
           throw RecordingError.hardwareNotSupported
         }
         try validateRecordingChannelCapacity(channelCount: channelCount)
+      }
+
+      /// The static half of validating a `.hardware` request: output encoding
+      /// and channel count, everything decidable before a route is observed.
+      private nonisolated func validateUnresolvedConfiguration(
+        _ configuration: RecordingConfiguration,
+      ) throws(RecordingError) {
+        let validation = configuration.validate()
+        guard validation.isValid else {
+          throw RecordingError.invalidConfiguration(details: validation.description)
+        }
+      }
+
+      /// Materializes the exact configuration bring-up proceeds with.
+      ///
+      /// `.exact` requests return unchanged. `.hardware` resolves against the
+      /// injected installer's pre-computed answer when the test seam is
+      /// active, and otherwise against the input node's live format. A route
+      /// that reports no rate is a transient readiness failure — the start
+      /// deadline loop retries it like any other settling-route condition.
+      private nonisolated func resolveConfiguration(
+        _ configuration: RecordingConfiguration,
+        inputs: PreparationInputs,
+      ) throws(RecordingError) -> RecordingConfiguration {
+        guard configuration.requiresSampleRateResolution else { return configuration }
+        if let seamResolved = inputs.seamResolvedConfiguration {
+          return seamResolved
+        }
+        guard let hardwareSampleRate = owner.readHardwareInputSampleRate() else {
+          throw RecordingError.session(
+            .notReady(details: "Input hardware reported no sample rate to resolve against"),
+          )
+        }
+        let resolved = configuration.resolved(
+          hardwareSampleRate: SampleRate(hardwareSampleRate),
+        )
+        log.info(
+          "resolved .hardware request to \(resolved.requestedFormat.sampleRate, privacy: .public) (hardware: \(hardwareSampleRate, privacy: .public) Hz)",
+        )
+        return resolved
       }
 
       /// Nonisolated preparation core. Performs all blocking bring-up work — audio
@@ -291,27 +389,22 @@
         #endif
         try validateRecordingChannelCapacity(for: configuration)
         try validateEncoderCompatibility(for: configuration)
-
-        guard let processingFormat = configuration.processingFormat else {
-          throw RecordingError.invalidConfiguration(details: "(processing format)")
+        if configuration.requiresSampleRateResolution {
+          try validateUnresolvedConfiguration(configuration)
+        } else {
+          guard configuration.processingFormat != nil else {
+            throw RecordingError.invalidConfiguration(details: "(processing format)")
+          }
         }
-
-        let sampleRate = Int(processingFormat.sampleRate)
-        let channelCount = Int(processingFormat.channelCount)
-        guard sampleRate > 0, channelCount > 0 else {
-          throw RecordingError.session(
-            .notReady(details: "Invalid format: \(sampleRate)Hz, \(channelCount)ch"),
-          )
-        }
-        guard sampleRate < Int.max / channelCount / 2 else {
-          throw RecordingError.hardwareNotSupported
-        }
-        try validateRecordingChannelCapacity(channelCount: channelCount)
 
         // A reconfigure (different already-prepared config) is handled by the caller
         // on the main actor before offloading, so by the time we run here either no
-        // config is staged or it matches `configuration`.
-        if let existing = owner.state[locked: \.recordingConfiguration] {
+        // config is staged or it matches `configuration`. Identity is the
+        // *request*: a `.hardware` request that resolved to 48 kHz is still
+        // "already prepared" when the same request arrives again.
+        if let existing = owner.state.withLock({
+          $0.requestedRecordingConfiguration ?? $0.recordingConfiguration
+        }) {
           if configuration == existing {
             log.info("recording graph already prepared")
             owner.resetRecordingTiming()
@@ -349,11 +442,35 @@
           throw RecordingError.session(sessionError)
         }
 
+        // Resolve a `.hardware` request against the live route, now that the
+        // session is configured and active. `.exact` requests resolve to
+        // themselves, so this is one code path, not a fork. The resolved
+        // configuration owns all format math from here on; the request is
+        // stored alongside it for identity checks and restarts.
+        let resolvedConfiguration = try resolveConfiguration(configuration, inputs: inputs)
+        try validateEncoderCompatibility(for: resolvedConfiguration)
+
+        guard let processingFormat = resolvedConfiguration.processingFormat else {
+          throw RecordingError.invalidConfiguration(details: "(processing format)")
+        }
+
+        let sampleRate = Int(processingFormat.sampleRate)
+        let channelCount = Int(processingFormat.channelCount)
+        guard sampleRate > 0, channelCount > 0 else {
+          throw RecordingError.session(
+            .notReady(details: "Invalid format: \(sampleRate)Hz, \(channelCount)ch"),
+          )
+        }
+        guard sampleRate < Int.max / channelCount / 2 else {
+          throw RecordingError.hardwareNotSupported
+        }
+        try validateRecordingChannelCapacity(channelCount: channelCount)
+
         owner.resetRecordingTiming()
 
         guard
           let tapResult = try owner.reinstallTap(
-            configuration: configuration,
+            configuration: resolvedConfiguration,
             processingFormat: processingFormat,
             stopEngine: false,
             overrideResult: inputs.reinstallTapOverrideResult,
@@ -388,7 +505,7 @@
         let receiverTiming = SPSCRingBuffer<TimingPacket>(capacity: timingCapacity)
 
         let (url, protection): (URL, OutputFileProtection?) = try owner.resolveOutputURL(
-          for: configuration,
+          for: resolvedConfiguration,
           allowExplicitFile: true,
         )
         let outputExistedBeforeStart = FileManager().fileExists(atPath: url.path)
@@ -396,7 +513,7 @@
         do {
           writer = try owner.makeRecordingWriter(
             url: url,
-            configuration: configuration,
+            configuration: resolvedConfiguration,
             writerBackend: inputs.writerBackend,
           )
         } catch {
@@ -414,7 +531,8 @@
           $0.audioBuffers = audioBuffers
           $0.receiverBuffers = receiverBuffers
           $0.receiverTiming = receiverTiming
-          $0.recordingConfiguration = configuration
+          $0.recordingConfiguration = resolvedConfiguration
+          $0.requestedRecordingConfiguration = configuration
         }
         owner.applyTapInstallResult(tapResult, processingFormat: processingFormat)
       }
@@ -446,7 +564,7 @@
         for configuration: RecordingConfiguration,
       ) throws(RecordingError) {
         try validateRecordingChannelCapacity(
-          channelCount: configuration.format.channels.count,
+          channelCount: configuration.requestedFormat.channels.count,
           maximum: min(
             Self.currentMaximumRecordingChannelCount,
             configuration.outputConfiguration.fileFormat.maximumRecordingChannelCount,
@@ -477,7 +595,10 @@
         let fileFormat = configuration.outputConfiguration.fileFormat
         guard fileFormat == .aac || fileFormat == .adts else { return }
 
-        let sampleRate = configuration.format.sampleRate.hz
+        // A .hardware request has no rate to check yet; resolution clamps to
+        // an encodable rate by construction, and the resolved configuration
+        // passes back through here.
+        guard let sampleRate = configuration.requestedFormat.exactSampleRate?.hz else { return }
         guard fileFormat.supportsEncodedSampleRate(sampleRate) else {
           throw RecordingError.unsupportedEncodedSampleRate(
             fileFormat: fileFormat,
@@ -612,6 +733,7 @@
             state.recordingURL = nil
             state.recordingOutputWasCreatedByStart = false
             state.recordingConfiguration = nil
+            state.requestedRecordingConfiguration = nil
             state.audioBuffers = nil
             state.receiverBuffers = nil
             state.receiverTiming = nil

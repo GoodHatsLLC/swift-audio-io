@@ -6,8 +6,8 @@
   @testable import AIOAudioSession
 
   struct SystemAudioRecordingInputTests {
-    private func stereo() -> InputConfiguration {
-      InputConfiguration(sampleRate: .dvd, channels: .init(platform: 2))
+    private func stereo() -> CaptureFormat {
+      CaptureFormat(sampleRate: .exact(.dvd), channels: .init(platform: 2))
     }
 
     private func output() -> OutputConfiguration {
@@ -31,8 +31,8 @@
         input: .systemAudio(SystemAudioRecordingInput(format: format)),
         outputConfiguration: output(),
       )
-      #expect(configuration.format == format)
-      #expect(configuration.input.format == format)
+      #expect(configuration.requestedFormat == format)
+      #expect(configuration.input.requestedFormat == format)
       // System audio has no tap interval; the accessor stays total for the mic
       // tap machinery, returning the default.
       #expect(configuration.tapInterval == .seconds(0.1))

@@ -13,7 +13,7 @@
       excludesCurrentProcess: Bool = true,
     ) -> SystemAudioRecordingInput {
       SystemAudioRecordingInput(
-        format: InputConfiguration(sampleRate: .dvd, channels: .init(platform: AVAudioChannelCountValue(channels))),
+        format: CaptureFormat(sampleRate: .exact(.dvd), channels: .init(platform: AVAudioChannelCountValue(channels))),
         processSelection: selection,
         excludesCurrentProcess: excludesCurrentProcess,
         tapName: "Test Tap",

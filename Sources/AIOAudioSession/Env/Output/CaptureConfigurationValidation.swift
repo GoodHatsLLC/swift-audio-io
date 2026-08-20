@@ -114,6 +114,31 @@ extension OutputConfiguration {
     return CaptureConfigurationValidation(issues: issues)
   }
 
+  /// Validates everything decidable before a sample rate exists: the output
+  /// encoding plus the channel count.
+  ///
+  /// This is ``validate(against:)`` minus the sample-rate check, for
+  /// ``RecordingSampleRate/hardware`` requests — their rate is resolved (and
+  /// clamped to an encodable value) at recording bring-up, so no rate issue is
+  /// decidable, or possible, ahead of time.
+  public func validate(
+    againstChannels channels: ChannelCount,
+  ) -> CaptureConfigurationValidation {
+    var issues = validateOutputOnly().issues
+
+    if !fileFormat.supportsRecordingChannelCount(channels.count) {
+      issues.append(
+        .unsupportedChannelCount(
+          channels.count,
+          fileFormat: fileFormat,
+          maximum: fileFormat.maximumRecordingChannelCount,
+        ),
+      )
+    }
+
+    return CaptureConfigurationValidation(issues: issues)
+  }
+
   /// The checks that need no capture format: whether the bit depth is one this
   /// format's writer uses.
   func validateOutputOnly() -> CaptureConfigurationValidation {
