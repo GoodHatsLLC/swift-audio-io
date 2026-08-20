@@ -5,7 +5,7 @@ All notable changes to AudioIO are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com) categories, and
 releases follow the versioning policy in `README.md` and `ROADMAP.md`.
 
-## Unreleased
+## 0.16.0 - 2026-08-20
 
 ### Added
 
@@ -56,6 +56,11 @@ releases follow the versioning policy in `README.md` and `ROADMAP.md`.
   `recordingStarted(url:format:capture:)`.
 - **Breaking:** `AudioInputConfigurationCapabilities`' memberwise initializer
   gains `activeSampleRate:`.
+
+## 0.15.0 - 2026-08-13
+
+The 0.15.0 tag was cut with this content still under "Unreleased"; the section
+heading is recorded here retroactively.
 
 ### Fixed
 
