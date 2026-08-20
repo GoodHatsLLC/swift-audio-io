@@ -104,6 +104,7 @@ struct AudioInputConfigurationCoordinatorTests {
             AudioSourceConfigurationOption(inputID: input.id, source: nil, channels: .stereo),
           ],
           likelySampleRates: [.dvd],
+          activeSampleRate: nil,
         ),
         applied: appliedChannels.map {
           AppliedAudioInputConfiguration(
@@ -387,6 +388,56 @@ struct AudioInputConfigurationCoordinatorTests {
     #expect(state.applied?.format.sampleRate == .cd)
     #expect(
       state.reconciliation == .unsatisfied(.rejectedSampleRate(requested: .dvd, applied: .cd)))
+  }
+
+  @Test
+  @MainActor
+  func `automatic sample rate writes no preference and any readback rate satisfies`() async throws
+  {
+    // The same 44.1 kHz route that rejects an exact 48 kHz request. An
+    // `.automatic` request has no rate to reject: the plan carries the
+    // automatic intent (the adapter writes no preference for it) and the
+    // readback's rate is definitionally correct.
+    let defaults = try isolatedDefaults()
+    let input = AudioInputSelection(id: "mic", name: "Mic", channelCount: .stereo)
+    let adapter = ScriptedAdapter(
+      snapshot: snapshot(
+        input: input,
+        options: [
+          AudioSourceConfigurationOption(inputID: input.id, source: nil, channels: .stereo)
+        ],
+        applied: AppliedAudioInputConfiguration(
+          input: input,
+          source: nil,
+          format: InputConfiguration(sampleRate: .cd, channels: .stereo),
+          processing: .processed,
+        ),
+      )
+    )
+    let coordinator = AudioInputConfigurationCoordinator(defaults: defaults, adapter: adapter)
+    var request = AudioInputConfigurationRequest.automatic
+    request.channels = .stereo
+
+    let state = await coordinator.submit(request, isRunning: true, isActive: true)
+
+    #expect(state.reconciliation == .satisfied)
+    #expect(state.applied?.format.sampleRate == .cd)
+    #expect(await adapter.plans().last?.sampleRateIntent == AudioSampleRatePreference.automatic)
+  }
+
+  @Test
+  @MainActor
+  func `capabilities surface the applied rate as the active sample rate`() async throws {
+    let defaults = try isolatedDefaults()
+    let adapter = ScriptedAdapter(snapshot: rejectedSampleRateSnapshot(appliedSampleRate: .cd))
+    let coordinator = AudioInputConfigurationCoordinator(defaults: defaults, adapter: adapter)
+    var request = AudioInputConfigurationRequest.automatic
+    request.channels = .stereo
+
+    let state = await coordinator.submit(request, isRunning: true, isActive: true)
+
+    #expect(state.capabilities.activeSampleRate == .cd)
+    #expect(state.capabilities.likelySampleRates.contains(.dvd))
   }
 
   @Test
@@ -828,6 +879,7 @@ struct AudioInputConfigurationCoordinatorTests {
         effectiveInput: input,
         sourceOptions: [mono, stereo],
         likelySampleRates: [.dvd],
+        activeSampleRate: nil,
       ),
       applied: appliedChannels.map {
         AppliedAudioInputConfiguration(
@@ -896,6 +948,9 @@ struct AudioInputConfigurationCoordinatorTests {
         effectiveInput: input,
         sourceOptions: options,
         likelySampleRates: [.cd, .dvd],
+        // Mirror the real adapters: the active rate is a fact only when an
+        // applied configuration exists to read it from.
+        activeSampleRate: applied?.format.sampleRate,
       ),
       applied: applied,
     )

@@ -107,7 +107,12 @@
               )
             }
 
-            try environment.request(sampleRate: plan.format.sampleRate)
+            // `.automatic` writes no rate preference: there is nothing to
+            // prefer, the route's own rate is always correct, and skipping the
+            // write avoids a needless route-change notification.
+            if case .exact(let requestedRate) = plan.sampleRateIntent {
+              try environment.request(sampleRate: requestedRate)
+            }
 
             if plan.format.channels >= .stereo, orientation != .none {
               do {
@@ -170,6 +175,7 @@
           effectiveInput: effectiveInput.map(AudioInputSelection.init(input:)),
           sourceOptions: options,
           likelySampleRates: likelySampleRates,
+          activeSampleRate: applied?.format.sampleRate,
         ),
         applied: applied,
       )

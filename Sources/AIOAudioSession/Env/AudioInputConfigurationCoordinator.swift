@@ -21,6 +21,11 @@ package struct PlatformAudioInputConfigurationPlan: Hashable, Sendable {
   package let resolvedInput: AudioInputSelection
   package let source: AudioSourceSelection?
   package let format: InputConfiguration
+  /// The caller's sample-rate intent, carried alongside the resolved
+  /// ``format``. `.automatic` means the adapter writes no rate preference and
+  /// readback classification accepts any rate — `format.sampleRate` is then
+  /// only the best current guess, used for diagnostics payloads.
+  package let sampleRateIntent: AudioSampleRatePreference
   package let processing: AudioInputProcessingPreference
 
   package init(
@@ -29,6 +34,7 @@ package struct PlatformAudioInputConfigurationPlan: Hashable, Sendable {
     resolvedInput: AudioInputSelection,
     source: AudioSourceSelection?,
     format: InputConfiguration,
+    sampleRateIntent: AudioSampleRatePreference,
     processing: AudioInputProcessingPreference,
   ) {
     self.requestedGeneration = requestedGeneration
@@ -36,6 +42,7 @@ package struct PlatformAudioInputConfigurationPlan: Hashable, Sendable {
     self.resolvedInput = resolvedInput
     self.source = source
     self.format = format
+    self.sampleRateIntent = sampleRateIntent
     self.processing = processing
   }
 }
@@ -122,11 +129,16 @@ package enum AudioInputConfigurationResolver {
       )
     }
 
+    // For `.automatic` this rate is never written or checked — it only fills
+    // the plan's diagnostics payloads — so prefer facts over guesses: the
+    // applied rate, then the session's live rate, then the standard guess.
     let sampleRate: SampleRate
     switch requested.sampleRate {
     case .automatic:
       if let currentApplied, currentApplied.input.id == resolvedInput.id {
         sampleRate = currentApplied.format.sampleRate
+      } else if let activeSampleRate = capabilities.activeSampleRate {
+        sampleRate = activeSampleRate
       } else if capabilities.likelySampleRates.contains(.dvd) {
         sampleRate = .dvd
       } else {
@@ -143,6 +155,7 @@ package enum AudioInputConfigurationResolver {
         resolvedInput: resolvedInput,
         source: option.source,
         format: InputConfiguration(sampleRate: sampleRate, channels: option.channels),
+        sampleRateIntent: requested.sampleRate,
         processing: requested.processing,
       ),
     )
@@ -585,13 +598,17 @@ package final class AudioInputConfigurationCoordinator {
     guard let readback else {
       return .unsatisfied(.readbackMismatch(expected: expected.format, actual: nil))
     }
-    guard readback.format.sampleRate == expected.format.sampleRate else {
-      return .unsatisfied(
-        .rejectedSampleRate(
-          requested: expected.format.sampleRate,
-          applied: readback.format.sampleRate,
-        ),
-      )
+    // `.automatic` wrote no rate preference, so every readback rate is the
+    // correct one — only an `.exact` intent can be rejected.
+    if case .exact(let requestedRate) = expected.sampleRateIntent {
+      guard readback.format.sampleRate == requestedRate else {
+        return .unsatisfied(
+          .rejectedSampleRate(
+            requested: requestedRate,
+            applied: readback.format.sampleRate,
+          ),
+        )
+      }
     }
     guard readback.input.id == expected.resolvedInput.id,
       readback.format.channels == expected.format.channels,

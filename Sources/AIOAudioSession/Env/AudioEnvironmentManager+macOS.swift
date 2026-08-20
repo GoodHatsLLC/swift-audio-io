@@ -341,6 +341,7 @@
           effectiveInput: effectiveInput,
           sourceOptions: options,
           likelySampleRates: SampleRate.common,
+          activeSampleRate: applied?.format.sampleRate,
         ),
         applied: applied,
       )

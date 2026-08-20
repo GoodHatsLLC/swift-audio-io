@@ -57,7 +57,15 @@ public enum AudioChannelPreference: Codable, Hashable, Sendable {
 }
 
 public enum AudioSampleRatePreference: Codable, Hashable, Sendable {
+  /// Write no sample-rate preference at all: the route runs where it wants,
+  /// readback reports whatever that is, and no rate mismatch is possible.
+  /// This is the session-level counterpart of ``RecordingSampleRate/hardware``.
   case automatic
+  /// Ask the platform for exactly this rate. The platform may still refuse —
+  /// the preference is a hint — in which case reconciliation reports
+  /// ``AudioInputConfigurationIssue/rejectedSampleRate(requested:applied:)``.
+  /// Recording still delivers the requested rate by conversion; see
+  /// ``ResolvedCaptureFormat``.
   case exact(SampleRate)
 }
 
@@ -146,7 +154,14 @@ public struct AudioInputConfigurationCapabilities: Hashable, Sendable {
   public let inputs: [AudioInputSelection]
   public let effectiveInput: AudioInputSelection?
   public let sourceOptions: [AudioSourceConfigurationOption]
+  /// Standard rates worth offering in a picker UI. A *guess list*, not a
+  /// promise: the platform decides the actual rate per route, and the only
+  /// per-route truth is ``activeSampleRate``.
   public let likelySampleRates: [SampleRate]
+  /// The rate the platform's audio session is actually running, or `nil`
+  /// while no applied configuration exists to read it from. This is the only
+  /// sample-rate value here that is a fact rather than an enumeration aid.
+  public let activeSampleRate: SampleRate?
 
   public init(
     discovery: Discovery,
@@ -154,12 +169,14 @@ public struct AudioInputConfigurationCapabilities: Hashable, Sendable {
     effectiveInput: AudioInputSelection?,
     sourceOptions: [AudioSourceConfigurationOption],
     likelySampleRates: [SampleRate],
+    activeSampleRate: SampleRate?,
   ) {
     self.discovery = discovery
     self.inputs = inputs
     self.effectiveInput = effectiveInput
     self.sourceOptions = sourceOptions
     self.likelySampleRates = likelySampleRates
+    self.activeSampleRate = activeSampleRate
   }
 
   public static let discovering = AudioInputConfigurationCapabilities(
@@ -168,6 +185,7 @@ public struct AudioInputConfigurationCapabilities: Hashable, Sendable {
     effectiveInput: nil,
     sourceOptions: [],
     likelySampleRates: [],
+    activeSampleRate: nil,
   )
 }
 

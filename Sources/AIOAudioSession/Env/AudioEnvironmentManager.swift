@@ -311,6 +311,7 @@
     ) async -> AudioInputConfigurationState {
       sessionConfiguration = .recordingConfiguration(
         useMeasurement: requested.processing == .measurement,
+        bluetoothMicrophone: recordingBluetoothMicrophonePolicy,
       )
       inputConfigurationState = await inputConfigurationCoordinator.submit(
         requested,
