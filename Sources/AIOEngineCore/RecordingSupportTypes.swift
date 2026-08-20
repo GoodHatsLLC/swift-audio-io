@@ -299,6 +299,11 @@
     /// cleared together with ``recordingConfiguration``.
     package var requestedRecordingConfiguration: RecordingConfiguration?
     package var installedTapBus: Int?
+    /// How the staged request was satisfied against live hardware: the tap's
+    /// installed format vs the processing/file format. Refreshed on every tap
+    /// (re)install, so a route change that moves the hardware rate is
+    /// reflected here; the file rate never moves mid-recording.
+    package var captureResolution: ResolvedCaptureFormat?
     package var audioBuffers: [SPSCRingBuffer<Float>]?
     package var receiverBuffers: [SPSCRingBuffer<Float>]?
     package var receiverTiming: SPSCRingBuffer<TimingPacket>?

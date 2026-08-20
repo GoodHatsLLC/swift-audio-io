@@ -262,11 +262,14 @@
             return .failure(.cancelled)
           }
 
-          let (buffers, recordingWriter, url, receiverBuffers, receiverTiming, stagedConfiguration) =
+          let (
+            buffers, recordingWriter, url, receiverBuffers, receiverTiming, stagedConfiguration,
+            captureResolution
+          ) =
             owner.state {
               (
                 $0.audioBuffers, $0.recordingWriter, $0.recordingURL, $0.receiverBuffers,
-                $0.receiverTiming, $0.recordingConfiguration
+                $0.receiverTiming, $0.recordingConfiguration, $0.captureResolution
               )
             }
           // The staged configuration is the resolved one — a `.hardware`
@@ -288,12 +291,30 @@
             )
           }
           let fileFormat = configuration.outputConfiguration.fileFormat.rawValue
+          // Provenance always exists once a tap or system-audio backend is
+          // staged; the fallback covers only a hypothetical gap and reports a
+          // native (no-conversion) capture at the processing format.
+          let capture =
+            captureResolution
+            ?? ResolvedCaptureFormat(
+              hardware: InputConfiguration(
+                sampleRate: SampleRate(processingFormat.sampleRate),
+                channels: ChannelCount(platform: processingFormat.channelCount),
+              ),
+              processing: InputConfiguration(
+                sampleRate: SampleRate(processingFormat.sampleRate),
+                channels: ChannelCount(platform: processingFormat.channelCount),
+              ),
+            )
           // If a teardown/stop already aborted this bring-up while we were
           // off-main, suppress `recordingStarted` — the reconcile below tears the
           // engine down, so emitting "started" then "failed" would be spurious.
           if !owner.recordingLifecycleState.startAbortRequested {
-            owner.eventSubject.send(AudioIOEvent.recordingStarted(url: url, format: fileFormat))
+            owner.eventSubject.send(
+              AudioIOEvent.recordingStarted(url: url, format: fileFormat, capture: capture),
+            )
           }
+          owner.activeCaptureFormat = capture
           // The first file of a capture starts at the origin of the frame
           // domain, which `resetRecordingTiming()` established during graph
           // preparation.

@@ -341,6 +341,18 @@
         state.tapConverterOutputFormat = processingFormat
         state.tapConvertedBuffer = result.artifacts.convertedBuffer
         state.installedTapBus = result.tapConfiguration.bus
+        // Provenance from the *installed* truth: even if a resolution pre-read
+        // raced a route change, `tapFormat` is what the graph actually runs.
+        state.captureResolution = ResolvedCaptureFormat(
+          hardware: InputConfiguration(
+            sampleRate: SampleRate(result.tapFormat.sampleRate),
+            channels: ChannelCount(platform: result.tapFormat.channelCount),
+          ),
+          processing: InputConfiguration(
+            sampleRate: SampleRate(processingFormat.sampleRate),
+            channels: ChannelCount(platform: processingFormat.channelCount),
+          ),
+        )
         return Transferring(
           TapSnapshot(
             audioBuffers: state.audioBuffers,

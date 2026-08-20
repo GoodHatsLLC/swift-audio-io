@@ -45,7 +45,10 @@
     ///
     /// - Parameter url: The URL of the active recording file.
     /// - Parameter format: The active recording file's format identifier.
-    case recordingStarted(url: URL, format: String)
+    /// - Parameter capture: How the format request was satisfied against
+    ///   live hardware — the tap's installed format vs the processing/file
+    ///   format, including whether a resample sits between them.
+    case recordingStarted(url: URL, format: String, capture: ResolvedCaptureFormat)
 
     /// A recording stopped cleanly via a user-initiated stop.
     case recordingCompleted

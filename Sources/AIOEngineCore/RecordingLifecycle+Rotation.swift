@@ -154,8 +154,22 @@
         )
 
         let fileFormat = configuration.outputConfiguration.fileFormat.rawValue
+        // Rotation changes the file, never the capture path, so the current
+        // resolution carries over; the fallback mirrors the start publish.
+        let capture =
+          owner.state[locked: \.captureResolution]
+          ?? ResolvedCaptureFormat(
+            hardware: InputConfiguration(
+              sampleRate: SampleRate(format.sampleRate),
+              channels: ChannelCount(platform: format.channelCount),
+            ),
+            processing: InputConfiguration(
+              sampleRate: SampleRate(format.sampleRate),
+              channels: ChannelCount(platform: format.channelCount),
+            ),
+          )
         owner.eventSubject.send(
-          AudioIOEvent.recordingStarted(url: newURL, format: fileFormat),
+          AudioIOEvent.recordingStarted(url: newURL, format: fileFormat, capture: capture),
         )
 
         log.info(

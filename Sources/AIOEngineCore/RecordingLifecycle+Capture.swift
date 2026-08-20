@@ -156,6 +156,16 @@
               state.receiverTiming = receiverTiming
               state.recordingConfiguration = resolvedConfiguration
               state.requestedRecordingConfiguration = configuration
+              state.captureResolution = ResolvedCaptureFormat(
+                hardware: InputConfiguration(
+                  sampleRate: SampleRate(session.sourceFormat.sampleRate),
+                  channels: ChannelCount(platform: session.sourceFormat.channelCount),
+                ),
+                processing: InputConfiguration(
+                  sampleRate: SampleRate(processingFormat.sampleRate),
+                  channels: ChannelCount(platform: processingFormat.channelCount),
+                ),
+              )
               state.tapConverter = artifacts.converter
               state.tapConverterInputFormat = artifacts.inputFormat
               state.tapConverterOutputFormat = processingFormat
@@ -734,6 +744,7 @@
             state.recordingOutputWasCreatedByStart = false
             state.recordingConfiguration = nil
             state.requestedRecordingConfiguration = nil
+            state.captureResolution = nil
             state.audioBuffers = nil
             state.receiverBuffers = nil
             state.receiverTiming = nil
@@ -747,6 +758,7 @@
         }
         // Single, idempotent teardown point for every capture source.
         backend?.cleanup()
+        owner.activeCaptureFormat = nil
         owner.recordingInfrastructure.tapSnapshotLock.withLock { $0 = .empty }
         if closeFile {
           writer?.close()

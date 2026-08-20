@@ -190,6 +190,9 @@
         }
 
         owner.applyTapInstallResult(result, processingFormat: processingFormat)
+        // The reinstall refreshed the staged provenance; mirror it into the
+        // observable so quality indicators track the new hardware format.
+        owner.activeCaptureFormat = owner.state[locked: \.captureResolution]
         let qualityChange = makeQualityChange(
           from: formatBefore,
           to: result.tapFormat,

@@ -398,6 +398,16 @@
       set { recordingLifecycleState.isRecording = newValue }
     }
 
+    /// How the active recording's format request is being satisfied against
+    /// live hardware, or `nil` while nothing is recording.
+    ///
+    /// This is the observable face of the recording's provenance: the tap's
+    /// installed hardware format vs the processing/file format, updated at
+    /// start and after every route-change reinstall. A 48 kHz file fed by a
+    /// 16 kHz Bluetooth mic is visible here — drive quality indicators off
+    /// ``ResolvedCaptureFormat/effectiveSampleRate``, not the file's rate.
+    @MainActor public package(set) var activeCaptureFormat: ResolvedCaptureFormat?
+
     /// The immutable authority for shared platform audio-session activation.
     ///
     /// When `nil`, the engine manages the platform session directly.
