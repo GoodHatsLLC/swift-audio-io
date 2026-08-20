@@ -330,11 +330,12 @@
     /// earlier systems. Removal is unchanged either way: `removeTap(onBus:)`
     /// is not deprecated.
     ///
-    /// The OS 27 path bridges via `AVAudioPCMBuffer(copying:)`. The copy is
-    /// bounded by the tap cadence (~100 ms buffers on a non-realtime queue);
-    /// a zero-copy wrap of the read-only buffer's audio buffer list is a
-    /// follow-up gated on re-verifying that `processAudio` never retains its
-    /// input past return.
+    /// The OS 27 path bridges zero-copy via
+    /// ``ReadOnlyTapBufferBridge/pcmView(of:)`` — a view of the read-only
+    /// samples in place, whose deallocator keeps the read-only storage alive
+    /// for the view's own lifetime (safe even against a converter that holds
+    /// its last input buffer across calls). `AVAudioPCMBuffer(copying:)`
+    /// remains only as the fallback for a buffer layout the view cannot back.
     ///
     /// Must run on the engine-control queue, like every other graph mutation
     /// in this file.
@@ -356,7 +357,9 @@
               bufferSize: bufferSize,
               format: format,
             ) { @Sendable [self] readOnlyBuffer, time in
-              let buffer = AVAudioPCMBuffer(copying: readOnlyBuffer)
+              let buffer =
+                ReadOnlyTapBufferBridge.pcmView(of: readOnlyBuffer)
+                ?? AVAudioPCMBuffer(copying: readOnlyBuffer)
               self.recording.capture.processAudio(
                 buffer: buffer,
                 time: time,

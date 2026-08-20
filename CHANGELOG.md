@@ -38,9 +38,11 @@ releases follow the versioning policy in `README.md` and `ROADMAP.md`.
   land in `.unsatisfied(.rejectedSampleRate)`.
 - **OS 27 tap API.** The input tap installs through
   `installAudioTap(onBus:bufferSize:format:tapProvider:)` on OS 27 hosts
-  (bridging `AVReadOnlyAudioPCMBuffer` into the existing capture path) and
-  macOS device selection uses `withAUAudioUnit`, both behind the project's
-  compiler + availability double gate; earlier systems keep the legacy calls.
+  (bridging `AVReadOnlyAudioPCMBuffer` into the existing capture path
+  zero-copy — the capture path reads the tap's samples in place, with no
+  per-callback copy) and macOS device selection uses `withAUAudioUnit`, both
+  behind the project's compiler + availability double gate; earlier systems
+  keep the legacy calls.
 - `SampleRate.speech` (16 kHz), the standard speech-to-text target.
 
 ### Changed
