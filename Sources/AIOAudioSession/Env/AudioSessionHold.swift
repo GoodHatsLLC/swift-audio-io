@@ -14,7 +14,10 @@
 public final class AudioSessionHold {
   private var releaseHandler: (@MainActor () async -> Void)?
 
-  package init(release: @escaping @MainActor () async -> Void) {
+  /// A hold whose release runs `release`. Public so a test double for
+  /// `AudioEnvironmentDriving` can hand one out; production holds come from
+  /// `AudioEnvironmentManager.acquireAudioSessionHold()`.
+  public init(release: @escaping @MainActor () async -> Void) {
     releaseHandler = release
   }
 

@@ -5,6 +5,13 @@ All notable changes to AudioIO are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com) categories, and
 releases follow the versioning policy in `README.md` and `ROADMAP.md`.
 
+## 0.17.1 - 2026-08-25
+
+### Changed
+
+- `AudioSessionHold.init(release:)` is public so consumers can build test
+  doubles for `AudioEnvironmentDriving`.
+
 ## 0.17.0 - 2026-08-25
 
 Recording start and continuity are unconditional (Recorder‽ ADR-0003). The
