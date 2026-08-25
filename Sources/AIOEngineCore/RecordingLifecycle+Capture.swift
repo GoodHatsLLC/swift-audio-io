@@ -81,9 +81,13 @@
                 .notReady(details: "System-audio tap reported no sample rate"),
               )
             }
-            let resolvedConfiguration = configuration.resolved(
-              hardwareSampleRate: SampleRate(sourceSampleRate),
-            )
+            let (resolvedConfiguration, sampleRateSubstitution) =
+              configuration.resolvedWithSubstitution(
+                hardwareSampleRate: SampleRate(sourceSampleRate),
+              )
+            if let sampleRateSubstitution {
+              owner.recordCaptureSubstitution(sampleRateSubstitution)
+            }
             guard let processingFormat = resolvedConfiguration.processingFormat else {
               throw RecordingError.invalidConfiguration(details: "(processing format)")
             }
@@ -165,6 +169,7 @@
                   sampleRate: SampleRate(processingFormat.sampleRate),
                   channels: ChannelCount(platform: processingFormat.channelCount),
                 ),
+                substitutions: state.captureSubstitutions,
               )
               state.tapConverter = artifacts.converter
               state.tapConverterInputFormat = artifacts.inputFormat
@@ -247,9 +252,12 @@
           let hardwareFormat = installer.hardwareInputFormat,
           hardwareFormat.sampleRate > 0
         {
-          let resolved = configuration.resolved(
+          let (resolved, substitution) = configuration.resolvedWithSubstitution(
             hardwareSampleRate: SampleRate(hardwareFormat.sampleRate),
           )
+          if let substitution {
+            owner.recordCaptureSubstitution(substitution)
+          }
           effectiveConfiguration = resolved
           seamResolvedConfiguration = resolved
         }
@@ -360,9 +368,12 @@
             .notReady(details: "Input hardware reported no sample rate to resolve against"),
           )
         }
-        let resolved = configuration.resolved(
+        let (resolved, substitution) = configuration.resolvedWithSubstitution(
           hardwareSampleRate: SampleRate(hardwareSampleRate),
         )
+        if let substitution {
+          owner.recordCaptureSubstitution(substitution)
+        }
         log.info(
           "resolved .hardware request to \(resolved.requestedFormat.sampleRate, privacy: .public) (hardware: \(hardwareSampleRate, privacy: .public) Hz)",
         )
@@ -497,14 +508,15 @@
           throw RecordingError.engineError
         }
 
-        do {
-          try RecordingInputChannelContract.validateCaptureFormat(
-            requested: channelCount,
-            actual: Int(tapResult.tapFormat.channelCount),
-          )
-        } catch let sessionError {
-          throw RecordingError.session(sessionError)
-        }
+        // The contract is `channelCount`; the tap delivers whatever the route
+        // has. A narrower route is replicated into the contract by the
+        // converter's channel map, a wider one downmixed — neither is a
+        // reason not to start. The mapping is visible in the provenance.
+        let channelAdaptation = RecordingInputChannelContract.adaptation(
+          requested: channelCount,
+          actual: Int(tapResult.tapFormat.channelCount),
+        )
+        log.info("capture channel adaptation: \(channelAdaptation, privacy: .public)")
 
         let audioBuffers = makeAudioBuffers(sampleRate: sampleRate, channelCount: channelCount)
         let receiverBuffers = makeAudioBuffers(sampleRate: sampleRate, channelCount: channelCount)
@@ -663,6 +675,73 @@
         )
       }
 
+      /// Removes the input tap and stops the engine while keeping the writer,
+      /// the file, and every staged format: the recording is paused, not
+      /// stopped. `installedTapBus` is cleared so a later stop does not try
+      /// to remove a tap that is already gone.
+      @MainActor
+      func suspendCapture() async {
+        let tapBus = owner.state.consume(\.installedTapBus)
+        if let teardown = owner.recordingEnvironment.engineTeardown {
+          teardown()
+          return
+        }
+        let buses = Array(Set([tapBus, 0].compactMap(\.self)))
+        await owner.withEngineControlQueue { [owner] in
+          for bus in buses {
+            owner.engine.inputNode.removeTap(onBus: bus)
+          }
+          if owner.engine.isRunning {
+            owner.engine.stop()
+          }
+        }
+      }
+
+      /// Re-engages the session, reinstalls the tap at the route's current
+      /// format, and restarts the engine into the same writer. Returns the
+      /// quality change between the tap format before the pause and after.
+      @MainActor
+      func resumeCapture() async throws(RecordingError) -> AIOEngine.AudioQualityChange? {
+        guard
+          let (configuration, processingFormat): (RecordingConfiguration, AVAudioFormat) =
+            owner.state({
+              guard let configuration = $0.recordingConfiguration,
+                let processingFormat = configuration.processingFormat
+              else {
+                return nil
+              }
+              return (configuration, processingFormat)
+            })
+        else {
+          throw RecordingError.notRecording
+        }
+        let formatBefore = owner.state.withLock { $0.tapConverterInputFormat }
+        do throws(SessionError) {
+          try await owner.setAudioSessionDemand(active: true)
+        } catch {
+          throw RecordingError.session(error)
+        }
+        let installed = try await owner.reinstallTapAsync(
+          configuration: configuration,
+          processingFormat: processingFormat,
+          stopEngine: true,
+          overrideResult: owner.reinstallTapOverrideResult(
+            configuration: configuration,
+            processingFormat: processingFormat,
+          ),
+        )
+        guard owner.isRecording,
+          !owner.engineTearingDown.load(ordering: .sequentiallyConsistent),
+          let result = installed
+        else {
+          throw RecordingError.notRecording
+        }
+        owner.applyTapInstallResult(result, processingFormat: processingFormat)
+        return formatBefore.flatMap {
+          AIOEngine.AudioQualityChange.between($0, result.tapFormat, reason: "Resumed")
+        }
+      }
+
       @MainActor
       func hardStop() {
         // Raise the teardown sentinel before enqueuing graph teardown so any
@@ -757,12 +836,16 @@
             state.tapConverterOutputFormat = nil
             state.tapConvertedBuffer = nil
             state.captureBackend = nil
+            state.captureSubstitutions = []
+            state.toleratesPreferredInputMismatch = false
           }
           return (state.recordingWriter, state.captureBackend)
         }
         // Single, idempotent teardown point for every capture source.
         backend?.cleanup()
         owner.activeCaptureFormat = nil
+        owner.recordingPause = nil
+        owner.cancelRecordingResumeRetry()
         owner.recordingInfrastructure.tapSnapshotLock.withLock { $0 = .empty }
         if closeFile {
           writer?.close()

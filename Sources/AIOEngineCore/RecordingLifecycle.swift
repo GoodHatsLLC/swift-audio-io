@@ -62,6 +62,14 @@
     ) async throws(RecordingError) -> URL {
       let operationID = UUID()
       try await claimStartOperation(operationID)
+      // A self-contradictory request is reduced, not refused: the container
+      // yields to the rate (or, for a caller-named file, the rate to the
+      // container), and the change is reported in the capture provenance.
+      let (configuration, reduction) = configuration.reducedToEncodable()
+      owner.state.withLock {
+        $0.captureSubstitutions = reduction.map { [$0] } ?? []
+        $0.toleratesPreferredInputMismatch = false
+      }
 
       let readiness: any RecordingStartReadiness =
         if let injected = owner.recordingEnvironment.attemptRecordingStart {
@@ -77,6 +85,17 @@
         delay: .constant(.milliseconds(100)),
       )
       var lastTransientSessionFailure: SessionError?
+      // One attempt past the deadline is allowed when the only thing still
+      // unsettled is the route switching to the preferred input: that attempt
+      // starts on the current input and reports the substitution, because a
+      // recording the user asked for is never contingent on a route change.
+      var lenientAttemptTaken = false
+      let allowsLenientAttempt = { (failure: SessionError) -> Bool in
+        if case .preferredInputRouteMismatch = failure, !lenientAttemptTaken {
+          return true
+        }
+        return false
+      }
 
       do {
         while true {
@@ -85,10 +104,17 @@
           }
           if let lastTransientSessionFailure {
             let elapsed = startedAt.duration(to: owner.clock.now)
-            guard elapsed < timeout else {
-              throw RecordingError.startTimedOut(
-                timeout: timeout,
-                lastFailure: lastTransientSessionFailure,
+            if elapsed >= timeout {
+              guard allowsLenientAttempt(lastTransientSessionFailure) else {
+                throw RecordingError.startTimedOut(
+                  timeout: timeout,
+                  lastFailure: lastTransientSessionFailure,
+                )
+              }
+              lenientAttemptTaken = true
+              owner.state[locked: \.toleratesPreferredInputMismatch] = true
+              log.info(
+                "Preferred input has not become the route before the start deadline; starting on the current input",
               )
             }
           }
@@ -113,10 +139,15 @@
 
             let elapsed = startedAt.duration(to: owner.clock.now)
             guard elapsed < timeout else {
-              throw RecordingError.startTimedOut(
-                timeout: timeout,
-                lastFailure: lastTransientSessionFailure,
-              )
+              // Past the deadline: either the lenient attempt is still owed
+              // (loop back without sleeping) or the start has failed.
+              guard allowsLenientAttempt(sessionError) else {
+                throw RecordingError.startTimedOut(
+                  timeout: timeout,
+                  lastFailure: lastTransientSessionFailure,
+                )
+              }
+              continue
             }
 
             log.info(
@@ -374,6 +405,7 @@
       }
       owner.recordingLifecycleState.isStartingRecording = true
       owner.recordingLifecycleState.startAbortRequested = false
+      owner.startObservingEngineConfigurationChanges()
 
       if shouldStopPlayer || owner.playback != nil {
         owner.playbackState[locked: \.playbackInstance] = nil

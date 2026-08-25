@@ -2,12 +2,15 @@
 
 #if canImport(AVFoundation)
   package import AIOAudioSession
+  import Tools
 
   /// Main-actor state owned by audio-system recovery policy.
   @MainActor
   package final class AudioRecoveryState {
-    package var pendingRecording: RecordingConfiguration?
     package var pendingPlayback: PlaybackResume?
+    /// The cadence retrying a paused recording's resume; see
+    /// `AIOEngine.pauseRecording(reason:)`.
+    package var resumeRetryTask: MainActorOwnedWork?
     package var mediaServicesAreAvailable = true
 
     /// Set when the system recommends *against* resuming (iOS 27's
@@ -34,7 +37,6 @@
     package nonisolated init() {}
 
     package func clear() {
-      pendingRecording = nil
       pendingPlayback = nil
       playbackResumptionSuppressed = false
     }

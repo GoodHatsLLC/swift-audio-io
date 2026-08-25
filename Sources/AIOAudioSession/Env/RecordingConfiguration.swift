@@ -144,13 +144,61 @@
     /// AAC family tops out at 48 kHz); the substitution is visible in the
     /// recording's ``ResolvedCaptureFormat``.
     package func resolved(hardwareSampleRate: SampleRate) -> RecordingConfiguration {
-      guard requiresSampleRateResolution else { return self }
+      resolvedWithSubstitution(hardwareSampleRate: hardwareSampleRate).configuration
+    }
+
+    /// ``resolved(hardwareSampleRate:)`` plus the substitution it made, if the
+    /// adopted rate could not be carried as requested.
+    package func resolvedWithSubstitution(
+      hardwareSampleRate: SampleRate,
+    ) -> (configuration: RecordingConfiguration, substitution: CaptureSubstitution?) {
+      guard requiresSampleRateResolution else { return (self, nil) }
+      return replacingSampleRate(with: .exact(hardwareSampleRate)).reducedToEncodable()
+    }
+
+    /// Reduces a self-contradictory request to one the encoder can write.
+    ///
+    /// A recording never refuses to start because its parts disagree. The
+    /// least important axis yields first — channel layout › sample rate ›
+    /// bit depth › container — so a 96 kHz request against an AAC output
+    /// keeps its rate and is written as linear PCM in CAF. The one exception
+    /// is a caller-named file (``OutputDestination/fileURL(_:)``): its
+    /// container is already committed by name, so the rate yields to the
+    /// nearest one the container supports instead. Either way the change is
+    /// returned for the caller to present and record; nothing is silent.
+    ///
+    /// A ``RecordingSampleRate/hardware`` request has no rate to reduce yet
+    /// and returns unchanged; bring-up resolves and then reduces it.
+    public func reducedToEncodable() -> (
+      configuration: RecordingConfiguration, substitution: CaptureSubstitution?
+    ) {
       let fileFormat = outputConfiguration.fileFormat
-      let adopted =
-        fileFormat.supports(sampleRate: hardwareSampleRate)
-        ? hardwareSampleRate
-        : fileFormat.nearestSupportedSampleRate(to: hardwareSampleRate)
-      return replacingSampleRate(with: .exact(adopted))
+      guard fileFormat == .aac || fileFormat == .adts,
+        let rate = requestedFormat.exactSampleRate,
+        !fileFormat.supports(sampleRate: rate)
+      else {
+        return (self, nil)
+      }
+      if case .fileURL = outputDestination {
+        let clamped = fileFormat.nearestSupportedSampleRate(to: rate)
+        return (
+          replacingSampleRate(with: .exact(clamped)),
+          .sampleRateClamped(from: rate, to: clamped, fileFormat: fileFormat)
+        )
+      }
+      let replacement = OutputConfiguration(
+        fileFormat: .caf,
+        bitDepth: .pcmInt24,
+        quality: outputConfiguration.quality,
+      )
+      return (
+        RecordingConfiguration(
+          input: input,
+          outputConfiguration: replacement,
+          outputDestination: outputDestination,
+        ),
+        .containerReplaced(from: fileFormat, to: .caf, sampleRate: rate)
+      )
     }
 
     /// Rebuilds the configuration with a different sample-rate intent,

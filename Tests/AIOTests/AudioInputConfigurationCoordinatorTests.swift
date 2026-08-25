@@ -892,6 +892,76 @@ struct AudioInputConfigurationCoordinatorTests {
     )
   }
 
+  @Test
+  @MainActor
+  func `a request submitted while inactive re-discovers and claims no active rate`() async throws {
+    let defaults = try isolatedDefaults()
+    let adapter = ScriptedAdapter(snapshot: rejectedSampleRateSnapshot(appliedSampleRate: .cd))
+    let coordinator = AudioInputConfigurationCoordinator(defaults: defaults, adapter: adapter)
+
+    var requested = AudioInputConfigurationRequest.automatic
+    requested.channels = .stereo
+    let state = await coordinator.submit(requested, isRunning: true, isActive: false)
+
+    // The session cannot apply the request, but the surface asking for
+    // Stereo still gets a fresh read of what the platform offers.
+    #expect(state.reconciliation == .deferred(.sessionInactive))
+    #expect(state.capabilities.discovery == .resolved)
+    #expect(state.capabilities.inputs.map(\.id) == ["mic"])
+    // And nothing is claimed as applied: the raw session's rate is not a fact.
+    #expect(state.applied == nil)
+    #expect(state.capabilities.activeSampleRate == nil)
+    #expect(await adapter.plans().isEmpty)
+  }
+
+  @Test
+  @MainActor
+  func `a route settling after a write is noticed without writing again`() async throws {
+    // The readback right after the write reports no applied configuration
+    // (the route has not settled); the next discovery reports one that
+    // matches the plan. That `nil` → value transition must classify the
+    // request as satisfied *without* another platform write — a second write
+    // posts a route notification, which reconciles again, which is a loop.
+    let defaults = try isolatedDefaults()
+    let input = AudioInputSelection(id: "mic", name: "Mic", channelCount: .stereo)
+    let unsettled = snapshot(
+      input: input,
+      options: [AudioSourceConfigurationOption(inputID: input.id, source: nil, channels: .stereo)],
+      applied: nil,
+    )
+    let adapter = ScriptedAdapter(snapshot: unsettled)
+    let coordinator = AudioInputConfigurationCoordinator(defaults: defaults, adapter: adapter)
+
+    var requested = AudioInputConfigurationRequest.automatic
+    requested.channels = .stereo
+    let afterWrite = await coordinator.submit(requested, isRunning: true, isActive: true)
+    #expect(await adapter.plans().count == 1)
+    #expect(afterWrite.applied == nil)
+    guard case .unsatisfied = afterWrite.reconciliation else {
+      Issue.record("Expected an unsettled readback to be unsatisfied, got \(afterWrite.reconciliation)")
+      return
+    }
+
+    await adapter.setSnapshot(
+      snapshot(
+        input: input,
+        options: [AudioSourceConfigurationOption(inputID: input.id, source: nil, channels: .stereo)],
+        applied: AppliedAudioInputConfiguration(
+          input: input,
+          source: nil,
+          format: InputConfiguration(sampleRate: .dvd, channels: .stereo),
+          processing: .processed,
+        ),
+      ),
+    )
+    let settled = await coordinator.reconcile(isRunning: true, isActive: true)
+
+    #expect(settled.reconciliation == .satisfied)
+    #expect(settled.applied?.format.channels == .stereo)
+    #expect(settled.capabilities.activeSampleRate == .dvd)
+    #expect(await adapter.plans().count == 1)
+  }
+
   /// A stereo route that answers a 48 kHz request with 44.1 kHz, unless
   /// `appliedSampleRate` says the route has meanwhile changed its mind.
   private func rejectedSampleRateSnapshot(

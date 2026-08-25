@@ -1,5 +1,6 @@
 // © GoodHatsLLC
 
+import AIOTestSupport
 import Foundation
 import Testing
 import Tools
@@ -33,12 +34,16 @@ struct AudioSessionRecoveryPolicyTests {
 
   @Test
   @MainActor
-  func `a system deactivation does not re-stage over an interruption's pending recording`()
-    async
+  func `a system deactivation does not re-pause a recording an interruption already paused`()
+    async throws
   {
-    let engine = AIOEngine()
-    let pending = configuration()
-    engine.audioRecoveryState.pendingRecording = pending
+    let (engine, _, tapInstaller) = AIOEngine.fakeRecording()
+    let url = try await engine.startRecording(configuration: configuration())
+    defer { try? FileManager.default.removeItem(at: url) }
+
+    await engine.handleAudioSystemEvent(.interruptionBegan)
+    let pause = try #require(engine.recordingPause)
+    let installsWhilePaused = tapInstaller.installCount()
 
     await engine.handleAudioSystemEvent(
       .sessionDeactivated(
@@ -47,9 +52,12 @@ struct AudioSessionRecoveryPolicyTests {
     )
 
     // Deduplication: one interruption surfaces on both the interruption and
-    // the session-state channel on iOS 27. The interruption owns recovery.
-    #expect(engine.audioRecoveryState.pendingRecording == pending)
+    // the session-state channel on iOS 27. The interruption owns the pause.
+    #expect(engine.recordingPause == pause)
+    #expect(engine.isRecording)
+    #expect(tapInstaller.installCount() == installsWhilePaused)
     #expect(engine.audioRecoveryState.pendingPlayback == nil)
+    _ = try await engine.stopRecording()
   }
 
   @Test
@@ -61,7 +69,7 @@ struct AudioSessionRecoveryPolicyTests {
       .sessionDeactivated(AudioSessionDeactivation(source: .app)),
     )
 
-    #expect(engine.audioRecoveryState.pendingRecording == nil)
+    #expect(engine.recordingPause == nil)
     #expect(engine.audioRecoveryState.pendingPlayback == nil)
   }
 
@@ -72,25 +80,27 @@ struct AudioSessionRecoveryPolicyTests {
 
     await engine.handleAudioSystemEvent(.sessionActivated)
 
-    #expect(engine.audioRecoveryState.pendingRecording == nil)
+    #expect(engine.recordingPause == nil)
     #expect(engine.audioRecoveryState.pendingPlayback == nil)
     #expect(engine.audioRecoveryState.playbackResumptionSuppressed == false)
   }
 
   @Test
   @MainActor
-  func `a positive resumption recommendation never restarts a pending recording`() async {
-    let engine = AIOEngine()
-    let pending = configuration()
-    engine.audioRecoveryState.pendingRecording = pending
+  func `a positive resumption recommendation never resumes a paused recording`() async throws {
+    let (engine, _, tapInstaller) = AIOEngine.fakeRecording()
+    let url = try await engine.startRecording(configuration: configuration())
+    defer { try? FileManager.default.removeItem(at: url) }
+    await engine.handleAudioSystemEvent(.interruptionBegan)
+    let installsWhilePaused = tapInstaller.installCount()
 
     await engine.handleAudioSystemEvent(.resumptionRecommended(true))
 
-    // The product rule: leaving a live recording stops it. A system hint is
-    // never sufficient cause to put the microphone back on. The staged
-    // recording survives for the pending-recording flow to decide on.
-    #expect(engine.audioRecoveryState.pendingRecording == pending)
-    #expect(engine.isRecording == false)
+    // The recommendation is advice about *playback*. A recording resumes on
+    // the interruption ending (or the session coming back), not on a hint.
+    #expect(engine.recordingPause != nil)
+    #expect(tapInstaller.installCount() == installsWhilePaused)
+    _ = try await engine.stopRecording()
   }
 
   @Test
@@ -128,18 +138,23 @@ struct AudioSessionRecoveryPolicyTests {
 
   @Test
   @MainActor
-  func `suppression does not block recording recovery`() async {
-    let engine = AIOEngine()
-    let pending = configuration()
-    engine.audioRecoveryState.pendingRecording = pending
+  func `suppression does not block recording resumption`() async throws {
+    let (engine, _, tapInstaller) = AIOEngine.fakeRecording()
+    let url = try await engine.startRecording(configuration: configuration())
+    defer { try? FileManager.default.removeItem(at: url) }
+    await engine.handleAudioSystemEvent(.interruptionBegan)
     engine.audioRecoveryState.pendingPlayback = resume(wasPlaying: true)
+    let installsWhilePaused = tapInstaller.installCount()
 
     await engine.handleAudioSystemEvent(.resumptionRecommended(false))
     await engine.handleAudioSystemEvent(.interruptionEnded(shouldResume: true))
 
-    // Suppression is a playback rule only; the recording path is untouched by
-    // it and clears its staged state through the normal restart flow.
-    #expect(engine.audioRecoveryState.pendingRecording == nil)
+    // Suppression is a playback rule only; the recording resumes into its
+    // file regardless.
+    #expect(engine.recordingPause == nil)
+    #expect(engine.isRecording)
+    #expect(tapInstaller.installCount() == installsWhilePaused + 1)
+    _ = try await engine.stopRecording()
   }
 
   @Test

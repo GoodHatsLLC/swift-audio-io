@@ -40,9 +40,19 @@ protocol PlatformAudioBackend: Sendable {
   // on the main actor. Conformances must match.
   @concurrent func availableInputs() async -> [PlatformAudioInputDescriptor]
   @concurrent func currentRoute() async -> AudioRouteSnapshot
+  /// The capture-relevant facts of the default input — its nominal rate and
+  /// channel count — or `nil` when the platform cannot report them. Without
+  /// these a route event carries no `AudioInputFacts`, and a live recording
+  /// has to rebuild its tap on every event because it cannot prove nothing
+  /// moved.
+  @concurrent func currentInputSessionSnapshot() async -> AudioSessionSnapshot?
 }
 
 extension PlatformAudioBackend {
+  @concurrent func currentInputSessionSnapshot() async -> AudioSessionSnapshot? {
+    nil
+  }
+
   @concurrent func currentRoute() async -> AudioRouteSnapshot {
     let inputs = await availableInputs()
       .filter(\.isDefault)
@@ -147,10 +157,17 @@ enum PlatformAudioBackendFactory {
       let defaultOutputID: String?
       let inputIDs: [String]
       let outputIDs: [String]
+      /// The default input's format is part of the route: a device that
+      /// changes its nominal rate or channel count without changing identity
+      /// posts nothing on macOS, and a live tap built at the old format would
+      /// otherwise keep running blind.
+      let defaultInputSampleRate: Double?
+      let defaultInputChannelCount: Int?
     }
 
     private func routeSignature() -> RouteSignature {
       let devices = deviceIDs()
+      let defaultInput = defaultDeviceID(selector: kAudioHardwarePropertyDefaultInputDevice)
       return RouteSignature(
         defaultInputID: defaultInputDeviceUID(),
         defaultOutputID: defaultDeviceUID(
@@ -158,7 +175,49 @@ enum PlatformAudioBackendFactory {
         ),
         inputIDs: deviceUIDs(devices, scope: kAudioObjectPropertyScopeInput),
         outputIDs: deviceUIDs(devices, scope: kAudioObjectPropertyScopeOutput),
+        defaultInputSampleRate: defaultInput.flatMap(nominalSampleRate(deviceID:)),
+        defaultInputChannelCount: defaultInput.map {
+          channelCount(deviceID: $0, scope: kAudioObjectPropertyScopeInput)
+        },
       )
+    }
+
+    @concurrent func currentInputSessionSnapshot() async -> AudioSessionSnapshot? {
+      guard let deviceID = defaultDeviceID(selector: kAudioHardwarePropertyDefaultInputDevice)
+      else {
+        return nil
+      }
+      let channels = channelCount(deviceID: deviceID, scope: kAudioObjectPropertyScopeInput)
+      guard let sampleRate = nominalSampleRate(deviceID: deviceID) else { return nil }
+      return AudioSessionSnapshot(
+        category: "",
+        mode: "default",
+        options: [],
+        sampleRate: sampleRate,
+        ioBufferDuration: 0,
+        inputNumberOfChannels: channels,
+        isInputAvailable: channels > 0,
+      )
+    }
+
+    private func nominalSampleRate(deviceID: AudioDeviceID) -> Double? {
+      var address = AudioObjectPropertyAddress(
+        mSelector: kAudioDevicePropertyNominalSampleRate,
+        mScope: kAudioObjectPropertyScopeGlobal,
+        mElement: kAudioObjectPropertyElementMain,
+      )
+      var value: Float64 = 0
+      var dataSize = UInt32(MemoryLayout<Float64>.size)
+      let status = unsafe AudioObjectGetPropertyData(
+        deviceID,
+        &address,
+        0,
+        nil,
+        &dataSize,
+        &value,
+      )
+      guard status == noErr, value > 0 else { return nil }
+      return value
     }
 
     private func deviceUIDs(

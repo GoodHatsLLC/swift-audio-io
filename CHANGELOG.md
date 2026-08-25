@@ -5,6 +5,82 @@ All notable changes to AudioIO are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com) categories, and
 releases follow the versioning policy in `README.md` and `ROADMAP.md`.
 
+## 0.17.0 - 2026-08-25
+
+Recording start and continuity are unconditional (Recorder‽ ADR-0003). The
+request is a contract on the *output*; the route is a *source* adapted to it.
+
+### Added
+
+- **`AIOEngine.recordingPause` and pause/resume events.** An OS interruption,
+  media-services loss, or a route with no usable input now *pauses* a
+  running recording — the tap is removed, the file and writer stay open,
+  `isRecording` stays `true` — and the engine resumes into the same file when
+  the cause lifts, with a backoff retry behind every signal.
+  `RecordingInterruption` gains `.paused(RecordingPause)`,
+  `.resumed(RecordingPause, qualityChange:)`, and
+  `.captureFormatChanged(qualityChange:)`. A recording resumes after an
+  interruption whether or not the system advises resuming; `shouldResume`
+  still governs playback.
+- **Channel adaptation instead of refusal.** `RecordingInputChannelContract`
+  is a classification: a route narrower than the requested layout is
+  replicated into it through an explicit converter channel map (mono is
+  duplicated into both channels of a stereo file), a wider one downmixed. The
+  same rule applies at bring-up and on every reinstall.
+  `ResolvedCaptureFormat.isReplicatingChannels` / `isDownmixingChannels`
+  report it.
+- **`CaptureSubstitution` and `ResolvedCaptureFormat.substitutions`.** What
+  bring-up changed about the request in order to start: an unavailable
+  preferred input (capture proceeds on the current input), a preferred input
+  the route had not switched to by the deadline (one lenient attempt), a
+  container that yielded to the requested rate, or a rate clamped for a
+  caller-named file. `RecordingConfiguration.reducedToEncodable()` applies
+  the fixed precedence channel layout › sample rate › bit depth › container.
+- **`CaptureInputContract` and
+  `AudioEnvironmentManager.resolveCaptureInputContract()`.** The contract a
+  capture starts with, derived from the request against the live
+  environment; never refuses.
+- **`AudioSessionHold` and `acquireAudioSessionHold()`.** Keeps the session
+  engaged for a configuration surface; the engine's post-stop release is
+  deferred until the last hold goes.
+- **`refreshInputConfiguration()`** on `AudioEnvironmentConfiguring`: a
+  read-only capability refresh that does not persist a request.
+- **`AVAudioEngineConfigurationChange` is observed.** A same-device format
+  change (which posts no route change on macOS) reinstalls the tap at the new
+  format instead of silently dropping frames.
+- **macOS route facts.** Route events carry the default input's nominal rate
+  and channel count, so the route-change no-op path is reachable, and the
+  route signature includes the rate so a same-device rate change is an event.
+- **`AIOEngine.playbackRouteDisconnectBehavior`.** Playback pauses when a
+  personal-listening output (headphones, Bluetooth, USB) disconnects — the
+  platform convention, now explicit and opt-out.
+- `PendingTrackEventKind.recordingPaused` / `.captureSubstitution` and
+  `PendingTrackEvent.note`.
+- `ChannelCount(count:)`; `AudioInput.channelCount` reports the real count.
+
+### Changed
+
+- The coordinator's write barrier keys on route identity and re-classifies
+  each refresh against the current readback. A readback taken right after a
+  preference write often has no applied configuration; the next discovery's
+  `nil → value` transition used to authorise another write (and republish a
+  stale "not applied"). It now classifies as satisfied without writing.
+- A request submitted while the session is inactive re-discovers
+  capabilities, and no `activeSampleRate` is claimed while inactive.
+- `CaptureSubstitution.sampleRateClamped` replaces the silent AAC clamp for
+  `.hardware` requests into caller-named files; for other destinations the
+  container yields to the rate.
+
+### Removed
+
+- `SessionError.preferredInputUnavailable` (no longer thrown).
+- `RecordingInterruption.stoppedByInterruption` (nothing stops a running
+  recording but its caller).
+- `AudioRecoveryState.pendingRecording` (a paused recording is not restarted;
+  it resumes).
+- `settleInputConfiguration()` from the `AudioEnvironmentDriving` protocol
+  (still available on `AudioEnvironmentManager`).
+
 ## 0.16.0 - 2026-08-20
 
 ### Added

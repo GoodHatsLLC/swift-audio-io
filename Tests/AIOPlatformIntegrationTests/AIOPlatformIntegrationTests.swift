@@ -82,24 +82,29 @@
       } else {
         let captured = await waitUntil(timeout: .seconds(2)) {
           let snapshot = probe.snapshot()
-          return snapshot.failureCount >= 1
+          return snapshot.failureCount == 0
             && snapshot.interruptions.contains { interruption in
-              if case .stoppedByInterruption(let reason) = interruption {
-                return reason == "No audio input available"
+              if case .paused(let pause) = interruption,
+                case .sourceUnavailable = pause.reason
+              {
+                return true
               }
               return false
             }
         }
         #expect(captured == true)
 
-        #expect(engine.isRecording == false)
+        // No input is not a stop: the recording waits for a route.
+        #expect(engine.isRecording == true)
+        #expect(engine.recordingPause != nil)
         #expect(tapInstaller.installCount() == installsAfterStart)
+        _ = try await engine.stopRecording()
       }
       await bridge.cancel()
     }
 
     @Test
-    func interruptionHandlerStopsActiveRecording() async throws {
+    func interruptionHandlerPausesActiveRecording() async throws {
       let (engine, backend, _) = AIOEngine.fakeRecording()
       let configuration = makeRecordingConfiguration(fileFormat: .caf, channelCount: 1)
       let probe = RecordingEventProbe()
@@ -112,22 +117,20 @@
       backend.inject(channels: [samples(channelCount: 1, frames: 1_024)[0]])
       await engine.handleAudioSystemEvent(.interruptionBegan)
 
-      let stopped = await waitUntil(timeout: .seconds(2)) {
-        engine.isRecording == false && probe.snapshot().failureCount == 1
-      }
-      #expect(stopped == true)
-
-      let snapshot = probe.snapshot()
-      #expect(snapshot.failureCount == 1)
-      #expect(
-        snapshot.interruptions.contains { interruption in
-          if case .stoppedByInterruption(let reason) = interruption {
-            return reason == "Audio session interrupted"
+      let paused = await waitUntil(timeout: .seconds(2)) {
+        engine.recordingPause?.reason == .interruption
+          && probe.snapshot().interruptions.contains { interruption in
+            if case .paused(let pause) = interruption { return pause.reason == .interruption }
+            return false
           }
-          return false
-        },
-      )
+      }
+      #expect(paused == true)
+      #expect(engine.isRecording == true)
+      #expect(probe.snapshot().failureCount == 0)
       #expect(fileHasBytes(at: url) == true)
+
+      let completion = try await engine.stopRecording()
+      #expect(completion.completedURL == url)
       await bridge.cancel()
     }
 

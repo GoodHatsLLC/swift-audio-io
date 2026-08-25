@@ -28,6 +28,9 @@ func publicAPISnapshot_AIOAudioSession() throws {
   _ = AudioInputConfigurationReconciliation.self
   _ = AudioInputConfigurationRequest.self
   _ = AudioInputConfigurationState.self
+  _ = CaptureInputContract.self
+  _ = CaptureSubstitution.self
+  _ = AudioSessionHold.self
   _ = AudioInput.self
   _ = AudioInputPreference.self
   _ = AudioInputProcessingPreference.self
@@ -109,6 +112,10 @@ func publicAPISnapshotAsyncAudioSessionAPI(
 ) async throws {
   _ = await environment.requestInputConfiguration(.automatic)
   _ = try await environment.settleInputConfiguration()
+  _ = try await environment.resolveCaptureInputContract()
+  _ = await environment.refreshInputConfiguration()
+  let hold = try await environment.acquireAudioSessionHold()
+  await hold.release()
   try await environment.setAudioSessionActive(true)
   try await authority.setAudioSessionActive(true)
 

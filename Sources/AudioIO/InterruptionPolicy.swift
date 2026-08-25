@@ -15,6 +15,13 @@
   /// Shared recording and playback recovery policy for normalized audio-system
   /// events. Platform adapters only capture values and construct
   /// `AudioSystemEvent`.
+  ///
+  /// The recording rule is continuity: a running recording is *paused* by the
+  /// events the system forces (an interruption, media services going away)
+  /// and *adapted* through everything else (route changes, a route with no
+  /// input, a rebuild that fails). Nothing here stops a recording. Playback
+  /// follows the platform's advice, with one named exception for the route
+  /// the user physically unplugged.
   @MainActor
   struct InterruptionPolicy {
     let owner: AIOEngine
@@ -32,9 +39,7 @@
       case .mediaServicesReset:
         await handleMediaServicesReset()
       case .sessionActivated:
-        // Applied-state reconciliation is the environment manager's job. Here
-        // it is diagnostics only: activation is never a recovery trigger.
-        interruptionPolicyLog.info("Audio session became active")
+        await handleSessionActivated()
       case .sessionDeactivated(let deactivation):
         await handleSessionDeactivated(deactivation)
       case .resumptionRecommended(let shouldResume):
@@ -42,10 +47,12 @@
       }
     }
 
+    // MARK: - Session state channel (iOS 27)
+
     /// iOS 27 surfaces one interruption through *both*
     /// `interruptionBegan`/`Ended` and `didBecomeInactive`/`didBecomeActive`.
-    /// The dedup rule: interruption events are the recovery trigger, and a
-    /// session-state event only stages recovery when nothing is staged yet.
+    /// The dedup rule: interruption events are the trigger, and a
+    /// session-state event only acts when nothing is already paused or staged.
     private func handleSessionDeactivated(
       _ deactivation: AudioSessionDeactivation,
     ) async {
@@ -55,29 +62,36 @@
 
       guard deactivation.source == .system else {
         // This app asked for the deactivation. Whoever asked owns what happens
-        // next; staging a restart here would fight it.
+        // next; pausing here would fight it.
         return
       }
 
-      guard owner.audioRecoveryState.pendingRecording == nil,
+      guard owner.recordingPause == nil,
         owner.audioRecoveryState.pendingPlayback == nil
       else {
         interruptionPolicyLog.info(
-          "Session deactivation already covered by a staged interruption; not re-staging",
+          "Session deactivation already covered by an interruption; not re-staging",
         )
         return
       }
 
-      // The platform has already torn the session down, so this behaves like
-      // an interruption began: stage pending recovery and stop live I/O.
       await handleInterruptionBegan()
     }
 
-    /// The system's resumption advice. It may resume *playback*. It must never
-    /// restart a *recording*: leaving a live recording stops it, and
-    /// interruption-driven recording recovery goes through the
-    /// pending-recording flow, which requires the caller to still want
-    /// recording.
+    /// Applied-state reconciliation is the environment manager's job. For a
+    /// recording paused by an interruption, the session coming back is the
+    /// cue to try resuming — the interruption channel usually says so first,
+    /// and this is the backstop when it does not.
+    private func handleSessionActivated() async {
+      interruptionPolicyLog.info("Audio session became active")
+      if let pause = owner.recordingPause, case .interruption = pause.reason {
+        await owner.resumeRecording()
+      }
+    }
+
+    /// The system's resumption advice. It may resume *playback*; it never
+    /// touches a recording, which has its own resume path driven by the
+    /// interruption ending.
     private func handleResumptionRecommended(_ shouldResume: Bool) async {
       guard shouldResume else {
         interruptionPolicyLog.info(
@@ -90,8 +104,6 @@
       owner.audioRecoveryState.playbackResumptionSuppressed = false
 
       guard let playback = owner.audioRecoveryState.pendingPlayback else {
-        // Deliberately does not consult `pendingRecording`. A recommendation is
-        // never sufficient cause to put a microphone back on.
         interruptionPolicyLog.info("System recommends resuming; no pending playback to resume")
         return
       }
@@ -99,6 +111,8 @@
       owner.audioRecoveryState.pendingPlayback = nil
       await owner.restartPlayback(from: playback)
     }
+
+    // MARK: - Route changes
 
     private func handleRouteChange(_ change: AudioRouteChange) async {
       let previousFacts = owner.audioRecoveryState.observedInputFacts
@@ -112,27 +126,6 @@
       interruptionPolicyLog.info(
         "Handling route change: \(change.reason.userLabel, privacy: .public)",
       )
-
-      // A route notification is not by itself a reason to stop the engine and
-      // reinstall the tap. Two conditions have to hold together before this can
-      // be treated as a no-op: the reported facts must match the last ones
-      // observed (nothing about the route moved), *and* the live tap must
-      // already be running at those facts (the graph does not need rebuilding).
-      // Either alone is insufficient — matching facts with a stale or absent
-      // tap still needs a rebuild, and a healthy tap says nothing about a
-      // route that has since changed underneath it.
-      if let facts = change.inputFacts,
-        facts == previousFacts,
-        liveTapMatches(facts)
-      {
-        interruptionPolicyLog.info(
-          """
-          Route change (\(change.reason.userLabel, privacy: .public)) reports unchanged input \
-          facts and the live tap already matches them; keeping the tap installed.
-          """,
-        )
-        return
-      }
 
       guard
         let (configuration, processingFormat): (RecordingConfiguration, AVAudioFormat) =
@@ -155,8 +148,36 @@
         }
       #endif
 
+      if let pause = owner.recordingPause {
+        // A paused recording treats a route event as a chance to resume, if
+        // the route can feed it. An interruption pause waits for its own
+        // ending signal, and a media-services pause for the reset.
+        guard case .sourceUnavailable = pause.reason, change.isInputAvailable else { return }
+        await owner.resumeRecording()
+        return
+      }
+
+      // A route notification is not by itself a reason to stop the engine and
+      // reinstall the tap. Two conditions have to hold together before this can
+      // be treated as a no-op: the reported facts must match the last ones
+      // observed (nothing about the route moved), *and* the live tap must
+      // already be running at those facts (the graph does not need rebuilding).
+      if let facts = change.inputFacts,
+        facts == previousFacts,
+        liveTapMatches(facts)
+      {
+        interruptionPolicyLog.info(
+          """
+          Route change (\(change.reason.userLabel, privacy: .public)) reports unchanged input \
+          facts and the live tap already matches them; keeping the tap installed.
+          """,
+        )
+        return
+      }
+
       guard change.isInputAvailable else {
-        await stopRecordingForInterruption(reason: "No audio input available")
+        // The source is gone, the recording is not: it waits for a route.
+        await owner.pauseRecording(reason: .sourceUnavailable("No audio input available"))
         return
       }
 
@@ -182,6 +203,7 @@
         )
 
         guard owner.isRecording,
+          owner.recordingPause == nil,
           !owner.engineTearingDown.load(ordering: .sequentiallyConsistent),
           let result = installed
         else {
@@ -193,9 +215,9 @@
         // The reinstall refreshed the staged provenance; mirror it into the
         // observable so quality indicators track the new hardware format.
         owner.activeCaptureFormat = owner.state[locked: \.captureResolution]
-        let qualityChange = makeQualityChange(
-          from: formatBefore,
-          to: result.tapFormat,
+        let qualityChange = AIOEngine.AudioQualityChange.between(
+          formatBefore,
+          result.tapFormat,
           reason: change.reason.userLabel,
         )
         owner.eventSubject.send(
@@ -207,17 +229,16 @@
         interruptionPolicyLog.error(
           "Failed to reinstall tap after route change: \(error, privacy: .public)",
         )
-        await stopRecordingForInterruption(reason: "Route change reconfiguration failed")
+        // An engine limitation is not the OS forcing a stop. The recording
+        // waits for a route it can be rebuilt on.
+        await owner.pauseRecording(
+          reason: .sourceUnavailable("Route change reconfiguration failed: \(error)"),
+        )
       }
     }
 
     /// Whether a tap is installed and its converter input format is the one
     /// these facts describe.
-    ///
-    /// This is the "does the graph need rebuilding?" half of the no-op test. It
-    /// reads the staged tap state rather than `engine.isRunning`, because the
-    /// converter input format is the thing a rate or channel change actually
-    /// invalidates.
     private func liveTapMatches(_ facts: AudioInputFacts) -> Bool {
       let tapFormat: AVAudioFormat? = owner.state.withLock { state in
         guard state.installedTapBus != nil else { return nil }
@@ -230,8 +251,23 @@
       )
     }
 
+    // MARK: - Playback route changes
+
     private func recoverPlaybackAfterRouteChange(_ change: AudioRouteChange) async {
       guard owner.isPlayback, let resume = owner.capturePlaybackResumeState() else { return }
+
+      // The one route change that pauses on purpose: the user pulled the
+      // headphones. That is a user signal, not an environment change, so it
+      // gets the platform's conventional answer unless the caller opted out.
+      if owner.playbackRouteDisconnectBehavior == .pause,
+        change.reason == .deviceDisconnected,
+        resume.wasPlaying,
+        change.previousRoute?.outputs.contains(where: Self.isPersonalListeningPort) == true
+      {
+        interruptionPolicyLog.info("Personal listening route disconnected; pausing playback")
+        owner.pausePlayback()
+        return
+      }
 
       let (engineIsRunning, playerIsPlaying) = await owner.withEngineControlQueue {
         [weak owner] in
@@ -253,20 +289,28 @@
       await owner.restartPlayback(from: resume)
     }
 
+    /// Whether an output port is one a person listens to privately — the
+    /// ports whose disappearance means "the listener unplugged".
+    static func isPersonalListeningPort(_ port: AudioPortSnapshot) -> Bool {
+      let type = port.type.lowercased()
+      return type.contains("headphone")
+        || type.contains("bluetooth")
+        || type.contains("headset")
+        || type.contains("usb")
+    }
+
+    // MARK: - Interruptions
+
     private func handleInterruptionBegan() async {
       let hasRecording = owner.isRecording || owner.recordingLifecycleState.startOperationID != nil
       let hasPlayback = owner.isPlayback
       guard hasRecording || hasPlayback else { return }
 
       if owner.isRecording {
-        // Stash the *request*, not the resolved copy: a `.hardware` recording
-        // restarted after an interruption must re-resolve against whatever
-        // route exists then, not the one that existed before.
-        owner.audioRecoveryState.pendingRecording =
-          owner.state.withLock { $0.requestedRecordingConfiguration ?? $0.recordingConfiguration }
-          ?? owner.recordingLifecycleState.lastRecordingConfiguration
-        await stopRecordingForInterruption(reason: "Audio session interrupted")
+        await owner.pauseRecording(reason: .interruption)
       } else if owner.recordingLifecycleState.isStartingRecording {
+        // The in-flight start cannot finish under an interruption; the caller
+        // owns the retry.
         owner.recordingLifecycleState.startAbortRequested = true
       }
 
@@ -278,19 +322,28 @@
     }
 
     private func handleInterruptionEnded(shouldResume: Bool) async {
-      let recording = owner.audioRecoveryState.pendingRecording
       let playback = owner.audioRecoveryState.pendingPlayback
       let playbackSuppressed = owner.audioRecoveryState.playbackResumptionSuppressed
       owner.audioRecoveryState.clear()
 
+      // The recording was armed by the user, so its intent is known.
+      // `shouldResume` is the system's advice about *playback*; for a
+      // recording it only changes how soon the attempt is likely to succeed.
+      if owner.recordingPause != nil {
+        if !shouldResume {
+          interruptionPolicyLog.info(
+            "Interruption ended without resume advice; the recording still tries to resume",
+          )
+        }
+        await owner.resumeRecording()
+      }
+
       guard shouldResume else {
-        interruptionPolicyLog.info("Interruption ended without permission to resume")
+        interruptionPolicyLog.info("Interruption ended without permission to resume playback")
         return
       }
 
-      if let recording {
-        await restartRecording(recording)
-      } else if let playback {
+      if let playback {
         guard !playbackSuppressed else {
           interruptionPolicyLog.info(
             "Playback restart suppressed by the system's resumption recommendation",
@@ -300,6 +353,8 @@
         await owner.restartPlayback(from: playback)
       }
     }
+
+    // MARK: - Media services
 
     private func handleMediaServicesLost() async {
       interruptionPolicyLog.warning("Media services lost; tearing down engine state")
@@ -317,14 +372,7 @@
       }
 
       if owner.isRecording {
-        // Same as the interruption path: restart from the request so
-        // `.hardware` re-resolves against the post-reset route.
-        owner.audioRecoveryState.pendingRecording =
-          owner.state.withLock { $0.requestedRecordingConfiguration ?? $0.recordingConfiguration }
-          ?? owner.recordingLifecycleState.lastRecordingConfiguration
-        await stopRecordingForInterruption(reason: "Media services lost")
-      } else {
-        owner.audioRecoveryState.pendingRecording = nil
+        await owner.pauseRecording(reason: .mediaServicesLost)
       }
 
       await resetEngineForMediaServices()
@@ -345,51 +393,14 @@
       await resetEngineForMediaServices()
       owner.audioRecoveryState.mediaServicesAreAvailable = true
 
-      let recording = owner.audioRecoveryState.pendingRecording
       let playback = owner.audioRecoveryState.pendingPlayback
       owner.audioRecoveryState.clear()
 
-      if let recording {
-        await restartRecording(recording)
-      } else if let playback {
+      if owner.recordingPause != nil {
+        await owner.resumeRecording()
+      }
+      if let playback {
         await owner.restartPlayback(from: playback)
-      }
-    }
-
-    private func stopRecordingForInterruption(reason: String) async {
-      guard owner.isRecording || owner.recordingLifecycleState.startOperationID != nil else {
-        return
-      }
-
-      if !owner.isRecording {
-        if owner.recordingLifecycleState.isStartingRecording {
-          owner.recordingLifecycleState.startAbortRequested = true
-        }
-        return
-      }
-
-      owner.eventSubject.send(
-        .recordingInterruption(.stoppedByInterruption(reason: reason)),
-      )
-
-      if owner.recordingLifecycleState.isStartingRecording {
-        owner.recordingLifecycleState.startAbortRequested = true
-        return
-      }
-
-      await owner.recording.gracefulStop()
-      owner.eventSubject.send(.recordingFailed)
-    }
-
-    private func restartRecording(_ configuration: RecordingConfiguration) async {
-      do {
-        _ = try await owner.startRecording(configuration: configuration)
-      } catch RecordingError.startInProgress {
-        // The original bounded start still owns recovery.
-      } catch {
-        interruptionPolicyLog.error("Recording recovery failed: \(error, privacy: .public)")
-        owner.eventSubject.send(.error(error))
-        owner.eventSubject.send(.recordingFailed)
       }
     }
 
@@ -403,24 +414,6 @@
           owner.engine.attach(owner.player)
         }
       }
-    }
-
-    private func makeQualityChange(
-      from oldFormat: AVAudioFormat,
-      to newFormat: AVAudioFormat,
-      reason: String,
-    ) -> AIOEngine.AudioQualityChange? {
-      let channelsChanged = oldFormat.channelCount != newFormat.channelCount
-      let sampleRateChanged = abs(oldFormat.sampleRate - newFormat.sampleRate) > 1
-      guard channelsChanged || sampleRateChanged else { return nil }
-
-      return AIOEngine.AudioQualityChange(
-        reason: reason,
-        previousChannels: oldFormat.channelCount,
-        currentChannels: newFormat.channelCount,
-        previousSampleRate: oldFormat.sampleRate,
-        currentSampleRate: newFormat.sampleRate,
-      )
     }
   }
 #endif

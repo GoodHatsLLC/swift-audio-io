@@ -128,14 +128,18 @@
           () throws(SessionError) -> Void in
           try applyPreferredInputIfNeeded(for: configuration, session: session)
 
+          // The contract asks for `desiredChannels`; the route is asked for as
+          // many of them as it can carry, and the remainder is replication at
+          // the tap. Preferring more than the route has is a platform error,
+          // not a way to get more channels.
           let desiredChannels = configuration.requestedFormat.channels.count
-          try RecordingInputChannelContract.validateRouteCapacity(
+          let preferredChannels = RecordingInputChannelContract.preferredRouteChannels(
             requested: desiredChannels,
             maximum: session.maximumInputNumberOfChannels,
           )
           do {
             try AudioSessionPreferenceWrite.perform(
-              desiredChannels,
+              preferredChannels,
               whenNot: session.preferredInputNumberOfChannels,
             ) { try session.setPreferredInputNumberOfChannels($0) }
           } catch {
@@ -144,13 +148,13 @@
               error: ErrorContext(error),
             )
           }
-          try RecordingInputChannelContract.validateCaptureFormat(
+          let adaptation = RecordingInputChannelContract.adaptation(
             requested: desiredChannels,
             actual: session.inputNumberOfChannels,
           )
 
           recordingSessionLog.info(
-            "Audio session configured - Sample rate: \(session.sampleRate, privacy: .public), Buffer duration: \(session.ioBufferDuration, privacy: .public), Input channels: \(session.inputNumberOfChannels, privacy: .public)",
+            "Audio session configured - Sample rate: \(session.sampleRate, privacy: .public), Buffer duration: \(session.ioBufferDuration, privacy: .public), Input channels: \(session.inputNumberOfChannels, privacy: .public), adaptation: \(adaptation, privacy: .public)",
           )
         }.get()
       }
@@ -169,7 +173,14 @@
 
         guard let port = session.availableInputs?.first(where: { $0.uid == preferredInput.id })
         else {
-          throw .preferredInputUnavailable(id: preferredInput.id, name: preferredInput.name)
+          // The requested input is not on this route. Starting is not
+          // contingent on it: capture proceeds on the current input and says
+          // so. The request itself is untouched and follows the route back
+          // when the input returns.
+          owner.recordCaptureSubstitution(
+            .preferredInputUnavailable(id: preferredInput.id, name: preferredInput.name),
+          )
+          return
         }
 
         do {
@@ -182,6 +193,19 @@
 
         let currentInputIDs = session.currentRoute.inputs.map(\.uid)
         guard currentInputIDs.contains(preferredInput.id) else {
+          if owner.state[locked: \.toleratesPreferredInputMismatch] {
+            // The deadline loop's last attempt: the route has been asked for
+            // the input and has not switched yet. Start on what is there and
+            // let the route change reinstall the tap when it does.
+            owner.recordCaptureSubstitution(
+              .preferredInputPending(
+                id: preferredInput.id,
+                name: preferredInput.name,
+                currentInputIDs: currentInputIDs,
+              ),
+            )
+            return
+          }
           throw .preferredInputRouteMismatch(
             id: preferredInput.id,
             name: preferredInput.name,

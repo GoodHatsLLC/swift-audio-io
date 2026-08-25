@@ -33,6 +33,15 @@
       }
     }
 
+    /// Records one thing bring-up changed about the request. Idempotent, so an
+    /// attempt retried by the start deadline loop does not report it twice.
+    package nonisolated func recordCaptureSubstitution(_ substitution: CaptureSubstitution) {
+      state.withLock { state in
+        guard !state.captureSubstitutions.contains(substitution) else { return }
+        state.captureSubstitutions.append(substitution)
+      }
+    }
+
     nonisolated func makeTapConversionArtifacts(
       inputFormat: AVAudioFormat,
       processingFormat: AVAudioFormat,
@@ -40,6 +49,16 @@
     ) throws(RecordingError) -> TapConversionArtifacts {
       guard let converter = AVAudioConverter(from: inputFormat, to: processingFormat) else {
         throw RecordingError.formatConversionFailed
+      }
+      // A route narrower than the contract is replicated into it — mono into
+      // both channels of a stereo file — by an explicit channel map, so the
+      // result does not depend on the converter's default for the pairing.
+      // A wider route keeps the converter's own downmix.
+      if let channelMap = RecordingInputChannelContract.replicationChannelMap(
+        source: Int(inputFormat.channelCount),
+        contract: Int(processingFormat.channelCount),
+      ) {
+        converter.channelMap = channelMap.map { NSNumber(value: $0) }
       }
       let tapFrameRatio = processingFormat.sampleRate / inputFormat.sampleRate
       let maxTapFrames = max(
@@ -412,6 +431,7 @@
             sampleRate: SampleRate(processingFormat.sampleRate),
             channels: ChannelCount(platform: processingFormat.channelCount),
           ),
+          substitutions: state.captureSubstitutions,
         )
         return Transferring(
           TapSnapshot(

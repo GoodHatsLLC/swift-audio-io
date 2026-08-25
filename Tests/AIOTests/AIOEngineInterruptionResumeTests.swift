@@ -10,48 +10,75 @@
   @testable import AIOAudioSession
   import AudioIO
 
-  /// Exercises the audio-session interruption **resume decision** for recording.
+  /// Exercises the audio-session interruption **pause and resume** for
+  /// recording.
   ///
-  /// Both the initial start and the resume run the real
-  /// `RecordingLifecycle.attemptRecordingStart`; only the tap install, engine
-  /// start, and graph teardown are faked. A resume is therefore observable as a
-  /// second `start()` on the capture backend.
+  /// The start runs the real `RecordingLifecycle.attemptRecordingStart`; only
+  /// the tap install, engine start, and graph teardown are faked. A pause is
+  /// observable as `recordingPause` with `isRecording` still true, and a
+  /// resume as one more tap install into the same, never-closed file.
   @MainActor
   struct AIOEngineInterruptionResumeTests {
     @Test
-    func `interruption resumes recording when shouldResume is set`() async throws {
-      let (engine, backend, _) = AIOEngine.fakeRecording()
+    func `interruption pauses recording and the ending resumes it into the same file`()
+      async throws
+    {
+      let (engine, backend, tapInstaller) = AIOEngine.fakeRecording()
 
       let url = try await engine.startRecording(configuration: makeConfiguration())
       defer { try? FileManager.default.removeItem(at: url) }
       #expect(backend.startCalls == 1)
+      let installsAfterStart = tapInstaller.installCount()
 
-      // `.began` tears down recording but stages the configuration for resume.
       await engine.handleAudioSystemEvent(.interruptionBegan)
-      #expect(engine.isRecording == false)
-
-      // `.ended` with `.shouldResume` re-enters the canonical awaited start path.
-      await engine.handleAudioSystemEvent(.interruptionEnded(shouldResume: true))
-      #expect(backend.startCalls == 2)
       #expect(engine.isRecording)
+      #expect(engine.recordingPause?.reason == .interruption)
+      #expect(engine.state.withLock { $0.recordingURL } == url)
+
+      await engine.handleAudioSystemEvent(.interruptionEnded(shouldResume: true))
+      #expect(engine.recordingPause == nil)
+      #expect(engine.isRecording)
+      #expect(tapInstaller.installCount() == installsAfterStart + 1)
+      #expect(engine.state.withLock { $0.recordingURL } == url)
+      // The file never closed, so the capture backend never restarted.
+      #expect(backend.startCalls == 1)
+
+      _ = try await engine.stopRecording()
     }
 
     @Test
-    func `interruption does not resume recording without shouldResume`() async throws {
-      let (engine, backend, _) = AIOEngine.fakeRecording()
+    func `interruption ending without resume advice still resumes a recording`() async throws {
+      let (engine, _, tapInstaller) = AIOEngine.fakeRecording()
 
       let url = try await engine.startRecording(configuration: makeConfiguration())
       defer { try? FileManager.default.removeItem(at: url) }
-      #expect(backend.startCalls == 1)
+      let installsAfterStart = tapInstaller.installCount()
 
       await engine.handleAudioSystemEvent(.interruptionBegan)
-      #expect(engine.isRecording == false)
+      #expect(engine.recordingPause != nil)
 
-      // `.ended` without `.shouldResume` (cases the system deems unsafe to resume,
-      // e.g. some Siri/route-loss endings) must leave recording stopped.
+      // The user armed the recording; the system's advice is about playback.
       await engine.handleAudioSystemEvent(.interruptionEnded(shouldResume: false))
+      #expect(engine.recordingPause == nil)
+      #expect(engine.isRecording)
+      #expect(tapInstaller.installCount() == installsAfterStart + 1)
+
+      _ = try await engine.stopRecording()
+    }
+
+    @Test
+    func `stopping a paused recording completes it`() async throws {
+      let (engine, _, _) = AIOEngine.fakeRecording()
+
+      let url = try await engine.startRecording(configuration: makeConfiguration())
+      defer { try? FileManager.default.removeItem(at: url) }
+      await engine.handleAudioSystemEvent(.interruptionBegan)
+      #expect(engine.recordingPause != nil)
+
+      let completion = try await engine.stopRecording()
+      #expect(completion.completedURL == url)
       #expect(engine.isRecording == false)
-      #expect(backend.startCalls == 1)
+      #expect(engine.recordingPause == nil)
     }
 
     private func makeConfiguration() -> RecordingConfiguration {

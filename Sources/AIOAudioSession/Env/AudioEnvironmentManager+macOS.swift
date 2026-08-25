@@ -67,6 +67,12 @@
     private let platformAudioBackend: any PlatformAudioBackend
     private let inputConfigurationCoordinator: AudioInputConfigurationCoordinator
     private let callbackTasks = MainActorTaskRunner()
+    /// Holds that keep the session active past the engine's release of its
+    /// own demand. See ``acquireAudioSessionHold()``.
+    @ObservationIgnored private var audioSessionHoldCount = 0
+    /// Whether a release arrived while holds existed and is owed when the
+    /// last hold goes.
+    @ObservationIgnored private var deactivationDeferredByHold = false
     private var routeObserver: AudioRouteObserver { .init(owner: self) }
     private var backendRouteTask: MainActorOwnedWork?
     private var currentRoute = AudioRouteSnapshot(inputs: [], outputs: [])
@@ -193,6 +199,18 @@
     }
 
     public func setAudioSessionActive(_ active: Bool) async throws(ManagerError) {
+      if active {
+        deactivationDeferredByHold = false
+      } else if audioSessionHoldCount > 0 {
+        // The engine is done with the session, but a surface is not. Keep it
+        // active and settle the release when the last hold goes.
+        deactivationDeferredByHold = true
+        return
+      }
+      await applyAudioSessionActive(active)
+    }
+
+    private func applyAudioSessionActive(_ active: Bool) async {
       guard isRunning else { return }
       guard isAudioSessionActive != active else {
         if active {
@@ -206,6 +224,38 @@
       } else {
         inputConfigurationState = inputConfigurationCoordinator.markUnavailable(.sessionInactive)
       }
+    }
+
+    /// Keeps the session active until the returned hold is released.
+    public func acquireAudioSessionHold() async throws(ManagerError) -> AudioSessionHold {
+      audioSessionHoldCount += 1
+      await applyAudioSessionActive(true)
+      deactivationDeferredByHold = false
+      return AudioSessionHold { [weak self] in
+        await self?.releaseAudioSessionHold()
+      }
+    }
+
+    private func releaseAudioSessionHold() async {
+      audioSessionHoldCount = max(0, audioSessionHoldCount - 1)
+      guard audioSessionHoldCount == 0, deactivationDeferredByHold else { return }
+      deactivationDeferredByHold = false
+      await applyAudioSessionActive(false)
+    }
+
+    /// Re-reads capabilities and applied state from the platform without
+    /// changing the request — a configuration surface's refresh.
+    public func refreshInputConfiguration() async -> AudioInputConfigurationState {
+      await reconcileInputConfiguration()
+      return inputConfigurationState
+    }
+
+    /// The contract the next microphone capture starts with. Reconciles the
+    /// latest request first; never refuses.
+    public func resolveCaptureInputContract() async throws(ManagerError) -> CaptureInputContract {
+      try await readySignal()
+      await reconcileInputConfiguration()
+      return CaptureInputContract.derive(from: inputConfigurationState)
     }
 
     public func run() async throws(ManagerError) {
@@ -233,10 +283,14 @@
       previousRoute: AudioRouteSnapshot,
       currentRoute: AudioRouteSnapshot,
     ) async {
+      // The facts travel with the event so a live recording can tell a
+      // no-op poll from a real change instead of rebuilding its tap on every
+      // signature flap.
       let routeChange = AudioRouteChange(
         reason: .configurationChanged,
         previousRoute: previousRoute,
         currentRoute: currentRoute,
+        session: await platformAudioBackend.currentInputSessionSnapshot(),
       )
       await eventHub.dispatch(.routeChanged(routeChange))
     }
@@ -354,7 +408,7 @@
         id: descriptor.id,
         name: descriptor.name,
         type: descriptor.type,
-        channelCount: descriptor.channelCount >= 2 ? .stereo : .mono,
+        channelCount: ChannelCount(count: descriptor.channelCount),
       )
     }
   }

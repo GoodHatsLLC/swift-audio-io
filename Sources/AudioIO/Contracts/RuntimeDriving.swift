@@ -28,8 +28,14 @@
   public protocol AudioEnvironmentDriving: AnyObject, Sendable {
     var isAudioSessionActive: Bool { get }
 
-    func settleInputConfiguration()
-      async throws(AudioEnvironmentError) -> SettledMicrophoneInputConfiguration
+    /// The contract the next microphone capture starts with, derived from the
+    /// request against the live environment. Never refuses; see
+    /// ``CaptureInputContract``.
+    func resolveCaptureInputContract()
+      async throws(AudioEnvironmentError) -> CaptureInputContract
+    /// Keeps the session engaged until the returned hold is released, so a
+    /// configuration surface shows the route the next recording runs on.
+    func acquireAudioSessionHold() async throws(AudioEnvironmentError) -> AudioSessionHold
     func setAudioSessionActive(_ active: Bool) async throws(AudioEnvironmentError)
 
     func readySignal() async throws(AudioEnvironmentError)
@@ -43,6 +49,10 @@
     func requestInputConfiguration(
       _ requested: AudioInputConfigurationRequest
     ) async -> AudioInputConfigurationState
+
+    /// Re-reads capabilities and applied state from the platform without
+    /// changing the request.
+    func refreshInputConfiguration() async -> AudioInputConfigurationState
   }
 
   @MainActor

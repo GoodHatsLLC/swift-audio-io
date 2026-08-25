@@ -94,14 +94,20 @@
       }
     }
 
-    /// An event representing a recording interruption.
+    /// Something the environment did to a running recording — and what the
+    /// recording did about it. None of these is a stop: a recording ends only
+    /// when its caller stops it.
     public enum RecordingInterruption: Sendable {
       /// The audio route changed, but recording is continuing.
       case routeChangeContinuing(event: AudioRouteChange, qualityChange: AudioQualityChange?)
-      /// The recording was stopped by an interruption (e.g., a phone call,
-      /// a lost input, or a media-services reset). A user-initiated stop is
-      /// reported by ``AudioIOEvent/recordingCompleted`` instead.
-      case stoppedByInterruption(reason: String)
+      /// The input node's format changed without a route change (a same-device
+      /// sample-rate change, say); recording is continuing at the new format.
+      case captureFormatChanged(qualityChange: AudioQualityChange?)
+      /// Capture is paused: no frames are being written, the file is open,
+      /// and the recording resumes into it when the cause lifts.
+      case paused(RecordingPause)
+      /// Capture resumed into the same file after a pause.
+      case resumed(RecordingPause, qualityChange: AudioQualityChange?)
 
       public var description: String {
         switch self {
@@ -111,10 +117,32 @@
           } else {
             "\(event.userMessage), continuing with same quality"
           }
-        case .stoppedByInterruption(let reason):
-          "Recording interrupted: \(reason)"
+        case .captureFormatChanged(let qualityChange):
+          if let change = qualityChange {
+            "Input format changed, continuing with: \(change.description)"
+          } else {
+            "Input format changed, continuing with same quality"
+          }
+        case .paused(let pause):
+          "Recording paused: \(pause.reason)"
+        case .resumed(let pause, let qualityChange):
+          if let change = qualityChange {
+            "Recording resumed after \(pause.reason), continuing with: \(change.description)"
+          } else {
+            "Recording resumed after \(pause.reason)"
+          }
         }
       }
+    }
+
+    /// What playback does when a personal-listening output — headphones, a
+    /// Bluetooth headset, a USB device — disconnects while playing.
+    public enum PlaybackRouteDisconnectBehavior: Sendable, Hashable {
+      /// Pause, the platform convention: a private listen should not continue
+      /// out loud on the built-in speaker.
+      case pause
+      /// Keep playing on whatever route the system picks next.
+      case `continue`
     }
 
     /// A struct representing the current playback state.
@@ -407,6 +435,20 @@
     /// 16 kHz Bluetooth mic is visible here — drive quality indicators off
     /// ``ResolvedCaptureFormat/effectiveSampleRate``, not the file's rate.
     @MainActor public package(set) var activeCaptureFormat: ResolvedCaptureFormat?
+
+    /// Why the active recording is paused, or `nil` while it is capturing (or
+    /// nothing is recording). A paused recording still reports
+    /// ``isRecording``: the file is open and the contract holds; only frames
+    /// are not arriving. See ``RecordingPause``.
+    @MainActor public package(set) var recordingPause: RecordingPause?
+
+    /// The `AVAudioEngineConfigurationChange` watch, started at the first
+    /// recording bring-up.
+    @MainActor @ObservationIgnored package var engineConfigurationObserver: MainActorOwnedWork?
+
+    /// What playback does when the route the listener was using disconnects.
+    /// Defaults to the platform convention.
+    @MainActor public var playbackRouteDisconnectBehavior: PlaybackRouteDisconnectBehavior = .pause
 
     /// The immutable authority for shared platform audio-session activation.
     ///

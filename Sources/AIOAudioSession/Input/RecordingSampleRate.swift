@@ -137,28 +137,85 @@ extension RecordingSampleRate: Codable {
     }
   }
 
+  /// One thing capture bring-up changed about the request in order to start.
+  ///
+  /// A recording never refuses to start because the environment could not
+  /// honour part of its request; it starts with the closest satisfiable
+  /// configuration and says what it changed. Every case is a fact for the
+  /// caller to present and record, never an error.
+  public enum CaptureSubstitution: Hashable, Sendable, CustomStringConvertible {
+    /// The requested input was not available; capture uses the route's
+    /// current input instead. The request is untouched.
+    case preferredInputUnavailable(id: String, name: String)
+    /// The requested input was accepted but the route had not switched to it
+    /// before the start deadline; capture began on the current input and will
+    /// follow the route when it changes.
+    case preferredInputPending(id: String, name: String, currentInputIDs: [String])
+    /// The output container could not carry the requested rate, so the
+    /// container yielded (channel layout › sample rate › bit depth › container).
+    case containerReplaced(from: FileFormat, to: FileFormat, sampleRate: SampleRate)
+    /// The requested rate could not be carried by a container the caller had
+    /// already committed to by name, so the rate yielded to the nearest one
+    /// the container supports.
+    case sampleRateClamped(from: SampleRate, to: SampleRate, fileFormat: FileFormat)
+
+    public var description: String {
+      switch self {
+      case .preferredInputUnavailable(_, let name):
+        "\(name) is not available; using the current input"
+      case .preferredInputPending(_, let name, _):
+        "\(name) has not become the active input yet; using the current input"
+      case .containerReplaced(let from, let to, let sampleRate):
+        "\(from.description) can't carry \(sampleRate.description); writing \(to.description)"
+      case .sampleRateClamped(let from, let to, let fileFormat):
+        "\(fileFormat.description) can't carry \(from.description); recording at \(to.description)"
+      }
+    }
+  }
+
   /// How a recording's capture-format request was satisfied against live
   /// hardware.
   ///
   /// The start-time counterpart of `AudioQualityChange`: it reports what the
   /// route was actually running when the tap was installed (``hardware``) and
   /// what the pipeline converts to and the file is written at
-  /// (``processing``) — making an always-on resample, or a low-bandwidth
-  /// Bluetooth mic feeding a high-rate file, visible instead of silent.
+  /// (``processing``) — making an always-on resample, a mono route replicated
+  /// into a stereo file, or a low-bandwidth Bluetooth mic feeding a high-rate
+  /// file, visible instead of silent. ``substitutions`` lists what bring-up
+  /// changed about the request in order to start at all.
   public struct ResolvedCaptureFormat: Hashable, Sendable, CustomStringConvertible {
     /// What the route was running when capture was installed.
     public let hardware: InputConfiguration
     /// What the pipeline converts to and the file is written at.
     public let processing: InputConfiguration
+    /// What bring-up changed about the request in order to start.
+    public let substitutions: [CaptureSubstitution]
 
-    public init(hardware: InputConfiguration, processing: InputConfiguration) {
+    public init(
+      hardware: InputConfiguration,
+      processing: InputConfiguration,
+      substitutions: [CaptureSubstitution] = [],
+    ) {
       self.hardware = hardware
       self.processing = processing
+      self.substitutions = substitutions
     }
 
     /// Whether an `AVAudioConverter` sits between hardware and file.
     public var isResampling: Bool {
       hardware.sampleRate != processing.sampleRate
+    }
+
+    /// Whether the source has fewer channels than the file and is being
+    /// duplicated to fill it — a mono route feeding a stereo contract.
+    public var isReplicatingChannels: Bool {
+      hardware.channels < processing.channels
+    }
+
+    /// Whether the source has more channels than the file and is being mixed
+    /// down into it.
+    public var isDownmixingChannels: Bool {
+      hardware.channels > processing.channels
     }
 
     /// An honest ceiling on captured audio bandwidth.
@@ -171,9 +228,14 @@ extension RecordingSampleRate: Codable {
     }
 
     public var description: String {
-      isResampling
+      var text =
+        (isResampling || isReplicatingChannels || isDownmixingChannels)
         ? "\(processing) (converted from \(hardware))"
         : "\(processing) (hardware native)"
+      if !substitutions.isEmpty {
+        text += "; " + substitutions.map(\.description).joined(separator: "; ")
+      }
+      return text
     }
   }
 #endif

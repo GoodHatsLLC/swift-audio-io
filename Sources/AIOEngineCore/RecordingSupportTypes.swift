@@ -311,6 +311,14 @@
     package var tapConverterInputFormat: AVAudioFormat?
     package var tapConverterOutputFormat: AVAudioFormat?
     package var tapConvertedBuffer: AVAudioPCMBuffer?
+    /// What bring-up changed about the request in order to start, accumulated
+    /// across the attempts of one awaited start and published through
+    /// ``captureResolution``. Reset when a start operation begins.
+    package var captureSubstitutions: [CaptureSubstitution] = []
+    /// Set for the final attempt of a start whose deadline expired while the
+    /// route had not yet switched to the preferred input: that attempt begins
+    /// capture on the current input instead of failing.
+    package var toleratesPreferredInputMismatch = false
   }
 
   package struct TapConversionArtifacts {

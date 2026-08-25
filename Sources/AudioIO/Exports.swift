@@ -122,6 +122,9 @@
   public typealias SessionError = AIOAudioSession.SessionError
   public typealias SettledMicrophoneInputConfiguration =
     AIOAudioSession.SettledMicrophoneInputConfiguration
+  public typealias CaptureInputContract = AIOAudioSession.CaptureInputContract
+  public typealias CaptureSubstitution = AIOAudioSession.CaptureSubstitution
+  public typealias AudioSessionHold = AIOAudioSession.AudioSessionHold
   public typealias SourceLocation = AIOAudioSession.SourceLocation
   public typealias TypeDescribable = AIOAudioSession.TypeDescribable
 

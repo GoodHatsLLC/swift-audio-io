@@ -228,23 +228,29 @@
     }
 
     @Test
-    func `interruption stops recording`() async throws {
-      let (engine, backend, _) = AIOEngine.fakeRecording()
+    func `interruption pauses recording and keeps the file open`() async throws {
+      let (engine, backend, tapInstaller) = AIOEngine.fakeRecording()
       let configuration = makeConfiguration()
-
-      // Bypass the real AVAudioEngine teardown, which crashes the iOS Simulator
-      // audio HAL; the writer drain and stop transitions still run.
 
       let url = try await engine.startRecording(configuration: configuration)
       defer { try? FileManager.default.removeItem(at: url) }
+      let installsAfterStart = tapInstaller.installCount()
 
       backend.inject(channels: [ramp(count: 256)])
 
       await engine.handleAudioSystemEvent(.interruptionBegan)
 
-      let isRecording = await engine.isRecording
-      #expect(isRecording == false)
+      // Paused, not stopped: the recording keeps its identity and its file.
+      #expect(await engine.isRecording == true)
+      #expect(await MainActor.run { engine.recordingPause?.reason } == .interruption)
+      #expect(engine.state.withLock { $0.recordingURL } == url)
 
+      await engine.handleAudioSystemEvent(.interruptionEnded(shouldResume: true))
+      #expect(await MainActor.run { engine.recordingPause } == nil)
+      #expect(tapInstaller.installCount() == installsAfterStart + 1)
+
+      let completion = try await engine.stopRecording()
+      #expect(completion.completedURL == url)
       let size = try #require(url.resourceValues(forKeys: [.fileSizeKey]).fileSize)
       #expect(size > 0)
     }
@@ -326,7 +332,7 @@
     }
 
     @Test
-    func `handle route change stops when tap reconfigure fails`() async throws {
+    func `handle route change pauses when tap reconfigure fails`() async throws {
       // The start installs cleanly; the route-change reinstall fails.
       let (engine, _, _) = AIOEngine.fakeRecording(
         tapInstaller: FakeTapInstaller(
@@ -349,19 +355,29 @@
       )
       await engine.handleAudioSystemEvent(.routeChanged(event))
 
-      #expect(await engine.isRecording == false)
+      // An engine limitation is not the OS forcing a stop: the recording
+      // waits, paused, for a route it can be rebuilt on.
+      #expect(await engine.isRecording == true)
+      let pause = await MainActor.run { engine.recordingPause }
+      guard case .sourceUnavailable = pause?.reason else {
+        Issue.record("Expected a source-unavailable pause, got \(String(describing: pause))")
+        return
+      }
 
       let captured = await waitUntil(timeout: .seconds(2)) {
         let snapshot = probe.snapshot()
-        return snapshot.failureCount == 1
+        return snapshot.failureCount == 0
           && snapshot.interruptions.contains { interruption in
-            if case .stoppedByInterruption(let reason) = interruption {
-              return reason == "Route change reconfiguration failed"
+            if case .paused(let pause) = interruption,
+              case .sourceUnavailable = pause.reason
+            {
+              return true
             }
             return false
           }
       }
       #expect(captured == true)
+      _ = try await engine.stopRecording()
       await bridge.cancel()
     }
 

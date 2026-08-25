@@ -240,6 +240,13 @@
       AudioInputConfigurationCoordinator
     @ObservationIgnored var callbackTasks = MainActorTaskRunner()
 
+    /// Holds that keep the session active past the engine's release of its
+    /// own demand. See ``acquireAudioSessionHold()``.
+    @ObservationIgnored private var audioSessionHoldCount = 0
+    /// Whether a release arrived while holds existed and is owed when the
+    /// last hold goes.
+    @ObservationIgnored private var deactivationDeferredByHold = false
+
     private var lifecycleRuntime: AudioEnvironmentLifecycleRuntime { .init(owner: self) }
     var sessionBootstrap: AudioSessionBootstrap { .init(owner: self) }
     var sessionController: AudioSessionController { .init(owner: self) }
@@ -402,7 +409,67 @@
     }
 
     public func setAudioSessionActive(_ active: Bool) async throws(ManagerError) {
+      if active {
+        deactivationDeferredByHold = false
+      } else if audioSessionHoldCount > 0 {
+        // The engine is done with the session, but a surface is not. Keep it
+        // active and settle the release when the last hold goes.
+        deactivationDeferredByHold = true
+        log.info(
+          "Audio session release deferred by \(self.audioSessionHoldCount, privacy: .public) hold(s)",
+        )
+        return
+      }
       try await sessionController.setAudioSessionActive(active)
+    }
+
+    /// Keeps the session active — engaged under the recording category, with
+    /// the latest request reconciled against the live route — until the
+    /// returned hold is released. Activation failures throw, and no hold is
+    /// taken in that case.
+    public func acquireAudioSessionHold() async throws(ManagerError) -> AudioSessionHold {
+      audioSessionHoldCount += 1
+      do {
+        try await sessionController.setAudioSessionActive(true)
+      } catch {
+        audioSessionHoldCount -= 1
+        throw error
+      }
+      deactivationDeferredByHold = false
+      return AudioSessionHold { [weak self] in
+        await self?.releaseAudioSessionHold()
+      }
+    }
+
+    private func releaseAudioSessionHold() async {
+      audioSessionHoldCount = max(0, audioSessionHoldCount - 1)
+      guard audioSessionHoldCount == 0, deactivationDeferredByHold else { return }
+      deactivationDeferredByHold = false
+      do {
+        try await sessionController.setAudioSessionActive(false)
+      } catch {
+        errorManager.enqueue(
+          error,
+          visibility: .debug,
+          userMessage: nil,
+          context: "Audio session release after hold",
+        )
+      }
+    }
+
+    /// Re-reads capabilities and applied state from the platform without
+    /// changing the request — a configuration surface's refresh.
+    public func refreshInputConfiguration() async -> AudioInputConfigurationState {
+      await reconcileInputConfiguration()
+      return inputConfigurationState
+    }
+
+    /// The contract the next microphone capture starts with. Reconciles the
+    /// latest request against the live route first; never refuses.
+    public func resolveCaptureInputContract() async throws(ManagerError) -> CaptureInputContract {
+      try await readySignal()
+      await reconcileInputConfiguration()
+      return CaptureInputContract.derive(from: inputConfigurationState)
     }
 
     public func run() async throws(ManagerError) {

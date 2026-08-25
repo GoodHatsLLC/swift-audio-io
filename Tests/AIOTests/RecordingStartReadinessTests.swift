@@ -63,11 +63,7 @@
     @MainActor
     @Test
     func `canonical start timeout retains last transient session failure`() async {
-      let lastFailure = SessionError.preferredInputRouteMismatch(
-        id: "preferred",
-        name: "Preferred Mic",
-        currentInputIDs: ["built-in"],
-      )
+      let lastFailure = SessionError.notReady(details: "route still settling")
       let readiness = ScriptedRecordingStartReadiness(
         steps: [.failure(.session(lastFailure))],
       )
@@ -84,6 +80,39 @@
       } catch {
         Issue.record("Unexpected error: \(error)")
       }
+    }
+
+    /// A route that has not switched to the preferred input by the deadline
+    /// is not a reason to refuse: the loop takes one more attempt with the
+    /// mismatch tolerated, so capture begins on the current input.
+    @MainActor
+    @Test
+    func `route mismatch past the deadline earns one lenient attempt`() async throws {
+      let expectedURL = FileManager.default.temporaryDirectory
+        .appendingPathComponent("readiness-lenient-\(UUID().uuidString).caf")
+      let mismatch = SessionError.preferredInputRouteMismatch(
+        id: "preferred",
+        name: "Preferred Mic",
+        currentInputIDs: ["built-in"],
+      )
+      let readiness = ScriptedRecordingStartReadiness(
+        steps: [.failure(.session(mismatch)), .success(expectedURL)],
+      )
+      let tolerated = Synchronized<[Bool]>([])
+      let engine = AIOEngine.scriptedStart(recordingStartTimeout: .zero) { configuration throws(RecordingError) in
+        try await readiness.attempt(configuration: configuration)
+      }
+      let observe: @Sendable () -> Void = {
+        tolerated.withLock { $0.append(engine.state[locked: \.toleratesPreferredInputMismatch]) }
+      }
+      await readiness.setOnAttempt(observe)
+
+      let actualURL = try await engine.startRecording(configuration: makeConfiguration())
+
+      #expect(actualURL == expectedURL)
+      #expect(await readiness.attemptCount() == 2)
+      // Strict on the first attempt, lenient on the one past the deadline.
+      #expect(tolerated.withLock { $0 } == [false, true])
     }
 
     @MainActor
@@ -164,14 +193,21 @@
 
     private var steps: [Step]
     private var count = 0
+    private var onAttempt: (@Sendable () -> Void)?
 
     init(steps: [Step]) {
       self.steps = steps
     }
 
+    /// Observes each attempt as it begins, before its scripted outcome.
+    func setOnAttempt(_ observer: @escaping @Sendable () -> Void) {
+      onAttempt = observer
+    }
+
     func attempt(
       configuration _: RecordingConfiguration,
     ) async throws(RecordingError) -> URL {
+      onAttempt?()
       count += 1
       guard !steps.isEmpty else {
         throw RecordingError.engineError

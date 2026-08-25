@@ -10,6 +10,11 @@
       self.platform = platform
     }
 
+    /// A channel count from a plain integer, clamped to at least one channel.
+    public init(count: Int) {
+      self.init(platform: AVAudioChannelCount(max(count, 1)))
+    }
+
     package let platform: AVAudioChannelCount
 
     public static let typeDescription: String = "Channel Count"
@@ -36,7 +41,7 @@
       case 2:
         "Stereo"
       default:
-        "Spatial"
+        "\(platform)-channel"
       }
     }
   }

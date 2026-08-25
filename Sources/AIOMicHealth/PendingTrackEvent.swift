@@ -24,16 +24,22 @@ public struct PendingTrackEvent: Sendable, Equatable {
   /// underlying `AudioRouteChange` carried one.
   public let deviceName: String?
 
+  /// Free-form detail — for a pause, why capture paused and, on the closing
+  /// event, how long the gap was in wall-clock seconds.
+  public let note: String?
+
   public init(
     kind: PendingTrackEventKind,
     startedAt: TimeInterval,
     endedAt: TimeInterval?,
     deviceName: String?,
+    note: String? = nil,
   ) {
     self.kind = kind
     self.startedAt = startedAt
     self.endedAt = endedAt
     self.deviceName = deviceName
+    self.note = note
   }
 }
 
@@ -44,4 +50,13 @@ public enum PendingTrackEventKind: String, Sendable, Equatable {
   case sustainedSilence = "mic.sustained_silence"
   case signalDrop = "mic.signal_drop"
   case routeLost = "mic.route_lost"
+  /// Capture paused — the OS took the session, media services went away, or
+  /// no route could feed the tap — and resumed into the same file. The event
+  /// spans the pause in *audio* time (a point, since no frames were written)
+  /// and its note carries the wall-clock gap, so the gap is represented
+  /// honestly rather than fabricated as silence.
+  case recordingPaused = "recording.paused"
+  /// Bring-up changed something about the request in order to start (an
+  /// unavailable preferred input, a container that yielded to the rate).
+  case captureSubstitution = "capture.substitution"
 }

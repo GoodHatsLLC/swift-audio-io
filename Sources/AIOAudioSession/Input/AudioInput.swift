@@ -68,8 +68,10 @@
       port.preferredDataSource.map { AudioSource(avAudio: $0) }
     }
 
+    /// The port's real channel count. A four-channel interface reports four;
+    /// clamping it to "stereo" would present a fact the hardware does not have.
     public var channelCount: ChannelCount {
-      (port.channels?.count ?? 1) > 1 ? .stereo : .mono
+      ChannelCount(count: port.channels?.count ?? 1)
     }
 
     public var channels: [AudioChannel] {

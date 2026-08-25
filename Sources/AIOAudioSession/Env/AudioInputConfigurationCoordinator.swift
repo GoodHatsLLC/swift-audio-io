@@ -13,6 +13,45 @@ package struct PlatformAudioInputSnapshot: Hashable, Sendable {
     self.capabilities = capabilities
     self.applied = applied
   }
+
+  /// The facts about the route that a platform write could have changed on
+  /// purpose — everything except the applied state, which the route settles
+  /// on its own after a write. See `AudioInputConfigurationCoordinator`'s
+  /// write barrier for why the two are kept apart.
+  package var routeIdentity: RouteIdentity {
+    RouteIdentity(
+      discovery: capabilities.discovery,
+      inputs: capabilities.inputs,
+      effectiveInput: capabilities.effectiveInput,
+      sourceOptions: capabilities.sourceOptions,
+      likelySampleRates: capabilities.likelySampleRates,
+    )
+  }
+
+  package struct RouteIdentity: Hashable, Sendable {
+    package let discovery: AudioInputConfigurationCapabilities.Discovery
+    package let inputs: [AudioInputSelection]
+    package let effectiveInput: AudioInputSelection?
+    package let sourceOptions: [AudioSourceConfigurationOption]
+    package let likelySampleRates: [SampleRate]
+  }
+
+  /// The same discovery with every applied-state fact removed: no applied
+  /// configuration and no active sample rate. Published while the session is
+  /// inactive, when those two are not facts.
+  package func withoutAppliedState() -> PlatformAudioInputSnapshot {
+    PlatformAudioInputSnapshot(
+      capabilities: AudioInputConfigurationCapabilities(
+        discovery: capabilities.discovery,
+        inputs: capabilities.inputs,
+        effectiveInput: capabilities.effectiveInput,
+        sourceOptions: capabilities.sourceOptions,
+        likelySampleRates: capabilities.likelySampleRates,
+        activeSampleRate: nil,
+      ),
+      applied: nil,
+    )
+  }
 }
 
 package struct PlatformAudioInputConfigurationPlan: Hashable, Sendable {
@@ -27,6 +66,44 @@ package struct PlatformAudioInputConfigurationPlan: Hashable, Sendable {
   /// only the best current guess, used for diagnostics payloads.
   package let sampleRateIntent: AudioSampleRatePreference
   package let processing: AudioInputProcessingPreference
+
+  /// What the adapter actually writes for this plan — the plan's identity for
+  /// the platform write barrier.
+  ///
+  /// `format.sampleRate` is a *guess* under an `.automatic` intent: the
+  /// resolver fills it from `capabilities.activeSampleRate`, a `SampleRate?`
+  /// that flips between `nil` and a value as the session activates. Comparing
+  /// whole plans made an unchanged request look like a new plan every time
+  /// that optional resolved, and authorised a platform write for nothing —
+  /// which posts a route notification, which reconciles again. Only the
+  /// values the adapter writes take part here; the guessed rate does not.
+  package struct WriteIdentity: Hashable, Sendable {
+    package let requestedGeneration: UInt64
+    package let preferredInput: AudioInputSelection?
+    package let resolvedInput: AudioInputSelection
+    package let source: AudioSourceSelection?
+    package let channels: ChannelCount
+    /// The exact rate the adapter writes, or `nil` when it writes none.
+    package let sampleRate: SampleRate?
+    package let processing: AudioInputProcessingPreference
+  }
+
+  package var writeIdentity: WriteIdentity {
+    let sampleRate: SampleRate? =
+      switch sampleRateIntent {
+      case .automatic: nil
+      case .exact(let rate): rate
+      }
+    return WriteIdentity(
+      requestedGeneration: requestedGeneration,
+      preferredInput: preferredInput,
+      resolvedInput: resolvedInput,
+      source: source,
+      channels: format.channels,
+      sampleRate: sampleRate,
+      processing: processing,
+    )
+  }
 
   package init(
     requestedGeneration: UInt64,
@@ -306,8 +383,11 @@ package final class AudioInputConfigurationCoordinator {
         ? (isActive ? .reconciling : .deferred(.sessionInactive))
         : .deferred(.environmentNotRunning),
     )
-    guard isRunning, isActive else { return state }
-    return await reconcile(isRunning: true, isActive: true)
+    guard isRunning else { return state }
+    // An inactive session cannot apply the request, but it can still say what
+    // the platform currently offers — a configuration surface asking for
+    // Stereo deserves a fresh capability read, not last poll's.
+    return await reconcile(isRunning: true, isActive: isActive)
   }
 
   /// Reconciles requested state against the platform, coalescing concurrent
@@ -403,10 +483,13 @@ package final class AudioInputConfigurationCoordinator {
         )
       }
       guard isActive else {
+        // No applied configuration exists while inactive, so no active rate
+        // can be claimed either: the raw session reports a routeless default
+        // (typically 44.1 kHz) that is not the microphone's rate.
         return publish(
           requested: requested,
           generation: requestedGeneration,
-          snapshot: snapshot,
+          snapshot: snapshot.withoutAppliedState(),
           applied: nil,
           reconciliation: .deferred(.sessionInactive),
         )
@@ -443,13 +526,20 @@ package final class AudioInputConfigurationCoordinator {
         // produced the state we are already publishing?
         guard authorisePlatformApply(plan: plan, snapshot: snapshot, force: forcePlatformApply)
         else {
+          // A refresh: no write, but the classification is made against what
+          // the platform reports *now*, never against the readback the last
+          // write happened to see. A route settling after a write — an
+          // applied configuration appearing where the readback had none — is
+          // exactly the change this has to notice, and it must notice it
+          // without writing again. The barrier then tracks this reading, so
+          // a later genuine move is measured from the settled state.
+          writeBarrier?.observed = snapshot
           return publish(
             requested: requested,
             generation: requestedGeneration,
             snapshot: snapshot,
             applied: applied,
-            reconciliation: writeBarrier?.outcome
-              ?? Self.classify(readback: applied, expected: plan),
+            reconciliation: Self.classify(readback: applied, expected: plan),
           )
         }
         _ = publish(
@@ -469,7 +559,6 @@ package final class AudioInputConfigurationCoordinator {
           writeBarrier = PlatformWriteBarrier(
             plan: plan,
             observed: readback,
-            outcome: reconciliation,
             retryBudget: 0,
           )
           guard requestedGeneration == generation else {
@@ -502,7 +591,6 @@ package final class AudioInputConfigurationCoordinator {
           writeBarrier = PlatformWriteBarrier(
             plan: plan,
             observed: readback,
-            outcome: failure,
             retryBudget: carriedFailureRetryBudget(plan: plan, observed: readback),
           )
           guard requestedGeneration == generation else { continue }
@@ -540,8 +628,16 @@ package final class AudioInputConfigurationCoordinator {
   ///
   /// The authorised triggers are exactly: a deliberate forced apply, no known
   /// platform state, a changed plan (which subsumes a changed requested
-  /// generation, because the generation is stamped into the plan), changed
-  /// observed platform facts, or remaining retry budget after a thrown write.
+  /// generation, because the generation is stamped into the plan), a changed
+  /// *route* — the inputs and options the platform offers — or remaining
+  /// retry budget after a thrown write.
+  ///
+  /// Applied state is deliberately not a trigger. A readback taken right
+  /// after a preference write routinely reports no applied configuration
+  /// (the route has not settled), and the next discovery reports one. That
+  /// `nil` → value transition is the route catching up with the write, not a
+  /// reason to write again — and writing again posts a route notification,
+  /// which reconciles again, which is the loop this barrier exists to break.
   private func authorisePlatformApply(
     plan: PlatformAudioInputConfigurationPlan,
     snapshot: PlatformAudioInputSnapshot,
@@ -549,7 +645,12 @@ package final class AudioInputConfigurationCoordinator {
   ) -> Bool {
     if force { return true }
     guard var barrier = writeBarrier else { return true }
-    guard barrier.plan == plan, barrier.observed == snapshot else { return true }
+    guard barrier.plan.writeIdentity == plan.writeIdentity,
+      barrier.observed.routeIdentity == snapshot.routeIdentity,
+      !Self.appliedStateMoved(from: barrier.observed.applied, to: snapshot.applied)
+    else {
+      return true
+    }
     guard barrier.retryBudget > 0 else { return false }
     barrier.retryBudget -= 1
     writeBarrier = barrier
@@ -566,8 +667,9 @@ package final class AudioInputConfigurationCoordinator {
     observed: PlatformAudioInputSnapshot,
   ) -> Int {
     guard let barrier = writeBarrier,
-      barrier.plan == plan,
-      barrier.observed == observed
+      barrier.plan.writeIdentity == plan.writeIdentity,
+      barrier.observed.routeIdentity == observed.routeIdentity,
+      !Self.appliedStateMoved(from: barrier.observed.applied, to: observed.applied)
     else {
       return policy.platformFailureRetryBudget
     }
@@ -650,9 +752,21 @@ package final class AudioInputConfigurationCoordinator {
   /// back immediately afterwards.
   private struct PlatformWriteBarrier {
     let plan: PlatformAudioInputConfigurationPlan
-    let observed: PlatformAudioInputSnapshot
-    let outcome: AudioInputConfigurationReconciliation
+    var observed: PlatformAudioInputSnapshot
     var retryBudget: Int
+  }
+
+  /// Whether the platform's applied state moved between two *settled*
+  /// readings — a different rate, channel count, input, or source on the
+  /// same route. A reading with no applied state is not a move in either
+  /// direction: `nil` → value is the route catching up with the last write,
+  /// and value → `nil` has nothing to write to.
+  private static func appliedStateMoved(
+    from previous: AppliedAudioInputConfiguration?,
+    to current: AppliedAudioInputConfiguration?,
+  ) -> Bool {
+    guard let previous, let current else { return false }
+    return previous != current
   }
 
   private static func sourceMatches(

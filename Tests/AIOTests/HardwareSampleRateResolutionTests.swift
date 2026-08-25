@@ -67,11 +67,12 @@
     }
 
     @Test
-    func `hardware request into AAC clamps an unencodable route rate to the nearest supported`()
+    func `hardware request into AAC keeps the route rate and yields the container`()
       async throws
     {
-      // A 96 kHz interface feeding an m4a file: AAC tops out at 48 kHz, so the
-      // resolved file rate must clamp while the tap keeps the hardware format.
+      // A 96 kHz interface feeding an m4a file: AAC tops out at 48 kHz. The
+      // rate outranks the container, so the file becomes linear PCM in CAF at
+      // 96 kHz and the substitution is reported in the provenance.
       let routeFormat = try #require(
         AVAudioFormat(standardFormatWithSampleRate: 96_000, channels: 1),
       )
@@ -91,18 +92,71 @@
       defer { try? FileManager.default.removeItem(at: url) }
 
       let staged = engine.state.withLock { $0.recordingConfiguration }
-      #expect(staged?.exactFormat?.sampleRate == SampleRate(48_000))
+      #expect(staged?.exactFormat?.sampleRate == SampleRate(96_000))
+      #expect(staged?.outputConfiguration.fileFormat == .caf)
+      #expect(url.pathExtension == "caf")
+      let capture = await MainActor.run { engine.activeCaptureFormat }
+      #expect(
+        capture?.substitutions
+          == [.containerReplaced(from: .aac, to: .caf, sampleRate: SampleRate(96_000))],
+      )
 
       _ = try await engine.stopRecording()
     }
 
     @Test
-    func `interruption restart re-resolves a hardware request against the new route`() async throws
+    func `hardware request into a caller-named AAC file clamps the rate and says so`()
+      async throws
     {
-      // Install 0 happens on a 48 kHz route; the post-interruption restart
+      // The caller committed to `.m4a` by naming the file, so the container
+      // cannot yield; the rate clamps to the nearest AAC-encodable one, and
+      // the substitution is reported rather than silent.
+      let routeFormat = try #require(
+        AVAudioFormat(standardFormatWithSampleRate: 96_000, channels: 1),
+      )
+      let (engine, _, _) = AIOEngine.fakeRecording(
+        tapInstaller: FakeTapInstaller(tapFormat: routeFormat),
+      )
+      let fileURL = FileManager.default.temporaryDirectory
+        .appendingPathComponent("hardware-clamp-\(UUID().uuidString).m4a")
+      let request = RecordingConfiguration(
+        input: .microphone(
+          MicrophoneRecordingInput(
+            format: CaptureFormat(sampleRate: .hardware, channels: .mono),
+          ),
+        ),
+        outputConfiguration: OutputConfiguration(fileFormat: .aac, bitDepth: nil, quality: .high),
+        outputDestination: .fileURL(fileURL),
+      )
+
+      let url = try await engine.startRecording(configuration: request)
+      defer { try? FileManager.default.removeItem(at: url) }
+
+      let staged = engine.state.withLock { $0.recordingConfiguration }
+      #expect(staged?.exactFormat?.sampleRate == SampleRate(48_000))
+      #expect(staged?.outputConfiguration.fileFormat == .aac)
+      let capture = await MainActor.run { engine.activeCaptureFormat }
+      #expect(
+        capture?.substitutions
+          == [
+            .sampleRateClamped(
+              from: SampleRate(96_000),
+              to: SampleRate(48_000),
+              fileFormat: .aac,
+            )
+          ],
+      )
+
+      _ = try await engine.stopRecording()
+    }
+
+    @Test
+    func `interruption resume keeps the file rate and converts from the new route`() async throws
+    {
+      // Install 0 happens on a 48 kHz route; the post-interruption resume
       // (install 1) happens after AirPods connected — a 24 kHz route. The
-      // stash must carry the *request*, so the new file adopts 24 kHz instead
-      // of pinning the stale 48 kHz resolution.
+      // contract was fixed at start, so the same file stays at 48 kHz and the
+      // 24 kHz route is converted into it; the provenance says so.
       let first = try #require(AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1))
       let second = try #require(AVAudioFormat(standardFormatWithSampleRate: 24_000, channels: 1))
       let (engine, _, _) = AIOEngine.fakeRecording(
@@ -120,14 +174,17 @@
       )
 
       await engine.handleAudioSystemEvent(.interruptionBegan)
-      #expect(await engine.isRecording == false)
+      #expect(await engine.isRecording == true)
       await engine.handleAudioSystemEvent(.interruptionEnded(shouldResume: true))
 
-      #expect(await engine.isRecording == true)
-      let restagedURL = engine.state.withLock { $0.recordingURL }
-      defer { if let restagedURL { try? FileManager.default.removeItem(at: restagedURL) } }
-      let restaged = engine.state.withLock { $0.recordingConfiguration }
-      #expect(restaged?.exactFormat?.sampleRate == SampleRate(24_000))
+      #expect(await MainActor.run { engine.recordingPause } == nil)
+      #expect(engine.state.withLock { $0.recordingURL } == url)
+      let resumed = engine.state.withLock { $0.recordingConfiguration }
+      #expect(resumed?.exactFormat?.sampleRate == SampleRate(48_000))
+      let capture = await MainActor.run { engine.activeCaptureFormat }
+      #expect(capture?.hardware.sampleRate == SampleRate(24_000))
+      #expect(capture?.processing.sampleRate == SampleRate(48_000))
+      #expect(capture?.isResampling == true)
       #expect(
         engine.state.withLock { $0.requestedRecordingConfiguration } == request,
       )

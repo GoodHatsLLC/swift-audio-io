@@ -35,22 +35,40 @@ Stereo and reconciliation becomes unsatisfied with the actual Mono readback.
 Automatic channel selection prefers Stereo when the effective input exposes a
 valid Stereo option and otherwise selects Mono.
 
-Capture starts cross the same barrier:
+Capture starts from a *contract*, never from a refusal:
 
 ```swift
 try await envManager.setAudioSessionActive(true)
-let settled = try await envManager.settleInputConfiguration()
+let contract = try await envManager.resolveCaptureInputContract()
 
 let input = MicrophoneRecordingInput(
-  format: settled.format,
-  preferredInput: settled.preferredInput
+  format: contract.settled.format,
+  preferredInput: contract.settled.preferredInput
 )
 ```
 
-``AudioEnvironmentManager/settleInputConfiguration()`` returns only a
-satisfied readback for the latest request generation. A deferred or
-unsatisfied request throws a typed ``AudioEnvironmentError`` instead of
-returning a partial configuration.
+``AudioEnvironmentManager/resolveCaptureInputContract()`` reconciles the
+latest request and derives the layout the capture is started with: an
+explicit channel choice is the contract whether or not the route can supply
+it (a mono route is replicated into a stereo file), an automatic choice takes
+what the platform applied. `contract.reconciliation` and `contract.applied`
+travel with it so a caller can say "Stereo · using mono" without treating
+that as a reason not to start. The stricter
+``AudioEnvironmentManager/settleInputConfiguration()`` still exists for
+callers that want a typed throw on a deferred or unsatisfied request.
+
+A configuration surface that shows these facts should keep the session
+engaged while it is visible, so every value it renders is read from the route
+the recording will run on:
+
+```swift
+let hold = try await envManager.acquireAudioSessionHold()
+// … the surface is visible; `refreshInputConfiguration()` re-reads on demand …
+await hold.release()
+```
+
+While a hold exists, the engine's release of session demand after a stop is
+deferred until the last hold goes.
 
 ## Audio system events
 
