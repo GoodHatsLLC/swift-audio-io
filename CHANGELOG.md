@@ -5,6 +5,20 @@ All notable changes to AudioIO are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com) categories, and
 releases follow the versioning policy in `README.md` and `ROADMAP.md`.
 
+## 0.18.0 - 2026-08-26
+
+### Added
+
+- Per-input capability evidence on
+  `AudioInputConfigurationCapabilities.endpointCapabilities`. iOS reports
+  Bluetooth high-quality-recording and far-field support/enabled state from
+  the port's Bluetooth microphone extension. macOS reports Core Audio's native
+  nominal sample-rate ranges for each input device.
+- `AudioInputEndpointCapabilities`, `AudioInputFeatureCapability`,
+  `BluetoothMicrophoneCapabilities`, and `AudioSampleRateRange`, including a
+  tri-state native-rate query that preserves “unknown” on platforms such as
+  iOS instead of treating missing enumeration as unsupported.
+
 ## 0.17.1 - 2026-08-25
 
 ### Changed

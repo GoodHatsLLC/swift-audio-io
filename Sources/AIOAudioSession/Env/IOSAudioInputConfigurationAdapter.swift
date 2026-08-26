@@ -161,6 +161,7 @@
         ?? availableInputs.first
       let inputs = availableInputs.map(AudioInputSelection.init(input:))
       let options = availableInputs.flatMap(sourceOptions)
+      let endpointCapabilities = availableInputs.map(endpointCapabilities)
       let applied = appliedConfiguration(
         environment: environment,
         currentInput: currentInput,
@@ -176,8 +177,30 @@
           sourceOptions: options,
           likelySampleRates: likelySampleRates,
           activeSampleRate: applied?.format.sampleRate,
+          endpointCapabilities: endpointCapabilities,
         ),
         applied: applied,
+      )
+    }
+
+    private nonisolated static func endpointCapabilities(
+      input: AudioInput
+    ) -> AudioInputEndpointCapabilities {
+      let bluetooth = input.avAudio.bluetoothMicrophoneExtension.map { extensionValue in
+        BluetoothMicrophoneCapabilities(
+          highQualityRecording: AudioInputFeatureCapability(
+            isSupported: extensionValue.highQualityRecording.isSupported,
+            isEnabled: extensionValue.highQualityRecording.isEnabled,
+          ),
+          farFieldCapture: AudioInputFeatureCapability(
+            isSupported: extensionValue.farFieldCapture.isSupported,
+            isEnabled: extensionValue.farFieldCapture.isEnabled,
+          ),
+        )
+      }
+      return AudioInputEndpointCapabilities(
+        inputID: input.id,
+        bluetoothMicrophone: bluetooth,
       )
     }
 

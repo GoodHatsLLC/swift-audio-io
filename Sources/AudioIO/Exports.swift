@@ -49,6 +49,13 @@
   public typealias AudioChannelPreference = AIOAudioSession.AudioChannelPreference
   public typealias AudioInputConfigurationCapabilities =
     AIOAudioSession.AudioInputConfigurationCapabilities
+  public typealias AudioInputEndpointCapabilities =
+    AIOAudioSession.AudioInputEndpointCapabilities
+  public typealias AudioInputFeatureCapability =
+    AIOAudioSession.AudioInputFeatureCapability
+  public typealias AudioSampleRateRange = AIOAudioSession.AudioSampleRateRange
+  public typealias BluetoothMicrophoneCapabilities =
+    AIOAudioSession.BluetoothMicrophoneCapabilities
   public typealias AudioInputConfigurationDeferral =
     AIOAudioSession.AudioInputConfigurationDeferral
   public typealias AudioInputConfigurationIssue = AIOAudioSession.AudioInputConfigurationIssue

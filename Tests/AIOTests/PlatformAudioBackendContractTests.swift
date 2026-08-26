@@ -73,6 +73,9 @@
       #expect(manager.inputConfigurationState.requested.input == .systemDefault)
       #expect(manager.inputConfigurationState.capabilities.inputs.count == 2)
       #expect(manager.inputConfigurationState.capabilities.effectiveInput?.id == "mic-b")
+      let endpoint = manager.inputConfigurationState.capabilities.capabilities(for: "mic-b")
+      #expect(endpoint?.supportsNativeSampleRate(.dvd) == true)
+      #expect(endpoint?.supportsNativeSampleRate(.speech) == false)
       #expect(manager.inputConfigurationState.reconciliation == .deferred(.sessionInactive))
 
       await runTask.cancel()
@@ -204,6 +207,10 @@
         type: .usbAudio,
         channelCount: 2,
         isDefault: isDefault,
+        nominalSampleRate: .dvd,
+        nativeSampleRateRanges: [
+          AudioSampleRateRange(minimum: .cd, maximum: .dvd)
+        ],
       )
     }
 

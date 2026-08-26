@@ -106,6 +106,23 @@ at all. ``BluetoothMicrophonePolicy`` makes that trade explicit:
 Pass it to `AudioSessionConfiguration.recordingConfiguration(useMeasurement:bluetoothMicrophone:)`
 or set `AudioEnvironmentManager.recordingBluetoothMicrophonePolicy`.
 
+Picker UIs can inspect
+``AudioInputConfigurationCapabilities/endpointCapabilities`` rather than infer
+Bluetooth support from names or route types. The matching
+``AudioInputEndpointCapabilities/bluetoothMicrophone`` value separates support
+from whether high-quality recording is currently enabled. A missing Bluetooth
+capability means the platform exposed no such extension; it is not a reason to
+hide the durable Bluetooth policy while no headset is connected.
+
+On macOS, the same endpoint value carries
+``AudioInputEndpointCapabilities/nativeSampleRateRanges`` from Core Audio. On
+iOS that collection is empty because AVAudioSession does not enumerate native
+rates per input. Use
+``AudioInputEndpointCapabilities/supportsNativeSampleRate(_:)`` so the unknown
+case remains distinct from a known unsupported rate. An exact rate remains a
+valid delivery target either way; ``ResolvedCaptureFormat`` says when AudioIO
+converted the source to reach it.
+
 ## Choosing a rate
 
 - **General capture / music**: ``RecordingSampleRate/hardware``. No conversion
@@ -139,3 +156,6 @@ or set `AudioEnvironmentManager.recordingBluetoothMicrophonePolicy`.
 - ``BluetoothMicrophonePolicy``
 - ``AudioInputConfigurationCapabilities/activeSampleRate``
 - ``AudioInputConfigurationCapabilities/likelySampleRates``
+- ``AudioInputEndpointCapabilities``
+- ``AudioSampleRateRange``
+- ``BluetoothMicrophoneCapabilities``

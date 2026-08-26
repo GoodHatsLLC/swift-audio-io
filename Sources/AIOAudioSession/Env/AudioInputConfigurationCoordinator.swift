@@ -25,6 +25,7 @@ package struct PlatformAudioInputSnapshot: Hashable, Sendable {
       effectiveInput: capabilities.effectiveInput,
       sourceOptions: capabilities.sourceOptions,
       likelySampleRates: capabilities.likelySampleRates,
+      endpointCapabilities: capabilities.endpointCapabilities,
     )
   }
 
@@ -34,6 +35,7 @@ package struct PlatformAudioInputSnapshot: Hashable, Sendable {
     package let effectiveInput: AudioInputSelection?
     package let sourceOptions: [AudioSourceConfigurationOption]
     package let likelySampleRates: [SampleRate]
+    package let endpointCapabilities: [AudioInputEndpointCapabilities]
   }
 
   /// The same discovery with every applied-state fact removed: no applied
@@ -48,6 +50,7 @@ package struct PlatformAudioInputSnapshot: Hashable, Sendable {
         sourceOptions: capabilities.sourceOptions,
         likelySampleRates: capabilities.likelySampleRates,
         activeSampleRate: nil,
+        endpointCapabilities: capabilities.endpointCapabilities,
       ),
       applied: nil,
     )

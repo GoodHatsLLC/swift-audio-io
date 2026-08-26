@@ -23,6 +23,8 @@ func publicAPISnapshot_AIOAudioSession() throws {
   _ = AppliedAudioInputConfiguration.self
   _ = AudioChannelPreference.self
   _ = AudioInputConfigurationCapabilities.self
+  _ = AudioInputEndpointCapabilities.self
+  _ = AudioInputFeatureCapability.self
   _ = AudioInputConfigurationDeferral.self
   _ = AudioInputConfigurationIssue.self
   _ = AudioInputConfigurationReconciliation.self
@@ -36,6 +38,8 @@ func publicAPISnapshot_AIOAudioSession() throws {
   _ = AudioInputProcessingPreference.self
   _ = AudioInputSelection.self
   _ = AudioSampleRatePreference.self
+  _ = AudioSampleRateRange.self
+  _ = BluetoothMicrophoneCapabilities.self
   _ = AudioPortSnapshot.self
   _ = AudioRouteChange.self
   _ = AudioRouteChangeReason.self

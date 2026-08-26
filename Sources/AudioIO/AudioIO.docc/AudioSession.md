@@ -197,6 +197,10 @@ The application's role is to subscribe to the events stream and drive UI. The en
 - ``AudioInputConfigurationState-struct``
 - ``AppliedAudioInputConfiguration-struct``
 - ``AudioInputConfigurationCapabilities-struct``
+- ``AudioInputEndpointCapabilities-struct``
+- ``AudioInputFeatureCapability-struct``
+- ``BluetoothMicrophoneCapabilities-struct``
+- ``AudioSampleRateRange-struct``
 - ``AudioInputConfigurationReconciliation-enum``
 - ``AudioInputConfigurationDeferral-enum``
 - ``AudioInputConfigurationIssue-enum``

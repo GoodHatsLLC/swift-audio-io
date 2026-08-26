@@ -354,6 +354,7 @@
       appliedPlan: PlatformAudioInputConfigurationPlan?,
     ) -> PlatformAudioInputSnapshot {
       let inputs = descriptors.map(Self.selection)
+      let endpointCapabilities = descriptors.map(Self.endpointCapabilities)
       let effectiveInput =
         descriptors.first(where: \.isDefault).map(Self.selection)
         ?? inputs.first
@@ -394,8 +395,11 @@
           inputs: inputs,
           effectiveInput: effectiveInput,
           sourceOptions: options,
-          likelySampleRates: SampleRate.common,
+          likelySampleRates: Array(
+            Set(SampleRate.common + descriptors.compactMap(\.nominalSampleRate)),
+          ).sorted(),
           activeSampleRate: applied?.format.sampleRate,
+          endpointCapabilities: endpointCapabilities,
         ),
         applied: applied,
       )
@@ -409,6 +413,15 @@
         name: descriptor.name,
         type: descriptor.type,
         channelCount: ChannelCount(count: descriptor.channelCount),
+      )
+    }
+
+    private static func endpointCapabilities(
+      _ descriptor: PlatformAudioInputDescriptor,
+    ) -> AudioInputEndpointCapabilities {
+      AudioInputEndpointCapabilities(
+        inputID: descriptor.id,
+        nativeSampleRateRanges: descriptor.nativeSampleRateRanges,
       )
     }
   }

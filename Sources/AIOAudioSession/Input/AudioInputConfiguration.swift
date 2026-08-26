@@ -143,6 +143,79 @@ public struct AppliedAudioInputConfiguration: Hashable, Sendable {
   }
 }
 
+/// A native sample-rate interval reported by an input device.
+///
+/// An empty set of ranges means the platform does not enumerate this fact; it
+/// does not mean the input supports no rates. iOS deliberately falls into that
+/// category. Core Audio-backed macOS inputs populate the ranges from
+/// `kAudioDevicePropertyAvailableNominalSampleRates`.
+public struct AudioSampleRateRange: Hashable, Sendable {
+  public let minimum: SampleRate
+  public let maximum: SampleRate
+
+  public init(minimum: SampleRate, maximum: SampleRate) {
+    self.minimum = min(minimum, maximum)
+    self.maximum = max(minimum, maximum)
+  }
+
+  public func contains(_ sampleRate: SampleRate) -> Bool {
+    minimum <= sampleRate && sampleRate <= maximum
+  }
+}
+
+/// Read-only support and active-state evidence for a platform audio feature.
+public struct AudioInputFeatureCapability: Hashable, Sendable {
+  public let isSupported: Bool
+  public let isEnabled: Bool
+
+  public init(isSupported: Bool, isEnabled: Bool) {
+    self.isSupported = isSupported
+    self.isEnabled = isEnabled
+  }
+}
+
+/// Bluetooth microphone features Apple exposes for a particular input port.
+public struct BluetoothMicrophoneCapabilities: Hashable, Sendable {
+  public let highQualityRecording: AudioInputFeatureCapability
+  public let farFieldCapture: AudioInputFeatureCapability
+
+  public init(
+    highQualityRecording: AudioInputFeatureCapability,
+    farFieldCapture: AudioInputFeatureCapability,
+  ) {
+    self.highQualityRecording = highQualityRecording
+    self.farFieldCapture = farFieldCapture
+  }
+}
+
+/// Platform facts that belong to one endpoint rather than to the active route.
+public struct AudioInputEndpointCapabilities: Hashable, Identifiable, Sendable {
+  public var id: String { inputID }
+
+  public let inputID: String
+  public let nativeSampleRateRanges: [AudioSampleRateRange]
+  public let bluetoothMicrophone: BluetoothMicrophoneCapabilities?
+
+  public init(
+    inputID: String,
+    nativeSampleRateRanges: [AudioSampleRateRange] = [],
+    bluetoothMicrophone: BluetoothMicrophoneCapabilities? = nil,
+  ) {
+    self.inputID = inputID
+    self.nativeSampleRateRanges = nativeSampleRateRanges
+    self.bluetoothMicrophone = bluetoothMicrophone
+  }
+
+  /// Whether the endpoint is known to support `sampleRate` natively.
+  ///
+  /// `nil` means the platform supplied no native-rate ranges, so callers must
+  /// not turn the absence of evidence into an unavailable UI option.
+  public func supportsNativeSampleRate(_ sampleRate: SampleRate) -> Bool? {
+    guard !nativeSampleRateRanges.isEmpty else { return nil }
+    return nativeSampleRateRanges.contains { $0.contains(sampleRate) }
+  }
+}
+
 public struct AudioInputConfigurationCapabilities: Hashable, Sendable {
   public enum Discovery: Hashable, Sendable {
     case discovering
@@ -162,6 +235,10 @@ public struct AudioInputConfigurationCapabilities: Hashable, Sendable {
   /// while no applied configuration exists to read it from. This is the only
   /// sample-rate value here that is a fact rather than an enumeration aid.
   public let activeSampleRate: SampleRate?
+  /// Per-input facts the platform can enumerate. Entries are keyed by
+  /// ``AudioInputSelection/id``; an absent entry means no additional facts are
+  /// known for that endpoint.
+  public let endpointCapabilities: [AudioInputEndpointCapabilities]
 
   public init(
     discovery: Discovery,
@@ -170,6 +247,7 @@ public struct AudioInputConfigurationCapabilities: Hashable, Sendable {
     sourceOptions: [AudioSourceConfigurationOption],
     likelySampleRates: [SampleRate],
     activeSampleRate: SampleRate?,
+    endpointCapabilities: [AudioInputEndpointCapabilities] = [],
   ) {
     self.discovery = discovery
     self.inputs = inputs
@@ -177,6 +255,13 @@ public struct AudioInputConfigurationCapabilities: Hashable, Sendable {
     self.sourceOptions = sourceOptions
     self.likelySampleRates = likelySampleRates
     self.activeSampleRate = activeSampleRate
+    self.endpointCapabilities = endpointCapabilities
+  }
+
+  public func capabilities(
+    for inputID: String
+  ) -> AudioInputEndpointCapabilities? {
+    endpointCapabilities.first { $0.inputID == inputID }
   }
 
   public static let discovering = AudioInputConfigurationCapabilities(
@@ -186,6 +271,7 @@ public struct AudioInputConfigurationCapabilities: Hashable, Sendable {
     sourceOptions: [],
     likelySampleRates: [],
     activeSampleRate: nil,
+    endpointCapabilities: [],
   )
 }
 

@@ -10,6 +10,8 @@ struct PlatformAudioInputDescriptor: Hashable {
   let type: AudioInput.InputType
   let channelCount: Int
   let isDefault: Bool
+  let nominalSampleRate: SampleRate?
+  let nativeSampleRateRanges: [AudioSampleRateRange]
 
   init(
     id: String,
@@ -17,12 +19,16 @@ struct PlatformAudioInputDescriptor: Hashable {
     type: AudioInput.InputType = .unknown,
     channelCount: Int,
     isDefault: Bool,
+    nominalSampleRate: SampleRate? = nil,
+    nativeSampleRateRanges: [AudioSampleRateRange] = [],
   ) {
     self.id = id
     self.name = name
     self.type = type
     self.channelCount = channelCount
     self.isDefault = isDefault
+    self.nominalSampleRate = nominalSampleRate
+    self.nativeSampleRateRanges = nativeSampleRateRanges
   }
 }
 
@@ -125,6 +131,8 @@ enum PlatformAudioBackendFactory {
           type: input.type,
           channelCount: input.channelCount,
           isDefault: input.uid == defaultInputID,
+          nominalSampleRate: input.nominalSampleRate,
+          nativeSampleRateRanges: input.nativeSampleRateRanges,
         )
       }
       .sorted { lhs, rhs in
@@ -150,6 +158,8 @@ enum PlatformAudioBackendFactory {
       let name: String
       let type: AudioInput.InputType
       let channelCount: Int
+      let nominalSampleRate: SampleRate?
+      let nativeSampleRateRanges: [AudioSampleRateRange]
     }
 
     private struct RouteSignature: Hashable {
@@ -220,6 +230,53 @@ enum PlatformAudioBackendFactory {
       return value
     }
 
+    private func availableNominalSampleRateRanges(
+      deviceID: AudioDeviceID
+    ) -> [AudioSampleRateRange] {
+      var address = AudioObjectPropertyAddress(
+        mSelector: kAudioDevicePropertyAvailableNominalSampleRates,
+        mScope: kAudioObjectPropertyScopeGlobal,
+        mElement: kAudioObjectPropertyElementMain,
+      )
+      var dataSize: UInt32 = 0
+      let sizeStatus = unsafe AudioObjectGetPropertyDataSize(
+        deviceID,
+        &address,
+        0,
+        nil,
+        &dataSize,
+      )
+      guard sizeStatus == noErr, dataSize >= MemoryLayout<AudioValueRange>.stride else {
+        return []
+      }
+
+      let count = Int(dataSize) / MemoryLayout<AudioValueRange>.stride
+      var values = Array(
+        repeating: AudioValueRange(mMinimum: 0, mMaximum: 0),
+        count: count,
+      )
+      let readStatus = unsafe AudioObjectGetPropertyData(
+        deviceID,
+        &address,
+        0,
+        nil,
+        &dataSize,
+        &values,
+      )
+      guard readStatus == noErr else { return [] }
+      return values.compactMap { value in
+        guard value.mMinimum > 0, value.mMaximum > 0 else { return nil }
+        return AudioSampleRateRange(
+          minimum: SampleRate(value.mMinimum),
+          maximum: SampleRate(value.mMaximum),
+        )
+      }
+      .sorted { lhs, rhs in
+        if lhs.minimum != rhs.minimum { return lhs.minimum < rhs.minimum }
+        return lhs.maximum < rhs.maximum
+      }
+    }
+
     private func deviceUIDs(
       _ devices: [AudioDeviceID],
       scope: AudioObjectPropertyScope,
@@ -254,6 +311,8 @@ enum PlatformAudioBackendFactory {
             coreAudioTransportType: transportType(deviceID: deviceID),
           ),
           channelCount: channels,
+          nominalSampleRate: nominalSampleRate(deviceID: deviceID).map { SampleRate($0) },
+          nativeSampleRateRanges: availableNominalSampleRateRanges(deviceID: deviceID),
         )
       }
     }
