@@ -85,9 +85,17 @@ let package = Package(
       dependencies: [],
       swiftSettings: swiftSettings(),
     ),
+    // Objective-C is the only language here that can catch an `NSException`.
+    // AVFoundation's audio graph raises them for precondition violations, and
+    // a raise that unwinds into Swift aborts the process. Wrapped for Swift by
+    // `AIOSupport.ObjCException`; nothing else should import this directly.
+    .target(
+      name: "AIOObjCException",
+      dependencies: [],
+    ),
     .target(
       name: "AIOSupport",
-      dependencies: [],
+      dependencies: ["AIOObjCException"],
       swiftSettings: swiftSettings(),
     ),
     .target(

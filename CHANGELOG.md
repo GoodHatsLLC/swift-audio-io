@@ -19,6 +19,19 @@ releases follow the versioning policy in `README.md` and `ROADMAP.md`.
   now materialized before the prepare, as the `reinstallTap` prepares already
   did incidentally.
 
+### Changed
+
+- Objective-C exceptions raised by the audio graph are caught rather than left
+  to abort the process. `AVAudioEngine` reports precondition violations by
+  raising `NSException` from C++, which no Swift `catch` intercepts;
+  `runOnEngineControlQueueResult` and `withEngineControlQueueResult` — the
+  helpers every graph mutation already goes through — now surface a raise as a
+  `.failure`, so the playback and capture starts classify it with the error
+  handling they already had. On the recording bring-up path, `prepare()` and
+  `start()` go through guarded helpers that separate a graph which is not ready
+  (`.notReady`, retried by the start deadline loop) from an engine that
+  declined to start (`.engineStartFailed`).
+
 ## 0.18.0 - 2026-08-26
 
 ### Added

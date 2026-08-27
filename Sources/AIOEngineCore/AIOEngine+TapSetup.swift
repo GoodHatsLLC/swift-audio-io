@@ -40,9 +40,71 @@
         // has to state it. `reset()` does not de-materialize the node, so the
         // cost is one lazy creation per engine, not per read.
         let inputNode = self.engine.inputNode
-        self.engine.prepare()
+        do {
+          try self.prepareGraph("hardware sample-rate resolution")
+        } catch {
+          // A graph that will not initialize is exactly what this read already
+          // reports as "no rate": the caller raises `.notReady`, and the start
+          // deadline loop retries it.
+          return nil
+        }
         let sampleRate = inputNode.inputFormat(forBus: 0).sampleRate
         return sampleRate > 0 ? sampleRate : nil
+      }
+    }
+
+    /// `engine.prepare()`, with the graph's Objective-C preconditions turned
+    /// into a typed, retryable failure instead of a process abort.
+    ///
+    /// `AVAudioEngineGraph::Initialize` asserts four conditions — that the I/O
+    /// nodes exist, and that each one is initialized — and reports a violation
+    /// by raising, which no Swift `catch` can intercept. Every one of them
+    /// describes a graph that is not *ready* rather than a request that is
+    /// wrong, so they map to `.notReady`: transient, and retried by the start
+    /// deadline loop like any other settling-route condition.
+    ///
+    /// Must run on the engine-control queue, like every other graph mutation
+    /// in this file.
+    nonisolated func prepareGraph(_ stage: String) throws(RecordingError) {
+      guard let exception = ObjCException.raised(by: { engine.prepare() }) else { return }
+      let raised = ObjCExceptionError(exception)
+      tapSetupLog.error(
+        "AVAudioEngine.prepare() raised during \(stage, privacy: .public): \(raised.description, privacy: .public)",
+      )
+      throw RecordingError.session(
+        .notReady(details: "engine.prepare() raised during \(stage): \(raised)"),
+      )
+    }
+
+    /// `engine.start()`, accounting for both ways it can fail: the Swift error
+    /// it throws, and the Objective-C exception the graph raises.
+    ///
+    /// The two are not the same failure. A thrown error is the engine
+    /// declining to start and stays `.engineStartFailed`; a raise is
+    /// ``prepareGraph(_:)``'s condition set reached through `start()`'s own
+    /// initialize, and is transient for the same reason.
+    ///
+    /// Must run on the engine-control queue.
+    nonisolated func startGraph(_ stage: String) throws(RecordingError) {
+      var startError: (any Error)?
+      let exception = ObjCException.raised {
+        do {
+          try engine.start()
+        } catch {
+          startError = error
+        }
+      }
+      if let exception {
+        let raised = ObjCExceptionError(exception)
+        tapSetupLog.error(
+          "AVAudioEngine.start() raised during \(stage, privacy: .public): \(raised.description, privacy: .public)",
+        )
+        throw RecordingError.session(
+          .notReady(details: "engine.start() raised during \(stage): \(raised)"),
+        )
+      }
+      if let startError {
+        throw RecordingError.session(.engineStartFailed(error: ErrorContext(startError)))
       }
     }
 
@@ -282,7 +344,7 @@
       #endif
 
       // 3. Prepare — updates input node for current hardware
-      engine.prepare()
+      try prepareGraph("tap reinstall")
 
       // 4. Read format — one read, one validation
       let inputFormat = engine.inputNode.inputFormat(forBus: 0)
@@ -314,7 +376,7 @@
       )
 
       // 7. Prepare post-install, read actual format
-      engine.prepare()
+      try prepareGraph("post tap install")
       let postInstallFormat = engine.inputNode.inputFormat(forBus: 0)
       guard postInstallFormat.channelCount > 0, postInstallFormat.sampleRate > 0 else {
         throw RecordingError.invalidConfiguration(
@@ -349,7 +411,7 @@
 
       // 10. Restart engine if we stopped it
       if stopEngine {
-        try engine.start()
+        try startGraph("tap reinstall restart")
       }
 
       return result

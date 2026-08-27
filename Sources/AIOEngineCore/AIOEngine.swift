@@ -613,12 +613,52 @@
       engineControlQueue.sync(execute: work)
     }
 
+    /// The throwing form, and the package's Objective-C exception boundary for
+    /// graph work.
     package nonisolated func runOnEngineControlQueueResult<T>(
       _ work: () throws -> T,
     ) -> Result<T, any Error> {
-      engineControlQueue.sync {
-        Result { try work() }
+      engineControlQueue.sync { Self.catchingGraphExceptions(work) }
+    }
+
+    /// `Result { try work() }`, extended to the one failure mode Swift cannot
+    /// express.
+    ///
+    /// `AVAudioEngine` reports graph precondition violations by raising an
+    /// `NSException`, which travels straight through `Result { try work() }`:
+    /// no Swift `catch` sees it, and the process aborts. Catching it here means
+    /// every caller that already classifies a `.failure` handles a raise too,
+    /// without any call site knowing Objective-C was involved.
+    ///
+    /// Callers on the recording bring-up path want the finer classification in
+    /// ``AIOEngine/prepareGraph(_:)`` and ``AIOEngine/startGraph(_:)``, which
+    /// separate a graph that is not ready from an engine that declined to
+    /// start. This is the floor under everything else.
+    ///
+    /// - Important: A raise leaves the graph in an undefined state, so the
+    ///   `.failure` is a reason to tear it down and rebuild — which is what
+    ///   every caller's failure path already does.
+    private nonisolated static func catchingGraphExceptions<T>(
+      _ work: () throws -> T,
+    ) -> Result<T, any Error> {
+      var outcome: Result<T, any Error>?
+      let exception = ObjCException.raised {
+        outcome = Result { try work() }
       }
+      if let exception {
+        return .failure(ObjCExceptionError(exception))
+      }
+      guard let outcome else {
+        // Unreachable: `raised(by:)` runs the block synchronously, and it
+        // reported no exception, so the assignment above happened.
+        return .failure(
+          ObjCExceptionError(
+            name: ObjCExceptionError.errorDomain,
+            reason: "engine-control work neither completed nor raised",
+          ),
+        )
+      }
+      return outcome
     }
 
     package nonisolated func withEngineControlQueue<T>(
@@ -637,8 +677,7 @@
     ) async -> Result<T, any Error> {
       await withCheckedContinuation { continuation in
         engineControlQueue.async {
-          let result = Result { try work() }
-          continuation.resume(returning: result)
+          continuation.resume(returning: Self.catchingGraphExceptions(work))
         }
       }
     }
