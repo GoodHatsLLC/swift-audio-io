@@ -5,7 +5,7 @@ All notable changes to AudioIO are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com) categories, and
 releases follow the versioning policy in `README.md` and `ROADMAP.md`.
 
-## Unreleased
+## 0.18.2 - 2026-08-27
 
 ### Changed
 
