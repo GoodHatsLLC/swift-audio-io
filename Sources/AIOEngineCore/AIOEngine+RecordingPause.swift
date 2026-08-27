@@ -160,10 +160,16 @@
         }
       #endif
 
-      let liveFormat = await withEngineControlQueue { [engine] in
+      // There is no honest fallback `AVAudioFormat` — a zero-channel one cannot
+      // even be constructed — so a graph that raised reports no format at all,
+      // and joins the invalid-format branch this read already had.
+      let liveFormat = await withEngineControlQueue(
+        "live input format read",
+        fallingBackTo: nil,
+      ) { [engine] () -> AVAudioFormat? in
         engine.inputNode.inputFormat(forBus: 0)
       }
-      guard liveFormat.channelCount > 0, liveFormat.sampleRate > 0 else {
+      guard let liveFormat, liveFormat.channelCount > 0, liveFormat.sampleRate > 0 else {
         await pauseRecording(reason: .sourceUnavailable("Input format became invalid"))
         return
       }

@@ -218,12 +218,15 @@
       #endif
       do {
         // (a) Stop any active player on the engine-control queue (unchanged).
-        let shouldStopPlayer = await owner.withEngineControlQueue { [weak owner] in
+        let shouldStopPlayer = await owner.withEngineControlQueue(
+          "player state read before bring-up",
+          fallingBackTo: false,
+        ) { [weak owner] in
           guard let owner else { return false }
           return owner.player.isPlaying
         }
         if shouldStopPlayer {
-          await owner.withEngineControlQueue { [weak owner] in
+          await owner.withEngineControlQueue("player stop before bring-up") { [weak owner] in
             guard let owner, owner.player.isPlaying else { return }
             owner.player.stop()
           }

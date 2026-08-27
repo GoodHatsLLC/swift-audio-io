@@ -49,7 +49,7 @@
             }
           }
 
-          owner.runOnEngineControlQueue { [weak owner] in
+          owner.runOnEngineControlQueue("system audio bring-up reset") { [weak owner] in
             guard let owner else { return }
             // Clear the teardown sentinel from on the serial queue, mirroring the
             // microphone preparation path. System audio has no AVAudioEngine tap, but the
@@ -437,7 +437,7 @@
           owner.recordingEnvironment.makeCaptureBackend?(configuration.input, owner)
           ?? MicrophoneCaptureBackend(owner: owner)
 
-        owner.runOnEngineControlQueue { [weak owner] in
+        owner.runOnEngineControlQueue("recording graph reset") { [weak owner] in
           guard let owner else { return }
           // Clear the teardown sentinel from *on* the serial queue. FIFO ordering
           // means any reinstall a prior teardown superseded was enqueued ahead of
@@ -687,7 +687,7 @@
           return
         }
         let buses = Array(Set([tapBus, 0].compactMap(\.self)))
-        await owner.withEngineControlQueue { [owner] in
+        await owner.withEngineControlQueue("recording graph teardown") { [owner] in
           for bus in buses {
             owner.engine.inputNode.removeTap(onBus: bus)
           }

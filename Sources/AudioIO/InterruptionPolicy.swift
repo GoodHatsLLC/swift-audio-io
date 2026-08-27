@@ -182,11 +182,17 @@
       }
 
       let cachedFormat = owner.state.withLock { $0.tapConverterInputFormat }
-      let formatBefore =
+      // Optional for the same reason the pause path's read is: a graph that
+      // raised has no format to report, and inventing one would fabricate the
+      // "before" half of a quality comparison.
+      let formatBefore: AVAudioFormat? =
         if let cachedFormat {
           cachedFormat
         } else {
-          await owner.withEngineControlQueue { [owner] in
+          await owner.withEngineControlQueue(
+            "input format read before reinstall",
+            fallingBackTo: nil,
+          ) { [owner] () -> AVAudioFormat? in
             owner.engine.inputNode.inputFormat(forBus: 0)
           }
         }
@@ -215,11 +221,15 @@
         // The reinstall refreshed the staged provenance; mirror it into the
         // observable so quality indicators track the new hardware format.
         owner.activeCaptureFormat = owner.state[locked: \.captureResolution]
-        let qualityChange = AIOEngine.AudioQualityChange.between(
-          formatBefore,
-          result.tapFormat,
-          reason: change.reason.userLabel,
-        )
+        // No "before" format means no claim about how quality changed — the
+        // reinstall still stands, it is only the comparison that is unknown.
+        let qualityChange = formatBefore.flatMap {
+          AIOEngine.AudioQualityChange.between(
+            $0,
+            result.tapFormat,
+            reason: change.reason.userLabel,
+          )
+        }
         owner.eventSubject.send(
           .recordingInterruption(
             .routeChangeContinuing(event: change, qualityChange: qualityChange),
@@ -269,8 +279,10 @@
         return
       }
 
-      let (engineIsRunning, playerIsPlaying) = await owner.withEngineControlQueue {
-        [weak owner] in
+      let (engineIsRunning, playerIsPlaying) = await owner.withEngineControlQueue(
+        "engine and player state read",
+        fallingBackTo: (false, false),
+      ) { [weak owner] in
         guard let owner else { return (false, false) }
         return (owner.engine.isRunning, owner.player.isPlaying)
       }
@@ -405,7 +417,7 @@
     }
 
     private func resetEngineForMediaServices() async {
-      await owner.withEngineControlQueue {
+      await owner.withEngineControlQueue("media services reset") {
         owner.detachPlaybackJogGraph()
         owner.player.stop()
         owner.engine.stop()

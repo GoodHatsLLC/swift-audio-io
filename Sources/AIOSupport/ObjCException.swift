@@ -36,7 +36,9 @@ package enum ObjCException {
 /// `CustomNSError` rather than a bare `Error` so that `ErrorContext(_:)` — which
 /// normalizes through `NSError` — records the exception's own name and reason
 /// instead of a generic bridged description.
-package struct ObjCExceptionError: Error, CustomNSError, CustomStringConvertible, Equatable {
+package struct ObjCExceptionError: Error, CustomNSError, CustomStringConvertible, Equatable,
+  Sendable
+{
   package init(name: String, reason: String?) {
     self.name = name
     self.reason = reason

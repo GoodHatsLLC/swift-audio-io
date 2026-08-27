@@ -5,6 +5,31 @@ All notable changes to AudioIO are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com) categories, and
 releases follow the versioning policy in `README.md` and `ROADMAP.md`.
 
+## Unreleased
+
+### Changed
+
+- The non-`Result` engine-control helpers catch graph exceptions too, closing
+  the last path on which a raise could abort the process. They return `T` and so
+  cannot hand a failure back, so their contract is instead to degrade to a
+  caller-supplied fallback and report: logged, and published on
+  `AudioIOEvent.error` as a transient `SessionError.notReady`.
+- Both helpers now take a `stage` label, which is the attribution — the only
+  thing in the report that says which graph operation raised. Every call site
+  names its operation.
+- `withEngineControlQueue` resumes its continuation from a single unconditional
+  statement, carrying the raise out as a value. A resume reachable only on the
+  success path would, once the exception is caught rather than fatal, leave the
+  awaiting task suspended forever.
+
+### Fixed
+
+- The two reads of `inputNode.inputFormat(forBus:)` behind
+  `withEngineControlQueue` return `AVAudioFormat?`. There is no honest fallback
+  format, so a graph that raised reports none: the pause path joins its existing
+  invalid-format branch, and a route change with no observed "before" format
+  reports no quality change rather than a fabricated one.
+
 ## 0.18.1 - 2026-08-27
 
 ### Fixed

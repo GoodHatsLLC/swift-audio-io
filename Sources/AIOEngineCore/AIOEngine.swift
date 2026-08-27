@@ -599,7 +599,7 @@
       // Every stored property is initialized, so `self` can be handed over.
       recording.owner = self
       playbackRuntime.owner = self
-      runOnEngineControlQueue { [engine, player] in
+      runOnEngineControlQueue("engine init player attach") { [engine, player] in
         engine.attach(player)
       }
     }
@@ -609,8 +609,50 @@
     /// Thread Domain: engineControl
     /// All AVAudioEngine graph mutations must go through these helpers.
     ///
-    package nonisolated func runOnEngineControlQueue<T>(_ work: () -> T) -> T {
-      engineControlQueue.sync(execute: work)
+    /// `T` leaves no room for a `throws`, so a raise cannot be handed back to
+    /// the caller. It is reported instead — logged and published on
+    /// ``AudioIOEvent/error(_:)``, the channel this package documents for
+    /// engine-level errors that no `throws` signature can carry — and `work`'s
+    /// answer degrades to `fallback`.
+    ///
+    /// `stage` is the attribution: it is the only thing in the report that says
+    /// *which* graph operation raised, so name the operation, not the file.
+    ///
+    /// Prefer ``runOnEngineControlQueueResult(_:)`` wherever the caller has an
+    /// error path. Reach for this one only where it genuinely does not — a
+    /// teardown, a state read, an initializer.
+    package nonisolated func runOnEngineControlQueue<T>(
+      _ stage: String,
+      fallingBackTo fallback: T,
+      _ work: () -> T,
+    ) -> T {
+      let (outcome, raised) = engineControlQueue.sync { () -> (T?, ObjCExceptionError?) in
+        var value: T?
+        let exception = ObjCException.raised { value = work() }
+        return (value, exception.map(ObjCExceptionError.init))
+      }
+      // Reported after leaving the queue, so no subscriber's handler runs while
+      // the serial queue is held.
+      if let raised {
+        reportGraphException(raised, stage: stage)
+      }
+      return outcome ?? fallback
+    }
+
+    /// The `Void` form of ``runOnEngineControlQueue(_:fallingBackTo:_:)``,
+    /// where "degrade to a fallback" is just "carry on".
+    ///
+    /// Every caller of this overload is doing something whose failure it could
+    /// not have acted on anyway: attaching a node at init, resetting a graph it
+    /// is about to rebuild, or removing a tap during teardown. Continuing past
+    /// a reported raise is strictly better than aborting the process, but it is
+    /// not error *handling* — a caller that can do something about the failure
+    /// belongs on the `Result` form.
+    package nonisolated func runOnEngineControlQueue(
+      _ stage: String,
+      _ work: () -> Void,
+    ) {
+      runOnEngineControlQueue(stage, fallingBackTo: ()) { work() }
     }
 
     /// The throwing form, and the package's Objective-C exception boundary for
@@ -661,15 +703,58 @@
       return outcome
     }
 
-    package nonisolated func withEngineControlQueue<T>(
+    /// The asynchronous form of
+    /// ``runOnEngineControlQueue(_:fallingBackTo:_:)``, with the same
+    /// report-and-degrade contract.
+    ///
+    /// The continuation is resumed by a single unconditional statement, with
+    /// the raise carried out as a value rather than short-circuiting. That
+    /// ordering is the point: a `resume` inside the success branch would, once
+    /// the exception is caught rather than fatal, leave the awaiting task
+    /// suspended forever. Trading a crash for a hang is not an improvement.
+    package nonisolated func withEngineControlQueue<T: Sendable>(
+      _ stage: String,
+      fallingBackTo fallback: T,
       _ work: @escaping @Sendable () -> T,
     ) async -> T {
-      await withCheckedContinuation { continuation in
+      let (outcome, raised): (T?, ObjCExceptionError?) = await withCheckedContinuation {
+        continuation in
         engineControlQueue.async {
-          let result = work()
-          continuation.resume(returning: result)
+          var value: T?
+          let exception = ObjCException.raised { value = work() }
+          continuation.resume(returning: (value, exception.map(ObjCExceptionError.init)))
         }
       }
+      if let raised {
+        reportGraphException(raised, stage: stage)
+      }
+      return outcome ?? fallback
+    }
+
+    /// The `Void` form of ``withEngineControlQueue(_:fallingBackTo:_:)``.
+    package nonisolated func withEngineControlQueue(
+      _ stage: String,
+      _ work: @escaping @Sendable () -> Void,
+    ) async {
+      await withEngineControlQueue(stage, fallingBackTo: ()) { work() }
+    }
+
+    /// Publishes a graph exception the queue helpers could not hand back.
+    ///
+    /// ``AudioIOEvent/error(_:)`` documents itself as the channel for "an
+    /// engine-level error that the engine couldn't surface via a `throws`
+    /// signature", which is exactly this. `SessionError` is the right shape for
+    /// it too: it is the package's engine-bring-up error, orthogonal to whether
+    /// the consumer was recording or playing back, and `.notReady` is transient
+    /// — a graph mutation that raised did not happen, and the operation can be
+    /// attempted again on a graph that has been rebuilt.
+    private nonisolated func reportGraphException(
+      _ raised: ObjCExceptionError,
+      stage: String,
+    ) {
+      let details = "engine-control work raised during \(stage): \(raised)"
+      log.error("\(details, privacy: .public)")
+      eventSubject.send(AudioIOEvent.error(SessionError.notReady(details: details)))
     }
 
     package nonisolated func withEngineControlQueueResult<T>(

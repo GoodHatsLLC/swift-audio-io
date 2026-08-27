@@ -25,7 +25,7 @@
     /// way it is for an exact request — the tap reinstalls and the converter
     /// bridges into the pinned rate.
     package nonisolated func readHardwareInputSampleRate() -> Double? {
-      runOnEngineControlQueue { [weak self] in
+      runOnEngineControlQueue("hardware sample-rate read", fallingBackTo: nil) { [weak self] in
         guard let self else { return nil }
         // Materialize the input node *before* preparing. `AVAudioEngine`
         // creates its I/O nodes lazily on first property access, and

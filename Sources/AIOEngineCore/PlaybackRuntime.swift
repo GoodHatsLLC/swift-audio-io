@@ -472,7 +472,7 @@
     @MainActor
     func cancelPlaybackJog() async {
       clearPlaybackJog(scheduleGraphTeardown: false)
-      await owner.withEngineControlQueue { [weak owner] in
+      await owner.withEngineControlQueue("playback jog detach") { [weak owner] in
         guard let owner else { return }
         owner.playbackRuntime.detachPlaybackJogNode()
       }
@@ -665,7 +665,7 @@
       callbackTasks: AsyncTaskRunner,
     ) async {
       if Task.isCancelled { return }
-      await owner.withEngineControlQueue { [weak owner] in
+      await owner.withEngineControlQueue("playback segment reschedule") { [weak owner] in
         guard let owner else { return }
         owner.player.stop()
         file.framePosition = framePosition
@@ -770,7 +770,7 @@
           return nil
         }
       }
-      await owner.withEngineControlQueue { [weak owner, finishedFile] in
+      await owner.withEngineControlQueue("playback graph reset") { [weak owner, finishedFile] in
         guard let owner else { return }
         owner.player.stop()
         owner.engine.stop()
@@ -849,7 +849,7 @@
     }
 
     nonisolated func stopPlayerIfNeeded() async {
-      await owner.withEngineControlQueue { [weak owner] in
+      await owner.withEngineControlQueue("player stop") { [weak owner] in
         guard let owner, owner.player.isPlaying else { return }
         owner.player.stop()
       }
