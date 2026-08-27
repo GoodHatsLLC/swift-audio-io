@@ -5,6 +5,20 @@ All notable changes to AudioIO are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com) categories, and
 releases follow the versioning policy in `README.md` and `ROADMAP.md`.
 
+## 0.18.1 - 2026-08-27
+
+### Fixed
+
+- A first `.hardware` sample-rate recording no longer crashes the process.
+  `readHardwareInputSampleRate()` called `AVAudioEngine.prepare()` before
+  anything had read an I/O node. `AVAudioEngine` creates `inputNode` and
+  `outputNode` lazily, so on a freshly built graph — which holds only the
+  attached player node — `AVAudioEngineGraph::Initialize` failed its
+  `inputNode != nullptr || outputNode != nullptr` condition and raised an
+  Objective-C exception that no Swift `catch` can intercept. The input node is
+  now materialized before the prepare, as the `reinstallTap` prepares already
+  did incidentally.
+
 ## 0.18.0 - 2026-08-26
 
 ### Added

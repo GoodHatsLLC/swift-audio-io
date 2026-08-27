@@ -27,8 +27,21 @@
     package nonisolated func readHardwareInputSampleRate() -> Double? {
       runOnEngineControlQueue { [weak self] in
         guard let self else { return nil }
+        // Materialize the input node *before* preparing. `AVAudioEngine`
+        // creates its I/O nodes lazily on first property access, and
+        // `AVAudioEngineGraph::Initialize` asserts
+        // `inputNode != nullptr || outputNode != nullptr` — raising an
+        // Objective-C exception, which no Swift `catch` can intercept, so the
+        // process dies. A first `.hardware` bring-up reaches here in exactly
+        // that state: preparation has attached only `player`, and nothing on
+        // the path has read an I/O node yet. The other `prepare()` sites in
+        // this file satisfy the precondition incidentally — ``reinstallTap``
+        // removes a tap on `inputNode` first — so this is the one call that
+        // has to state it. `reset()` does not de-materialize the node, so the
+        // cost is one lazy creation per engine, not per read.
+        let inputNode = self.engine.inputNode
         self.engine.prepare()
-        let sampleRate = self.engine.inputNode.inputFormat(forBus: 0).sampleRate
+        let sampleRate = inputNode.inputFormat(forBus: 0).sampleRate
         return sampleRate > 0 ? sampleRate : nil
       }
     }

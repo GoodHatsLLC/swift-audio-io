@@ -193,6 +193,34 @@
     }
 
     @Test
+    func `hardware resolution prepares a graph that has an I/O node`() {
+      // Regression. `readHardwareInputSampleRate` called `engine.prepare()`
+      // before anything had read an I/O node. `AVAudioEngine` creates
+      // `inputNode`/`outputNode` lazily, so the graph held only the attached
+      // `player`, and `AVAudioEngineGraph::Initialize` asserted
+      // `inputNode != nullptr || outputNode != nullptr`. That assertion raises
+      // an Objective-C exception, which no Swift `catch` intercepts, so the
+      // first `.hardware` recording after launch aborted the process.
+      //
+      // Every other case in this suite injects a tap installer, which makes
+      // `PreparationInputs.seamResolvedConfiguration` non-nil and returns from
+      // `resolveConfiguration` before the graph is touched at all — which is
+      // why a thoroughly covered feature still shipped this crash. Only a
+      // `.live` environment reaches the real read, and a regression shows up
+      // here as a crashed test process rather than a failed expectation.
+      let engine = AIOEngine(recordingEnvironment: .live)
+
+      let sampleRate = engine.readHardwareInputSampleRate()
+
+      // A route that reports nothing is a legitimate transient answer that the
+      // start deadline loop retries; a route that reports at all must report a
+      // usable rate.
+      if let sampleRate {
+        #expect(sampleRate > 0)
+      }
+    }
+
+    @Test
     func `hardware request fails static validation before touching a route`() {
       // AAC has no PCM sample width; supplying one is a static issue that must
       // surface for a .hardware request without any resolution having run.
